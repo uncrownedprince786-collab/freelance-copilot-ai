@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Opportunity {
+  id          String    @id @default(uuid())
+  title       String
+  description String    @db.Text
+  budget      String
+  platform    String
+  url         String    @unique
+  createdAt   DateTime  @default(now())
+  score       Int       @default(0)
+  risk        String    @default("Medium")
+  viewed      Boolean   @default(false)
+  viewedAt    DateTime?
+
+  // Relations
+  analysis    Analysis?
+  tracking    ProjectTracking?
+
+  @@index([platform])
+  @@index([score])
+  @@index([createdAt])
+  @@index([viewed])
+  @@map("opportunities")
+}
+
+model Analysis {
+  id                String      @id @default(uuid())
+  opportunityId     String      @unique
+  opportunity       Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  
+  summary           String      @db.Text
+  scope             Json
+  riskAnalysis      Json
+  bidRecommendation Json
+  questions         Json
+  
+  shortProposal     String      @db.Text
+  standardProposal  String      @db.Text
+  detailedProposal  String      @db.Text
+  
+  createdAt         DateTime    @default(now())
+
+  @@map("analyses")
+}
+
+model ProjectTracking {
+  id            String      @id @default(uuid())
+  opportunityId String      @unique
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  
+  status        String
+  updatedAt     DateTime    @updatedAt
+
+  @@map("project_tracking")
+}

@@ -1,0 +1,197 @@
+import { BaseCollector } from "./BaseCollector";
+import { RawOpportunity } from "./types";
+import * as fs from 'fs';
+import * as path from 'path';
+
+export class UpworkCollector extends BaseCollector {
+  name = "Upwork";
+  private quotaFile = path.join(process.cwd(), '.upwork-quota.json');
+  private totalQuota = 100;
+  private searchesUsed = 0;
+
+  private queries = [
+    "react nextjs angular vue frontend developer upwork",
+    "python django nodejs java backend developer upwork",
+    "mobile ios android flutter reactnative upwork",
+    "webrtc realtime video audio streaming developer upwork",
+    "wordpress shopify chrome extension developer upwork",
+    "machine learning ai llm openai developer upwork",
+    "devops aws docker kubernetes developer upwork"
+  ];
+
+  constructor() {
+    super();
+    this.loadQuota();
+  }
+
+  private loadQuota() {
+    try {
+      if (fs.existsSync(this.quotaFile)) {
+        const data = JSON.parse(fs.readFileSync(this.quotaFile, 'utf-8'));
+        const lastReset = new Date(data.lastReset);
+        const today = new Date();
+        if (lastReset.toDateString() !== today.toDateString()) {
+          this.searchesUsed = 0;
+          this.saveQuota();
+        } else {
+          this.searchesUsed = data.searchesUsed || 0;
+        }
+      }
+    } catch (error) {
+      this.searchesUsed = 0;
+    }
+  }
+
+  private saveQuota() {
+    fs.writeFileSync(this.quotaFile, JSON.stringify({
+      searchesUsed: this.searchesUsed,
+      lastReset: new Date().toISOString()
+    }, null, 2));
+  }
+
+  private showQuotaStatus() {
+    const remaining = this.totalQuota - this.searchesUsed;
+    const usedPercent = (this.searchesUsed / this.totalQuota) * 100;
+    
+    console.log('\n========================================');
+    console.log('     UPWORK API QUOTA STATUS');
+    console.log('========================================');
+    console.log(`Used: ${this.searchesUsed}/100`);
+    console.log(`Remaining: ${remaining}`);
+    console.log(`Usage: ${usedPercent.toFixed(1)}%`);
+    if (remaining < 20) {
+      console.log(`WARNING: Only ${remaining} searches left!`);
+    }
+    console.log('========================================\n');
+  }
+
+  private getDaysOld(dateString: string): number {
+    const today = new Date();
+    const posted = new Date(dateString);
+    const diffTime = Math.abs(today.getTime() - posted.getTime());
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }
+
+  private getJobAge(postedDate: string): string {
+    const today = new Date();
+    const posted = new Date(postedDate);
+    const diffMs = today.getTime() - posted.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    
+    if (diffMins < 60) {
+      return `${diffMins} minutes ago`;
+    } else if (diffHours < 24) {
+      return `${diffHours} hours ago`;
+    } else {
+      return `${diffDays} days ago`;
+    }
+  }
+
+  private checkJobStatus(title: string, description: string): string {
+    const text = (title + " " + description).toLowerCase();
+    
+    if (text.includes('hired') || text.includes('filled') || 
+        text.includes('closed') || text.includes('position filled') ||
+        text.includes('no longer accepting')) {
+      return 'Filled/Closed';
+    }
+    if (text.includes('interviewing') || text.includes('interview') || text.includes('shortlisted')) {
+      return 'Under Interview';
+    }
+    return 'Open';
+  }
+
+  async fetch(): Promise<RawOpportunity[]> {
+    console.log('[Upwork] Fetching jobs (last 3 days only)...\n');
+    
+    if (!process.env.SERPAPI_KEY) {
+      console.error('[Upwork] SERPAPI_KEY missing');
+      return [];
+    }
+
+    const remaining = this.totalQuota - this.searchesUsed;
+    if (remaining <= 0) {
+      console.error('[Upwork] Daily quota exhausted!');
+      this.showQuotaStatus();
+      return [];
+    }
+
+    this.showQuotaStatus();
+
+    const allJobs: RawOpportunity[] = [];
+    let queriesUsed = 0;
+    let skippedOld = 0;
+    let skippedFilled = 0;
+    
+    for (const query of this.queries) {
+      if (allJobs.length >= 100) break;
+      if (queriesUsed >= remaining) break;
+      
+      console.log(`[Upwork] Searching: ${query.substring(0, 50)}...`);
+      
+      try {
+        const jobs = await this.searchGoogleJobs(query);
+        queriesUsed++;
+        this.searchesUsed++;
+        
+        let validJobs = 0;
+        for (const job of jobs) {
+          if (job.postedDate) {
+            const daysOld = this.getDaysOld(job.postedDate);
+            if (daysOld > 3) {
+              skippedOld++;
+              continue;
+            }
+          }
+          
+          const status = this.checkJobStatus(job.title, job.description);
+          if (status === 'Filled/Closed') {
+            skippedFilled++;
+            continue;
+          }
+          
+          (job as any).status = status;
+          allJobs.push(job);
+          validJobs++;
+        }
+        
+        if (validJobs > 0) {
+          console.log(`[Upwork] Found ${validJobs} recent open jobs`);
+        } else {
+          console.log(`[Upwork] No recent open jobs found`);
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+      } catch (error: any) {
+        console.warn(`[Upwork] Search failed: ${error.message}`);
+      }
+    }
+    
+    this.saveQuota();
+    
+    const uniqueJobs = this.deduplicateJobs(allJobs);
+    
+    console.log(`\n[Upwork] Total unique recent open jobs: ${uniqueJobs.length}`);
+    console.log(`[Upwork] Skipped: ${skippedOld} old jobs (>3 days), ${skippedFilled} filled/closed jobs`);
+    this.showQuotaStatus();
+    
+    if (uniqueJobs.length > 0) {
+      console.log('\nJob categories found:');
+      const categories = this.categorizeJobs(uniqueJobs);
+      for (const [cat, count] of Object.entries(categories)) {
+        if (count > 0) {
+          console.log(`  - ${cat}: ${count} jobs`);
+        }
+      }
+      
+      console.log('\nRECENT OPEN JOBS (Last 3 days):');
+      console.log('========================================');
+      
+      uniqueJobs.slice(0, 10).forEach((job, i) => {
+        const postedDate = new Date(job.postedDate);
+        console.log(`\n${i+1}. ${job.title.substring(0, 65)}...`);
+        console.log(`   Posted: ${this.getJobAge(job.postedDate)} (${postedDate.toLocaleDateString()})`);
+        console.log(`   Status
