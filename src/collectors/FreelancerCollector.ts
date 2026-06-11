@@ -62,7 +62,15 @@ export class FreelancerCollector extends BaseCollector {
           url: `https://www.freelancer.com/projects/${project.seo_url}`,
           platform: "Freelancer",
           budget: project.budget?.minimum ? `$${project.budget.minimum}-${project.budget.maximum}` : "Negotiable",
-          location: "Remote",
+          budgetMin: project.budget?.minimum,
+          budgetMax: project.budget?.maximum,
+          country: project.owner?.location?.country,
+          connections: null,
+          clientResponseTime: null,
+          clientLastSeen: null,
+          clientRating: null,
+          clientSpend: null,
+          clientHireRate: null,
           postedDate: new Date(project.submitdate * 1000).toISOString(),
           company: project.owner?.username || "Freelancer Client"
         };
@@ -108,10 +116,10 @@ export class FreelancerCollector extends BaseCollector {
       if (!response.ok) return null;
 
       const html = await response.text();
-      const metaMatch = html.match(/<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)["']/i);
+      const metaMatch = html.match(/<meta[^>]+(?:name|property)=['"](?:description|og:description)['"][^>]+content=['"]([^'"]+)['"]/i);
       if (metaMatch?.[1]) return this.normalizeText(metaMatch[1]);
 
-      const ldMatch = html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+      const ldMatch = html.match(/<script[^>]+type=['"]application\/ld\+json['"][^>]*>([\s\S]*?)<\/script>/i);
       if (ldMatch?.[1]) {
         try {
           const parsed = JSON.parse(ldMatch[1]);
@@ -136,7 +144,8 @@ export class FreelancerCollector extends BaseCollector {
       .replace(/&quot;/gi, '"')
       .replace(/&#39;|&#x27;/gi, "'")
       .replace(/\s+/g, ' ')
-      .trim();
+      .trim()
+      .substring(0, 8000);
   }
 
   private deduplicateJobs(jobs: RawOpportunity[]): RawOpportunity[] {
