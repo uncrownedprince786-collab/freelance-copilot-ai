@@ -14,6 +14,12 @@ export async function POST() {
       jobs: jobs
     }, null, 2));
 
+    // Clear trends cache so next visit gets fresh AI analysis
+    const trendsCacheFile = path.join(process.cwd(), '.trends-cache.json');
+    if (fs.existsSync(trendsCacheFile)) {
+      try { fs.unlinkSync(trendsCacheFile); } catch { /* non-critical */ }
+    }
+
     return NextResponse.json({
       success: true,
       newJobs: jobs.length,

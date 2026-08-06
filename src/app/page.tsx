@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated, isAdmin, logout, getRole } from '@/lib/auth';
+import { isAuthenticated, isAdmin, logout, getRole, trackActivity } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
 
 interface Job {
@@ -220,14 +220,15 @@ function HomeContent() {
       const res = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const data = await res.json();
       if (data.newJobs > 0) {
-        setSyncMsg(`✅ Found ${data.newJobs} new jobs!`);
+        setSyncMsg(`Found ${data.newJobs} new jobs!`);
         setNewCount(data.newJobs);
+        trackActivity('sync', `${data.newJobs} new jobs`);
         await fetchJobs();
       } else {
-        setSyncMsg('✓ All caught up — no new jobs since last sync.');
+        setSyncMsg('All caught up — no new jobs since last sync.');
       }
     } catch {
-      setSyncMsg('⚠️ Sync failed. Check your connection.');
+      setSyncMsg('Sync failed. Check your connection.');
     } finally {
       setSyncing(false);
       setTimeout(() => setSyncMsg(''), 4000);
@@ -244,6 +245,7 @@ function HomeContent() {
       return;
     }
     if (typeof window !== 'undefined') sessionStorage.setItem('selectedJob', JSON.stringify(job));
+    trackActivity('view_job', job.title);
     router.push(`/job/${job.id}`);
   };
 
@@ -394,7 +396,7 @@ function HomeContent() {
           <div style={styles.filterRow}>
             <input
               type="text"
-              placeholder="🔍 Search by title, client, tech, location…"
+              placeholder="Search by title, client, tech, location..."
               value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }}
               style={styles.searchInput}

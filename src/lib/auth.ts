@@ -36,6 +36,12 @@ export function login(username: string, pass: string): boolean {
       sessionStorage.setItem('lh_auth_token', 'lh_admin_session_token');
       sessionStorage.setItem('lh_auth_expires', (Date.now() + SESSION_DURATION_MS).toString());
       sessionStorage.setItem('lh_auth_role', 'admin');
+      // Track admin session start
+      fetch('/api/sessions/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'session_start', guestId: 'admin', role: 'admin', timestamp: new Date().toISOString() }),
+      }).catch(() => {});
     }
     return true;
   }

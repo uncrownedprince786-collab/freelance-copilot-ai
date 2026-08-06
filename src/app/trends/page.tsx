@@ -93,7 +93,6 @@ export default function TrendsPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={fetchTrends} style={s.refreshBtn}>Refresh Analysis</button>
             <button onClick={() => router.push('/')} style={s.backBtn}>← Dashboard</button>
           </div>
         </header>
@@ -103,13 +102,13 @@ export default function TrendsPage() {
           <h1 style={s.pageTitle}>Market Trends</h1>
           <p style={s.pageDesc}>
             AI-powered analysis of active Upwork jobs — see what skills are in demand, where budgets fall,
-            and which skills to learn to win more contracts.
+            and which skills to learn to win more contracts. Updates automatically after each sync.
           </p>
           {data && (
             <div style={s.metaRow}>
               <span style={s.metaPill}>{data.totalJobsAnalyzed} jobs analysed</span>
               <span style={s.metaPill}>Updated {new Date(data.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              {data.cached && <span style={{ ...s.metaPill, background: '#fef9c3', color: '#92400e', borderColor: '#fde68a' }}>Cached — refreshes every 4h</span>}
+              <span style={{ ...s.metaPill, background: '#f0fdf4', color: '#15803d', borderColor: '#bbf7d0' }}>Auto-updates with each sync</span>
             </div>
           )}
         </div>
