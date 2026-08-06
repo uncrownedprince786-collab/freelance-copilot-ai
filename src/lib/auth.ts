@@ -1,8 +1,17 @@
 export const SESSION_DURATION_MS = 15 * 60 * 1000; // 15 Minutes session duration
 
 export function isAuthenticated(): boolean {
-  // Login requirement temporarily bypassed as requested ("abi k liye login wala code commit kr do")
-  return true;
+  if (typeof window === 'undefined') return false;
+  const token = sessionStorage.getItem('lh_auth_token');
+  const expires = sessionStorage.getItem('lh_auth_expires');
+  if (!token || !expires) return false;
+  if (Date.now() > parseInt(expires, 10)) {
+    // Session expired — clean up
+    sessionStorage.removeItem('lh_auth_token');
+    sessionStorage.removeItem('lh_auth_expires');
+    return false;
+  }
+  return token === 'lh_admin_session_token';
 }
 
 export function login(username: string, pass: string): boolean {
