@@ -16,6 +16,7 @@ export default function CronLogsPage() {
   const router = useRouter();
   const [logs, setLogs] = useState<CronLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [totalCachedJobs, setTotalCachedJobs] = useState(0);
 
   useEffect(() => {
     fetchLogs();
@@ -26,9 +27,8 @@ export default function CronLogsPage() {
     try {
       const res = await fetch('/api/cron-logs');
       const data = await res.json();
-      if (data.logs) {
-        setLogs(data.logs);
-      }
+      if (data.logs) setLogs(data.logs);
+      if (data.totalCachedJobs) setTotalCachedJobs(data.totalCachedJobs);
     } catch (err) {
       console.error('Failed to load cron logs', err);
     } finally {
@@ -71,6 +71,23 @@ export default function CronLogsPage() {
             Monitor automated background runs from the last 24 hours. Shows execution timestamp, status, and new jobs discovered.
           </p>
         </div>
+
+        {/* Live Cache Banner */}
+        {totalCachedJobs > 0 && (
+          <div style={styles.cacheBanner}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 20 }}>📦</span>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 15, color: '#1e40af' }}>
+                  {totalCachedJobs} Total Jobs in Dashboard
+                </div>
+                <div style={{ fontSize: 12, color: '#3b82f6', marginTop: 2 }}>
+                  &ldquo;Total Scraped&rdquo; = jobs fetched in that specific run &nbsp;|&nbsp; Dashboard total = all unique jobs accumulated across all runs (duplicates removed)
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Loading / Content */}
         {loading ? (
@@ -200,5 +217,12 @@ const styles: Record<string, React.CSSProperties> = {
   metricLabel: { fontSize: 11, color: '#64748b', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginBottom: 4 },
   metricValHighlight: { fontSize: 18, fontWeight: 800, color: '#16a34a' },
   metricVal: { fontSize: 16, fontWeight: 700, color: '#0f172a' },
-  metricValSm: { fontSize: 13, fontWeight: 600, color: '#475569' }
+  metricValSm: { fontSize: 13, fontWeight: 600, color: '#475569' },
+  cacheBanner: {
+    background: '#eff6ff',
+    border: '1px solid #bfdbfe',
+    borderRadius: 12,
+    padding: '14px 18px',
+    marginBottom: 20,
+  },
 };

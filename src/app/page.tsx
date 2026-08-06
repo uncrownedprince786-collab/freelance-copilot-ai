@@ -101,7 +101,7 @@ function HomeContent() {
   const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   const [sortBy, setSortBy] = useState<'score' | 'date' | 'budget'>('date');
   const [page, setPage] = useState(1);
-  const PER_PAGE = 12;
+  const PER_PAGE = 24;
 
   // Derived metadata from jobs
   const availablePlatforms = useMemo(() => [...new Set(jobs.map(j => j.platform))], [jobs]);
@@ -174,6 +174,11 @@ function HomeContent() {
 
   const totalPages = Math.ceil(filteredJobs.length / PER_PAGE);
   const paginatedJobs = useMemo(() => filteredJobs.slice((page - 1) * PER_PAGE, page * PER_PAGE), [filteredJobs, page]);
+
+  const goToPage = (p: number) => {
+    setPage(p);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const fetchJobs = useCallback(async () => {
     setLoading(true);
@@ -411,7 +416,7 @@ function HomeContent() {
           </div>
 
           <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
-            Showing {filteredJobs.length} of {jobs.length} jobs
+            Showing {Math.min((page - 1) * PER_PAGE + 1, filteredJobs.length)}–{Math.min(page * PER_PAGE, filteredJobs.length)} of {filteredJobs.length} jobs{filteredJobs.length !== jobs.length ? ` (filtered from ${jobs.length})` : ''}
           </div>
         </div>
 
@@ -492,6 +497,62 @@ function HomeContent() {
                 </article>
               </button>
             ))}
+          </div>
+        )}
+
+        {/* ── PAGINATION ── */}
+        {totalPages > 1 && (
+          <div style={styles.pagination}>
+            <button
+              onClick={() => goToPage(Math.max(1, page - 1))}
+              disabled={page === 1}
+              style={{ ...styles.pageBtn, opacity: page === 1 ? 0.4 : 1 }}
+            >
+              ← Prev
+            </button>
+
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 2)
+                .reduce<(number | '...')[]>((acc, p, idx, arr) => {
+                  if (idx > 0 && typeof arr[idx - 1] === 'number' && (p as number) - (arr[idx - 1] as number) > 1) acc.push('...');
+                  acc.push(p);
+                  return acc;
+                }, [])
+                .map((p, i) =>
+                  p === '...' ? (
+                    <span key={`ellipsis-${i}`} style={{ color: '#94a3b8', padding: '0 4px' }}>…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => goToPage(p as number)}
+                      style={{
+                        ...styles.pageBtn,
+                        background: page === p ? '#2563eb' : '#fff',
+                        color: page === p ? '#fff' : '#334155',
+                        borderColor: page === p ? '#2563eb' : '#dbe2ea',
+                        fontWeight: page === p ? 700 : 500,
+                        minWidth: 36,
+                      }}
+                    >
+                      {p}
+                    </button>
+                  )
+                )
+              }
+            </div>
+
+            <button
+              onClick={() => goToPage(Math.min(totalPages, page + 1))}
+              disabled={page === totalPages}
+              style={{ ...styles.pageBtn, opacity: page === totalPages ? 0.4 : 1 }}
+            >
+              Next →
+            </button>
+
+            <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 8 }}>
+              Page {page} of {totalPages}
+            </span>
           </div>
         )}
 
