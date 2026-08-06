@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { login } from '@/lib/auth';
+import { login, loginAsGuest } from '@/lib/auth';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -12,6 +12,7 @@ interface AdminLoginModalProps {
 export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
 
   if (!isOpen) return null;
@@ -19,7 +20,6 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-
     if (login(username, password)) {
       setUsername('');
       setPassword('');
@@ -29,17 +29,23 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
     }
   };
 
+  const handleGuestLogin = () => {
+    loginAsGuest();
+    onSuccess();
+  };
+
   return (
     <div style={styles.overlay}>
       <div style={styles.modal}>
         <div style={styles.header}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Lead Hunter Logo" style={{ height: 40, width: 'auto' }} />
-          <h2 style={styles.title}>Admin Access Required</h2>
+          <h2 style={styles.title}>Lead Hunter Access</h2>
           <button onClick={onClose} style={styles.closeBtn}>&times;</button>
         </div>
 
         <p style={styles.subtitle}>
-          Please enter your Admin credentials to access detailed job analysis and proposals.
+          Login as Admin for full access, or continue as Guest to browse jobs and proposals.
         </p>
 
         <form onSubmit={handleSubmit} style={styles.form}>
@@ -59,20 +65,54 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
 
           <div style={styles.inputGroup}>
             <label style={styles.label}>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
-              required
-              style={styles.input}
-            />
+            <div style={styles.passwordWrapper}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                required
+                style={{ ...styles.input, paddingRight: 44 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(p => !p)}
+                style={styles.eyeBtn}
+                tabIndex={-1}
+                title={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? (
+                  // Eye-off icon
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                  </svg>
+                ) : (
+                  // Eye icon
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
 
           <button type="submit" style={styles.submitBtn}>
-            Login & Continue
+            🔐 Login as Admin
           </button>
         </form>
+
+        <div style={styles.divider}>
+          <span style={styles.dividerText}>or</span>
+        </div>
+
+        <button onClick={handleGuestLogin} style={styles.guestBtn}>
+          👤 Continue as Guest
+        </button>
+        <p style={styles.guestNote}>
+          Guests can browse jobs and view AI proposals. No credentials needed.
+        </p>
       </div>
     </div>
   );
@@ -81,10 +121,7 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
 const styles: Record<string, React.CSSProperties> = {
   overlay: {
     position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(15, 23, 42, 0.75)',
     backdropFilter: 'blur(4px)',
     zIndex: 9999,
@@ -99,7 +136,7 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: '420px',
     width: '100%',
     padding: '28px',
-    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
     border: '1px solid #e2e8f0',
   },
   header: {
@@ -109,12 +146,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '8px',
     position: 'relative',
   },
-  title: {
-    fontSize: '20px',
-    fontWeight: 800,
-    color: '#0f172a',
-    margin: 0,
-  },
+  title: { fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: 0 },
   closeBtn: {
     marginLeft: 'auto',
     background: 'none',
@@ -124,17 +156,13 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#64748b',
   },
   subtitle: {
-    fontSize: '14px',
+    fontSize: '13px',
     color: '#64748b',
     marginTop: '4px',
     marginBottom: '20px',
     lineHeight: 1.5,
   },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px',
-  },
+  form: { display: 'flex', flexDirection: 'column', gap: '16px' },
   errorBanner: {
     backgroundColor: '#fef2f2',
     color: '#dc2626',
@@ -144,23 +172,28 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '13px',
     fontWeight: 600,
   },
-  inputGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
-  label: {
-    fontSize: '13px',
-    fontWeight: 600,
-    color: '#334155',
-  },
+  inputGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
+  label: { fontSize: '13px', fontWeight: 600, color: '#334155' },
+  passwordWrapper: { position: 'relative', display: 'flex', alignItems: 'center' },
   input: {
+    width: '100%',
     padding: '10px 14px',
     borderRadius: '8px',
     border: '1px solid #cbd5e1',
     fontSize: '14px',
     outline: 'none',
+    boxSizing: 'border-box',
     transition: 'border-color 0.2s',
+  },
+  eyeBtn: {
+    position: 'absolute',
+    right: 12,
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: '4px',
+    display: 'flex',
+    alignItems: 'center',
   },
   submitBtn: {
     marginTop: '8px',
@@ -173,5 +206,39 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     cursor: 'pointer',
     transition: 'background-color 0.2s',
+  },
+  divider: {
+    display: 'flex',
+    alignItems: 'center',
+    margin: '20px 0 16px',
+    gap: 12,
+  },
+  dividerText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: 600,
+    background: '#fff',
+    padding: '0 8px',
+    margin: '0 auto',
+    position: 'relative',
+  },
+  guestBtn: {
+    width: '100%',
+    padding: '12px',
+    backgroundColor: '#f1f5f9',
+    color: '#334155',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
+    fontSize: '15px',
+    fontWeight: 700,
+    cursor: 'pointer',
+    transition: 'background-color 0.2s',
+  },
+  guestNote: {
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#94a3b8',
+    marginTop: 8,
+    marginBottom: 0,
   },
 };

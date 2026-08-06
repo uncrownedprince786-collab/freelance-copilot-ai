@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated } from '@/lib/auth';
+import { isAuthenticated, isAdmin } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
 
 interface Job {
@@ -300,9 +300,17 @@ function HomeContent() {
             <button onClick={openIntroPopup} style={styles.btnGhost}>
               ℹ️ About
             </button>
-            <button onClick={() => router.push('/cron-logs')} style={styles.btnCron}>
-              📋 Cron Activity Logs
+            <button onClick={() => router.push('/trends')} style={styles.btnCron}>
+              📊 Market Trends
             </button>
+            <button onClick={() => router.push('/cron-logs')} style={styles.btnCron}>
+              📋 Cron Logs
+            </button>
+            {isAdmin() && (
+              <button onClick={() => router.push('/admin/sessions')} style={{ ...styles.btnCron, background: '#1e40af', color: '#fff', borderColor: '#1e40af' }}>
+                🛡️ Sessions
+              </button>
+            )}
           </div>
         </header>
 
@@ -440,13 +448,19 @@ function HomeContent() {
                   <h3 style={styles.cardTitle}>{job.title}</h3>
 
                   {/* Client info */}
-                  <p style={styles.clientLine}>
-                    {job.clientName && !job.clientName.toLowerCase().includes('client') 
-                      ? `Client: ${job.clientName}` 
-                      : `Country: ${job.country || 'Remote'}`}
-                    {job.clientSpend ? ` · Spent: ${job.clientSpend}` : ''}
-                    {job.clientReviews ? ` · Rating: ${job.clientReviews}` : ''}
-                  </p>
+                  {(() => {
+                    const hasClient = job.clientName && !job.clientName.toLowerCase().includes('client');
+                    const hasCountry = job.country && job.country.toLowerCase() !== 'remote' && job.country.trim() !== '';
+                    const hasExtra = job.clientSpend || job.clientReviews;
+                    if (!hasClient && !hasCountry && !hasExtra) return null;
+                    return (
+                      <p style={styles.clientLine}>
+                        {hasClient ? `Client: ${job.clientName}` : hasCountry ? `📍 ${job.country}` : ''}
+                        {job.clientSpend ? ` · Spent: ${job.clientSpend}` : ''}
+                        {job.clientReviews ? ` · ⭐ ${job.clientReviews}` : ''}
+                      </p>
+                    );
+                  })()}
 
                   {/* Description snippet */}
                   <p style={styles.snippet}>{job.description?.substring(0, 130)}…</p>

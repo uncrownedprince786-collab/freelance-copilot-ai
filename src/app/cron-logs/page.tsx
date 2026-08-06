@@ -113,8 +113,14 @@ export default function CronLogsPage() {
                     <div style={styles.metricVal}>{log.jobsFetched}</div>
                   </div>
                   <div style={styles.metricCell}>
-                    <div style={styles.metricLabel}>Sources</div>
-                    <div style={styles.metricValSm}>{log.sourceSummary}</div>
+                    <div style={styles.metricLabel}>Platform</div>
+                    <div style={styles.metricValSm}>
+                      {log.sourceSummary
+                        ? log.sourceSummary
+                            .replace(/apify/gi, 'Upwork')
+                            .replace(/Apify/g, 'Upwork')
+                        : 'Upwork'}
+                    </div>
                   </div>
                 </div>
               </div>
