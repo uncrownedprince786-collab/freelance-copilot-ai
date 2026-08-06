@@ -12,18 +12,28 @@ interface Job {
   url: string;
   platform: string;
   budget: string;
+  budgetType?: string;
   score: number;
   viewed: boolean;
   applied: boolean;
   postedAt: string;
-  company?: string;
-  location?: string;
   country?: string;
   clientName?: string;
   clientSpend?: string;
+  clientRating?: string;
   clientReviews?: string;
+  paymentVerified?: boolean;
+  jobsPosted?: number | null;
+  memberSince?: string;
   connections?: number;
+  skills?: string[];
+  experienceLevel?: string;
+  duration?: string;
+  proposalCount?: number | null;
+  interviewingCount?: number;
+  hiresCount?: number;
   isNew?: boolean;
+  client?: Record<string, any>;
 }
 
 interface Analysis {
@@ -36,7 +46,6 @@ interface Analysis {
   proposal: string;
   originalBudget?: string;
   originalTimeline?: string;
-  clientDetails?: string;
   technicalBlockers?: string[];
   blockerSolutions?: string[];
   suggestedEta?: string;
@@ -62,9 +71,14 @@ function timeAgo(dateStr: string) {
   const hrs = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
   if (mins < 2) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${days}d ago`;
+  if (mins < 60) return `${mins} minutes ago`;
+  if (hrs < 24) return `${hrs} hour${hrs > 1 ? 's' : ''} ago`;
+  return `${days} day${days > 1 ? 's' : ''} ago`;
+}
+
+function cleanExpLevel(raw?: string) {
+  if (!raw) return '';
+  return raw.replace(/level/gi, '').replace(/([A-Z])/g, ' $1').trim();
 }
 
 export default function JobDetailPage() {
@@ -95,7 +109,7 @@ export default function JobDetailPage() {
           void fetchAnalysis(parsed);
           return;
         }
-      } catch {/* continue to API fallback */}
+      } catch {/* fallback */}
     }
     void loadJobFromApi();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -122,11 +136,7 @@ export default function JobDetailPage() {
 
   const fetchAnalysis = async (jobData: Job) => {
     setAnalyzing(true);
-    setError('');
     try {
-      // Validate inputs before sending
-      if (!jobData.title || typeof jobData.title !== 'string') return;
-
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -135,23 +145,21 @@ export default function JobDetailPage() {
           description: jobData.description?.slice(0, 3000) ?? '',
           platform: jobData.platform ?? 'Unknown',
           budget: jobData.budget ?? 'Negotiable',
-          clientName: jobData.clientName ?? jobData.company ?? '',
+          clientName: jobData.clientName ?? '',
         }),
       });
-
       if (!res.ok) throw new Error('Analysis failed');
       const data: Analysis = await res.json();
       setAnalysis(data);
       setBidAmount(data.bidAmount ?? '');
-      
-      const client = jobData.clientName && jobData.clientName !== 'Upwork Client' && jobData.clientName !== 'Freelancer Client' ? jobData.clientName : 'there';
       let finalProposal = data.proposal ?? '';
+      const client = jobData.clientName && !jobData.clientName.toLowerCase().includes('client') ? jobData.clientName : 'there';
       if (!finalProposal.toLowerCase().startsWith('hi ') && !finalProposal.toLowerCase().startsWith('dear ')) {
         finalProposal = `Hi ${client},\n\n${finalProposal}`;
       }
       setProposalDraft(finalProposal);
     } catch {
-      setError('Analysis unavailable. You can still view the job and apply manually.');
+      setError('AI analysis unavailable. You can still view the job and apply manually.');
     } finally {
       setAnalyzing(false);
     }
@@ -188,12 +196,10 @@ export default function JobDetailPage() {
       await navigator.clipboard.writeText(proposalDraft);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setError('Could not copy to clipboard.');
-    }
+    } catch {/* ignore */}
   };
 
-  /* ── LOADING STATE ── */
+  /* ── LOADING ── */
   if (loading) {
     return (
       <div style={s.page}>
@@ -205,7 +211,6 @@ export default function JobDetailPage() {
     );
   }
 
-  /* ── ERROR / NOT FOUND ── */
   if (error && !job) {
     return (
       <div style={s.page}>
@@ -219,123 +224,216 @@ export default function JobDetailPage() {
 
   if (!job) return null;
 
-  const rawName = job.clientName || job.company || '';
-  const clientLabel = rawName && !rawName.toLowerCase().includes('client') ? rawName : null;
-  const locationLabel = job.country || job.location || 'Remote';
-  const connectionsLabel = (job.connections ?? 0) > 0 ? `${job.connections} connects` : null;
+  const expLevel = cleanExpLevel(job.experienceLevel);
+  const hasCountry = job.country && job.country.toLowerCase() !== 'remote' && job.country.trim() !== '';
+  const skills = job.skills || [];
 
   /* ── RENDER ── */
   return (
     <div style={s.page}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}`}</style>
       <AdminLoginModal
         isOpen={showAuthModal}
         onClose={() => router.push('/')}
         onSuccess={() => setShowAuthModal(false)}
       />
-      {/* ── TOPBAR ── */}
+
+      {/* ── TOP BAR ── */}
       <div style={s.topBar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={() => router.push('/')} style={s.backBtn}>
-            &larr; Dashboard
+            ← Dashboard
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Lead Hunter Logo" style={{ height: 32, width: 'auto', cursor: 'pointer' }} onClick={() => router.push('/')} />
-          <span style={{ fontWeight: 800, fontSize: 16, color: '#0f172a', cursor: 'pointer' }} onClick={() => router.push('/')}>Lead Hunter</span>
+          <img src="/logo.png" alt="Lead Hunter" style={{ height: 30, width: 'auto', cursor: 'pointer' }} onClick={() => router.push('/')} />
+          <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', cursor: 'pointer' }} onClick={() => router.push('/')}>Lead Hunter</span>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ ...s.badge, background: PLATFORM_COLORS[job.platform] ?? '#6c5ce7' }}>
-            {job.platform}
-          </span>
+          <span style={{ ...s.badge, background: PLATFORM_COLORS[job.platform] ?? '#6c5ce7' }}>{job.platform}</span>
           {job.isNew && <span style={{ ...s.badge, background: '#22c55e' }}>New</span>}
           {job.applied && <span style={{ ...s.badge, background: '#3b82f6' }}>Applied</span>}
-          {job.viewed && !job.applied && <span style={{ ...s.badge, background: '#94a3b8' }}>Viewed</span>}
-          <span style={s.timeAgo}>{timeAgo(job.postedAt)}</span>
+          <span style={s.timeAgo}>Posted {timeAgo(job.postedAt)}</span>
         </div>
       </div>
 
-      {/* ── MAIN LAYOUT: left | right ── */}
+      {/* ── MAIN LAYOUT ── */}
       <div style={s.layout}>
 
-        {/* ──── LEFT: JOB INFO ──── */}
+        {/* ──── LEFT PANEL ──── */}
         <section style={s.leftPanel}>
+
+          {/* Title */}
           <h1 style={s.title}>{job.title}</h1>
 
-          {/* Meta strip */}
-          <div style={s.metaStrip}>
-            {clientLabel && <span style={s.metaChip}>Client: {clientLabel}</span>}
-            <span style={s.metaChip}>Location: {locationLabel}</span>
-            {job.budget && job.budget !== 'Negotiable' && (
-              <span style={{ ...s.metaChip, background: '#f0fdf4', color: '#16a34a' }}>Budget: {job.budget}</span>
+          {/* Posted + Location */}
+          <div style={s.metaLine}>
+            <span style={s.metaDot}>Posted {timeAgo(job.postedAt)}</span>
+            {hasCountry && (
+              <>
+                <span style={s.sep}>·</span>
+                <span style={s.metaDot}>{job.country}</span>
+              </>
             )}
-            {connectionsLabel && (
-              <span style={{ ...s.metaChip, background: '#eff6ff', color: '#2563eb', fontWeight: 600 }}>
-                {connectionsLabel} required
-              </span>
-            )}
-            {job.clientSpend && <span style={s.metaChip}>Total spent: {job.clientSpend}</span>}
           </div>
 
-          {/* Score bar */}
+          {/* Job Specs Row — Budget, Experience, Type */}
+          <div style={s.specRow}>
+            {job.budget && job.budget !== 'Negotiable' && (
+              <div style={s.specBox}>
+                <div style={s.specVal}>{job.budget}</div>
+                <div style={s.specKey}>{job.budgetType || 'Budget'}</div>
+              </div>
+            )}
+            {expLevel && (
+              <div style={s.specBox}>
+                <div style={s.specVal}>{expLevel}</div>
+                <div style={s.specKey}>Experience Level</div>
+              </div>
+            )}
+            {job.duration && (
+              <div style={s.specBox}>
+                <div style={s.specVal}>{job.duration}</div>
+                <div style={s.specKey}>Duration</div>
+              </div>
+            )}
+            {(job.connections ?? 0) > 0 && (
+              <div style={s.specBox}>
+                <div style={{ ...s.specVal, color: '#2563eb' }}>{job.connections} Connects</div>
+                <div style={s.specKey}>Required to Bid</div>
+              </div>
+            )}
+          </div>
+
+          {/* Match score */}
           <div style={s.scoreRow}>
+            <span style={{ fontSize: 13, color: '#374151', fontWeight: 600 }}>Match Score</span>
             <span style={{ ...s.scorePct, color: getScoreColor(job.score) }}>{job.score}%</span>
             <div style={s.barTrack}>
               <div style={{ ...s.barFill, width: `${job.score}%`, background: getScoreColor(job.score) }} />
             </div>
-            <span style={s.scoreText}>
+            <span style={{ fontSize: 12, color: '#64748b' }}>
               {job.score >= 70 ? 'Strong fit' : job.score >= 50 ? 'Promising' : 'Low match'}
             </span>
           </div>
 
+          <hr style={s.divider} />
+
           {/* Description */}
-          <div style={s.descWrap}>
-            <h3 style={s.sectionLabel}>Project Description</h3>
+          <div>
+            <h3 style={s.sectionHead}>Project Description</h3>
             <div style={s.descBody}>{job.description || 'No description provided.'}</div>
           </div>
 
+          {/* Skills */}
+          {skills.length > 0 && (
+            <div>
+              <h3 style={s.sectionHead}>Skills & Expertise</h3>
+              <div style={s.skillsWrap}>
+                {skills.map((sk, i) => (
+                  <span key={i} style={s.skillChip}>{sk}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Activity on this job */}
+          {(job.proposalCount != null || job.interviewingCount != null) && (
+            <div>
+              <h3 style={s.sectionHead}>Activity on this Job</h3>
+              <div style={s.activityRow}>
+                {job.proposalCount != null && (
+                  <span style={s.actItem}>Proposals: <strong>{job.proposalCount}</strong></span>
+                )}
+                {(job.interviewingCount ?? 0) > 0 && (
+                  <span style={s.actItem}>Interviewing: <strong>{job.interviewingCount}</strong></span>
+                )}
+                {(job.hiresCount ?? 0) > 0 && (
+                  <span style={s.actItem}>Hires: <strong>{job.hiresCount}</strong></span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* About the client */}
+          {(hasCountry || job.clientSpend || job.clientRating || job.paymentVerified || job.jobsPosted) && (
+            <div>
+              <h3 style={s.sectionHead}>About the Client</h3>
+              <div style={s.clientGrid}>
+                {hasCountry && (
+                  <div style={s.clientItem}>
+                    <div style={s.clientLabel}>Location</div>
+                    <div style={s.clientVal}>{job.country}</div>
+                  </div>
+                )}
+                {job.clientSpend && (
+                  <div style={s.clientItem}>
+                    <div style={s.clientLabel}>Total Spent</div>
+                    <div style={{ ...s.clientVal, color: '#0f172a', fontWeight: 700 }}>{job.clientSpend}</div>
+                  </div>
+                )}
+                {job.clientRating && (
+                  <div style={s.clientItem}>
+                    <div style={s.clientLabel}>Rating</div>
+                    <div style={{ ...s.clientVal, color: '#f59e0b', fontWeight: 700 }}>{job.clientRating} ★</div>
+                  </div>
+                )}
+                {job.paymentVerified && (
+                  <div style={s.clientItem}>
+                    <div style={s.clientLabel}>Payment</div>
+                    <div style={{ ...s.clientVal, color: '#16a34a' }}>Verified</div>
+                  </div>
+                )}
+                {job.jobsPosted != null && (
+                  <div style={s.clientItem}>
+                    <div style={s.clientLabel}>Jobs Posted</div>
+                    <div style={s.clientVal}>{job.jobsPosted}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Actions */}
           <div style={s.actions}>
-            <button onClick={openListing} style={s.btnPrimary}>Open on {job.platform}</button>
-            {!job.applied && (
-              <button onClick={markApplied} style={s.btnSecondary}>Mark as Applied</button>
-            )}
+            <button onClick={openListing} style={s.btnPrimary}>View on {job.platform}</button>
+            <button onClick={markApplied} style={job.applied ? s.btnApplied : s.btnSecondary}>
+              {job.applied ? 'Applied' : 'Mark as Applied'}
+            </button>
           </div>
         </section>
 
-        {/* ──── RIGHT: AI ANALYSIS ──── */}
+        {/* ──── RIGHT PANEL: AI ANALYSIS ──── */}
         <aside style={s.rightPanel}>
 
-          {/* Analyzing loader */}
           {analyzing && (
             <div style={s.card}>
-              <p style={s.sectionLabel}>Generating proposal…</p>
-              <div style={s.analyzeLoader}>
+              <div style={s.sectionHead}>Generating AI Proposal…</div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px 0', gap: 10 }}>
                 <div style={s.spinner} />
                 <p style={s.muted}>Reading the job, extracting requirements, writing a tailored proposal.</p>
               </div>
             </div>
           )}
 
-          {/* Non-critical error banner */}
           {error && !analyzing && (
             <div style={s.warnBox}>{error}</div>
           )}
 
-          {/* Analysis loaded */}
           {!analyzing && analysis && (
             <>
-              {/* Verdict row */}
+              {/* AI Score / Risk / ETA */}
               <div style={s.card}>
+                <div style={s.sectionHead}>AI Assessment</div>
                 <div style={s.verdictGrid}>
                   <div style={s.verdictCell}>
-                    <div style={s.vLabel}>AI Score</div>
+                    <div style={s.vLabel}>Score</div>
                     <div style={{ ...s.vValue, color: getScoreColor(analysis.score) }}>{analysis.score}/100</div>
                   </div>
                   <div style={s.verdictCell}>
-                    <div style={s.vLabel}>Risk</div>
-                    <div style={{
-                      ...s.vValue,
-                      color: analysis.risk === 'Low' ? '#16a34a' : analysis.risk === 'High' ? '#dc2626' : '#d97706',
-                    }}>{analysis.risk}</div>
+                    <div style={s.vLabel}>Risk Level</div>
+                    <div style={{ ...s.vValue, color: analysis.risk === 'Low' ? '#16a34a' : analysis.risk === 'High' ? '#dc2626' : '#d97706' }}>
+                      {analysis.risk}
+                    </div>
                   </div>
                   <div style={s.verdictCell}>
                     <div style={s.vLabel}>ETA</div>
@@ -347,7 +445,7 @@ export default function JobDetailPage() {
               {/* Summary */}
               {analysis.summary && (
                 <div style={s.card}>
-                  <h4 style={s.sectionLabel}>Opportunity Summary</h4>
+                  <div style={s.sectionHead}>Opportunity Summary</div>
                   <p style={s.muted}>{analysis.summary}</p>
                 </div>
               )}
@@ -355,13 +453,13 @@ export default function JobDetailPage() {
               {/* Technical blockers */}
               {(analysis.technicalBlockers?.length ?? 0) > 0 && (
                 <div style={s.card}>
-                  <h4 style={s.sectionLabel}>Technical Considerations</h4>
+                  <div style={s.sectionHead}>Technical Considerations</div>
                   <ul style={s.list}>
                     {analysis.technicalBlockers!.map((b, i) => <li key={i} style={s.listItem}>{b}</li>)}
                   </ul>
                   {(analysis.blockerSolutions?.length ?? 0) > 0 && (
                     <>
-                      <h4 style={{ ...s.sectionLabel, marginTop: 10 }}>Suggested Approach</h4>
+                      <div style={{ ...s.sectionHead, marginTop: 12 }}>Suggested Approach</div>
                       <ul style={s.list}>
                         {analysis.blockerSolutions!.map((b, i) => <li key={i} style={s.listItem}>{b}</li>)}
                       </ul>
@@ -373,20 +471,16 @@ export default function JobDetailPage() {
               {/* Questions */}
               {(analysis.questions?.length ?? 0) > 0 && (
                 <div style={s.card}>
-                  <h4 style={s.sectionLabel}>Questions to Ask</h4>
+                  <div style={s.sectionHead}>Questions to Ask Client</div>
                   <ol style={{ ...s.list, paddingLeft: 18 }}>
                     {analysis.questions.map((q, i) => <li key={i} style={s.listItem}>{q}</li>)}
                   </ol>
                 </div>
               )}
 
-              {/* Bid + Proposal */}
+              {/* Proposal */}
               <div style={s.card}>
-                <div style={s.proposalHeader}>
-                  <h4 style={s.sectionLabel}>Proposal</h4>
-                </div>
-
-                {/* Budget / bid row */}
+                <div style={s.sectionHead}>Proposal</div>
                 <div style={s.bidRow}>
                   <div style={s.bidCell}>
                     <div style={s.vLabel}>Listed Budget</div>
@@ -402,7 +496,6 @@ export default function JobDetailPage() {
                     />
                   </div>
                 </div>
-
                 <textarea
                   value={proposalDraft}
                   onChange={e => setProposalDraft(e.target.value)}
@@ -421,16 +514,16 @@ export default function JobDetailPage() {
   );
 }
 
-/* ── STYLES ─────────────────────────────────────────────────────── */
+/* ── STYLES — Upwork-inspired clean typography ── */
 const s: Record<string, React.CSSProperties> = {
   page: {
     height: '100vh',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    background: '#f0f4ff',
-    fontFamily: 'Inter,"Segoe UI",sans-serif',
-    color: '#111827',
+    background: '#f7f9fc',
+    fontFamily: '"Inter","Segoe UI",system-ui,sans-serif',
+    color: '#1f2937',
   },
   topBar: {
     display: 'flex',
@@ -438,179 +531,104 @@ const s: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     padding: '10px 20px',
     background: '#fff',
-    borderBottom: '1px solid #e2e8f0',
+    borderBottom: '1px solid #e5e7eb',
     flexShrink: 0,
     flexWrap: 'wrap',
     gap: 8,
   },
-  backBtn: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: 14,
-    color: '#2563eb',
-    fontWeight: 600,
-    padding: '4px 0',
-  },
-  badge: {
-    color: '#fff',
-    borderRadius: 999,
-    padding: '3px 10px',
-    fontSize: 11,
-    fontWeight: 700,
-  },
-  timeAgo: { fontSize: 12, color: '#94a3b8' },
-
-  layout: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: 0,
-    flex: 1,
-    overflow: 'hidden',
-  },
+  backBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#374151', fontWeight: 600, padding: '4px 0' },
+  badge: { color: '#fff', borderRadius: 4, padding: '3px 8px', fontSize: 11, fontWeight: 600 },
+  timeAgo: { fontSize: 12, color: '#9ca3af' },
+  layout: { display: 'grid', gridTemplateColumns: '1fr 1fr', flex: 1, overflow: 'hidden' },
 
   /* LEFT */
   leftPanel: {
-    padding: '16px 20px',
+    padding: '20px 24px',
     overflowY: 'auto',
-    borderRight: '1px solid #e2e8f0',
+    borderRight: '1px solid #e5e7eb',
     background: '#fff',
     display: 'flex',
     flexDirection: 'column',
-    gap: 12,
+    gap: 16,
   },
-  title: { fontSize: 20, fontWeight: 800, color: '#0f172a', lineHeight: 1.3, margin: 0 },
-  metaStrip: { display: 'flex', flexWrap: 'wrap', gap: 6 },
-  metaChip: {
-    background: '#f1f5f9',
-    color: '#334155',
+  title: { fontSize: 22, fontWeight: 700, color: '#111827', lineHeight: 1.35, margin: 0 },
+  metaLine: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280' },
+  metaDot: { color: '#6b7280' },
+  sep: { color: '#d1d5db' },
+
+  specRow: { display: 'flex', flexWrap: 'wrap', gap: 12 },
+  specBox: {
+    background: '#f9fafb',
+    border: '1px solid #e5e7eb',
+    borderRadius: 8,
+    padding: '10px 16px',
+    minWidth: 100,
+  },
+  specVal: { fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 2 },
+  specKey: { fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
+
+  scoreRow: { display: 'flex', alignItems: 'center', gap: 10 },
+  scorePct: { fontSize: 18, fontWeight: 800, minWidth: 42 },
+  barTrack: { flex: 1, height: 5, background: '#e5e7eb', borderRadius: 999, overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 999, transition: 'width 0.4s' },
+
+  divider: { border: 'none', borderTop: '1px solid #f3f4f6', margin: 0 },
+
+  sectionHead: { fontSize: 14, fontWeight: 700, color: '#111827', margin: '0 0 10px', letterSpacing: '-0.01em' },
+  descBody: { fontSize: 14, color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap', maxHeight: 300, overflowY: 'auto' },
+
+  skillsWrap: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  skillChip: {
+    background: '#f3f4f6',
+    color: '#374151',
     borderRadius: 999,
-    padding: '4px 10px',
+    padding: '4px 12px',
     fontSize: 12,
     fontWeight: 500,
-  },
-  scoreRow: { display: 'flex', alignItems: 'center', gap: 10 },
-  scorePct: { fontSize: 22, fontWeight: 800, minWidth: 48 },
-  barTrack: { flex: 1, height: 6, background: '#e2e8f0', borderRadius: 999, overflow: 'hidden' },
-  barFill: { height: '100%', borderRadius: 999 },
-  scoreText: { fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' as const },
-
-  descWrap: { flex: 1, minHeight: 0 },
-  sectionLabel: { fontSize: 13, fontWeight: 700, color: '#374151', margin: '0 0 6px', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
-  descBody: {
-    fontSize: 13,
-    color: '#475569',
-    lineHeight: 1.7,
-    whiteSpace: 'pre-wrap' as const,
-    overflowY: 'auto',
-    maxHeight: 'calc(100vh - 360px)',
-    paddingRight: 4,
+    border: '1px solid #e5e7eb',
   },
 
-  actions: { display: 'flex', gap: 8, flexWrap: 'wrap' as const, paddingTop: 4 },
-  btnPrimary: {
-    background: '#2563eb',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 999,
-    padding: '9px 18px',
-    fontSize: 13,
-    fontWeight: 700,
-    cursor: 'pointer',
-  },
-  btnSecondary: {
-    background: '#fff',
-    color: '#334155',
-    border: '1px solid #dbe2ea',
-    borderRadius: 999,
-    padding: '9px 16px',
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-  },
-  btnGhost: {
-    background: 'none',
-    border: '1px solid #dbe2ea',
-    borderRadius: 999,
-    padding: '6px 12px',
-    fontSize: 12,
-    color: '#64748b',
-    cursor: 'pointer',
-  },
+  activityRow: { display: 'flex', flexWrap: 'wrap', gap: 16, fontSize: 13, color: '#4b5563' },
+  actItem: { fontSize: 13, color: '#4b5563' },
+
+  clientGrid: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 },
+  clientItem: { background: '#f9fafb', borderRadius: 8, padding: '10px 12px', border: '1px solid #e5e7eb' },
+  clientLabel: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 },
+  clientVal: { fontSize: 14, fontWeight: 600, color: '#374151' },
+
+  actions: { display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 4 },
+  btnPrimary: { background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  btnSecondary: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: 6, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  btnApplied: { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 
   /* RIGHT */
-  rightPanel: {
-    padding: '16px',
-    overflowY: 'auto',
-    background: '#f8fafc',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12,
-  },
-  card: {
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: 14,
-    padding: '14px 16px',
-  },
+  rightPanel: { padding: '16px', overflowY: 'auto', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 12 },
+  card: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '16px' },
 
-  verdictGrid: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, textAlign: 'center' as const },
-  verdictCell: {},
-  vLabel: { fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginBottom: 4 },
-  vValue: { fontSize: 16, fontWeight: 800, color: '#0f172a' },
+  verdictGrid: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginTop: 12, textAlign: 'center' },
+  verdictCell: { background: '#f9fafb', borderRadius: 8, padding: '10px 4px' },
+  vLabel: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 },
+  vValue: { fontSize: 16, fontWeight: 800, color: '#111827' },
 
-  muted: { fontSize: 13, color: '#64748b', lineHeight: 1.6, margin: 0 },
+  muted: { fontSize: 13, color: '#6b7280', lineHeight: 1.65, margin: 0 },
   list: { paddingLeft: 16, margin: 0 },
-  listItem: { fontSize: 13, color: '#475569', lineHeight: 1.6, marginBottom: 6 },
+  listItem: { fontSize: 13, color: '#374151', lineHeight: 1.65, marginBottom: 5 },
 
-  proposalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  bidRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 },
-  bidCell: { background: '#f8fafc', borderRadius: 10, padding: '8px 12px' },
-  bidInput: {
-    width: '100%',
-    border: '1px solid #e2e8f0',
-    borderRadius: 8,
-    padding: '4px 8px',
-    fontSize: 14,
-    fontWeight: 700,
-    color: '#0f172a',
-    background: 'transparent',
-    boxSizing: 'border-box' as const,
-  },
+  bidRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 },
+  bidCell: { background: '#f9fafb', borderRadius: 8, padding: '10px 12px' },
+  bidInput: { width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', fontSize: 14, fontWeight: 700, color: '#111827', background: 'transparent', boxSizing: 'border-box' },
   proposalTA: {
-    width: '100%',
-    height: 'calc(100vh - 620px)',
-    minHeight: 160,
-    maxHeight: 400,
-    border: '1px solid #e2e8f0',
-    borderRadius: 10,
-    padding: '10px 12px',
-    fontSize: 13,
-    lineHeight: 1.65,
-    color: '#334155',
-    background: '#f8fafc',
-    resize: 'vertical' as const,
-    marginBottom: 10,
-    boxSizing: 'border-box' as const,
-    display: 'block',
+    width: '100%', minHeight: 180, maxHeight: 380,
+    border: '1px solid #e5e7eb', borderRadius: 8,
+    padding: '10px 12px', fontSize: 13, lineHeight: 1.65,
+    color: '#374151', background: '#f9fafb',
+    resize: 'vertical', marginBottom: 10,
+    boxSizing: 'border-box', display: 'block',
+    fontFamily: '"Inter","Segoe UI",sans-serif',
   },
+  warnBox: { background: '#fefce8', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#92400e' },
 
   loadingCenter: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' },
-  spinner: {
-    width: 32, height: 32,
-    border: '3px solid #dbeafe',
-    borderTopColor: '#2563eb',
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  analyzeLoader: { textAlign: 'center' as const, padding: '16px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 },
-  errorBox: { background: '#fff', border: '1px solid #fecaca', borderRadius: 14, padding: 24, textAlign: 'center' as const },
-  warnBox: {
-    background: '#fefce8',
-    border: '1px solid #fde68a',
-    borderRadius: 10,
-    padding: '10px 14px',
-    fontSize: 13,
-    color: '#92400e',
-  },
+  spinner: { width: 28, height: 28, border: '3px solid #e5e7eb', borderTopColor: '#16a34a', borderRadius: '50%', animation: 'spin 0.8s linear infinite' },
+  errorBox: { background: '#fff', border: '1px solid #fecaca', borderRadius: 12, padding: 32, textAlign: 'center', margin: 24 },
 };

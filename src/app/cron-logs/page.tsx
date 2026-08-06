@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { isAdmin } from '@/lib/auth';
 
 interface CronLogEntry {
   id: string;
@@ -19,8 +20,12 @@ export default function CronLogsPage() {
   const [totalCachedJobs, setTotalCachedJobs] = useState(0);
 
   useEffect(() => {
+    if (!isAdmin()) {
+      router.push('/');
+      return;
+    }
     fetchLogs();
-  }, []);
+  }, [router]);
 
   const fetchLogs = async () => {
     setLoading(true);
