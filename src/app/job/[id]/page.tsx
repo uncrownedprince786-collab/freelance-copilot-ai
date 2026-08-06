@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { isAuthenticated } from '@/lib/auth';
+import { AdminLoginModal } from '@/components/AdminLoginModal';
 
 interface Job {
   id: string;
@@ -16,6 +18,11 @@ interface Job {
   postedAt: string;
   company?: string;
   location?: string;
+  country?: string;
+  clientName?: string;
+  clientSpend?: string;
+  clientReviews?: string;
+  connections?: number;
   isNew?: boolean;
 }
 
@@ -35,6 +42,31 @@ interface Analysis {
   suggestedEta?: string;
 }
 
+const PLATFORM_COLORS: Record<string, string> = {
+  Upwork: '#14a800',
+  Freelancer: '#29b2fe',
+  RemoteOK: '#ff6b35',
+  'Remote OK': '#ff6b35',
+  WeWorkRemotely: '#3b82f6',
+};
+
+function getScoreColor(score: number) {
+  if (score >= 70) return '#10b981';
+  if (score >= 50) return '#f59e0b';
+  return '#ef4444';
+}
+
+function timeAgo(dateStr: string) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  const hrs = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (mins < 2) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${days}d ago`;
+}
+
 export default function JobDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -42,41 +74,47 @@ export default function JobDetailPage() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
-  const [proposal, setProposal] = useState('');
   const [proposalDraft, setProposalDraft] = useState('');
-  const [bidSuggestion, setBidSuggestion] = useState('');
-  const [showFullProposal, setShowFullProposal] = useState(false);
+  const [bidAmount, setBidAmount] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   useEffect(() => {
-    const storedJob = sessionStorage.getItem('selectedJob');
-    if (storedJob) {
+    if (!isAuthenticated()) {
+      setShowAuthModal(true);
+    }
+    const stored = sessionStorage.getItem('selectedJob');
+    if (stored) {
       try {
-        const parsed = JSON.parse(storedJob);
+        const parsed = JSON.parse(stored) as Job;
         if (parsed?.title) {
           setJob(parsed);
           setLoading(false);
-          void fetchAnalysis(parsed);
           sessionStorage.removeItem('selectedJob');
+          void fetchAnalysis(parsed);
           return;
         }
-      } catch (error) {
-        console.error('Failed to parse selected job', error);
-      }
+      } catch {/* continue to API fallback */}
     }
-    void loadJob();
+    void loadJobFromApi();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params?.id]);
 
-  const loadJob = async () => {
+  const loadJobFromApi = async () => {
     try {
       const res = await fetch('/api/jobs');
-      const jobs = await res.json();
-      const found = jobs.find((entry: Job) => entry.id === params.id);
+      if (!res.ok) throw new Error('Failed to load jobs');
+      const jobs: Job[] = await res.json();
+      const found = jobs.find(j => j.id === params.id);
       if (found) {
         setJob(found);
-        await fetchAnalysis(found);
+        void fetchAnalysis(found);
+      } else {
+        setError('Job not found.');
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
+      setError('Could not load job. Please go back and try again.');
     } finally {
       setLoading(false);
     }
@@ -84,634 +122,495 @@ export default function JobDetailPage() {
 
   const fetchAnalysis = async (jobData: Job) => {
     setAnalyzing(true);
+    setError('');
     try {
+      // Validate inputs before sending
+      if (!jobData.title || typeof jobData.title !== 'string') return;
+
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: jobData.title,
-          description: jobData.description,
-          platform: jobData.platform,
-          budget: jobData.budget
-        })
+          title: jobData.title.slice(0, 300),
+          description: jobData.description?.slice(0, 3000) ?? '',
+          platform: jobData.platform ?? 'Unknown',
+          budget: jobData.budget ?? 'Negotiable',
+          clientName: jobData.clientName ?? jobData.company ?? '',
+        }),
       });
-      const data = await res.json();
+
+      if (!res.ok) throw new Error('Analysis failed');
+      const data: Analysis = await res.json();
       setAnalysis(data);
-
-      let personalizedProposal = data.proposal || data.summary;
-      const clientName = jobData.company || 'Hiring Manager';
-      const skillMatch = jobData.title.split(' ').slice(0, 3).join(' ');
-
-      personalizedProposal = personalizedProposal
-        .replace(/hi there/i, `Hi ${clientName},`)
-        .replace(/dear client/i, `Dear ${clientName}`)
-        .replace(/best regards/i, `Best regards,\n${jobData.platform === 'Upwork' ? 'A strong fit for this project' : 'A reliable freelancer ready to help'}`);
-
-      personalizedProposal = `${personalizedProposal}\n\nI understand the importance of a smooth delivery process and would make sure the project stays clear, organized, and aligned with your expectations. I would be glad to discuss the scope and propose a practical path forward for ${skillMatch}.`;
-
-      setProposal(personalizedProposal);
-      setProposalDraft(personalizedProposal);
-      setBidSuggestion(data.bidAmount || '$1000-$2500');
-    } catch (error) {
-      console.error('Analysis error:', error);
+      setBidAmount(data.bidAmount ?? '');
+      
+      const client = jobData.clientName && jobData.clientName !== 'Upwork Client' && jobData.clientName !== 'Freelancer Client' ? jobData.clientName : 'there';
+      let finalProposal = data.proposal ?? '';
+      if (!finalProposal.toLowerCase().startsWith('hi ') && !finalProposal.toLowerCase().startsWith('dear ')) {
+        finalProposal = `Hi ${client},\n\n${finalProposal}`;
+      }
+      setProposalDraft(finalProposal);
+    } catch {
+      setError('Analysis unavailable. You can still view the job and apply manually.');
     } finally {
       setAnalyzing(false);
     }
   };
 
-  const markAsViewed = async () => {
-    if (job) {
+  const openListing = async () => {
+    if (!job) return;
+    try {
       await fetch('/api/jobs/view', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: job.id })
+        body: JSON.stringify({ jobId: job.id }),
       });
-      window.open(job.url, '_blank');
-      setJob({ ...job, viewed: true });
-    }
+      setJob(prev => prev ? { ...prev, viewed: true } : prev);
+    } catch {/* non-critical */}
+    window.open(job.url, '_blank', 'noopener,noreferrer');
   };
 
-  const markAsApplied = async () => {
-    if (job) {
+  const markApplied = async () => {
+    if (!job) return;
+    const nextState = !job.applied;
+    try {
       await fetch('/api/jobs/applied', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: job.id })
+        body: JSON.stringify({ jobId: job.id, applied: nextState }),
       });
-      setJob({ ...job, applied: true });
-    }
+      setJob(prev => prev ? { ...prev, applied: nextState } : prev);
+    } catch {/* non-critical */}
   };
 
   const copyProposal = async () => {
-    await navigator.clipboard.writeText(proposalDraft || proposal);
+    try {
+      await navigator.clipboard.writeText(proposalDraft);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError('Could not copy to clipboard.');
+    }
   };
 
-  const getPlatformColor = (platform: string) => {
-    const colors: Record<string, string> = {
-      Upwork: '#14a800',
-      Freelancer: '#29b2fe',
-      'Remote OK': '#ff6b35',
-      'WeWorkRemotely': '#3b82f6'
-    };
-    return colors[platform] || '#6c5ce7';
-  };
-
-  const getScoreColor = (score: number) => {
-    if (score >= 70) return '#10b981';
-    if (score >= 50) return '#f59e0b';
-    return '#ef4444';
-  };
-
+  /* ── LOADING STATE ── */
   if (loading) {
     return (
-      <div style={styles.page}>
-        <div style={styles.loading}>Loading job details...</div>
+      <div style={s.page}>
+        <div style={s.loadingCenter}>
+          <div style={s.spinner} />
+          <p style={{ color: '#64748b', marginTop: 12, fontSize: 14 }}>Loading job details…</p>
+        </div>
       </div>
     );
   }
 
-  if (!job) {
+  /* ── ERROR / NOT FOUND ── */
+  if (error && !job) {
     return (
-      <div style={styles.page}>
-        <div style={styles.notFound}>
-          <h2 style={styles.notFoundTitle}>Job not found</h2>
-          <button onClick={() => router.push('/')} style={styles.backBtn}>Back to dashboard</button>
+      <div style={s.page}>
+        <div style={s.errorBox}>
+          <p style={{ color: '#dc2626', fontWeight: 600, marginBottom: 12 }}>{error}</p>
+          <button onClick={() => router.push('/')} style={s.btnSecondary}>Back to Dashboard</button>
         </div>
       </div>
     );
   }
 
+  if (!job) return null;
+
+  const rawName = job.clientName || job.company || '';
+  const clientLabel = rawName && !rawName.toLowerCase().includes('client') ? rawName : null;
+  const locationLabel = job.country || job.location || 'Remote';
+  const connectionsLabel = (job.connections ?? 0) > 0 ? `${job.connections} connects` : null;
+
+  /* ── RENDER ── */
   return (
-    <div style={styles.page}>
-      <div style={styles.shell}>
-        <button onClick={() => router.push('/')} style={styles.backBtn}>Back to dashboard</button>
-
-        <div style={styles.layout}>
-          <section style={styles.mainCard}>
-            <div style={styles.cardHeader}>
-              <span style={{ ...styles.platformBadge, background: getPlatformColor(job.platform) }}>{job.platform}</span>
-              {job.isNew ? <span style={styles.newBadge}>New</span> : null}
-              {job.applied ? <span style={styles.appliedBadge}>Applied</span> : null}
-              {job.viewed && !job.applied ? <span style={styles.viewedBadge}>Viewed</span> : null}
-            </div>
-
-            <h1 style={styles.title}>{job.title}</h1>
-            <p style={styles.subtitle}>{job.company || 'Client'} • {job.location || 'Remote'} • {job.budget}</p>
-
-            <div style={styles.metaGrid}>
-              <div style={styles.metaCard}>
-                <div style={styles.metaLabel}>Platform</div>
-                <div style={styles.metaValue}>{job.platform}</div>
-              </div>
-              <div style={styles.metaCard}>
-                <div style={styles.metaLabel}>Posted</div>
-                <div style={styles.metaValue}>{new Date(job.postedAt).toLocaleDateString()}</div>
-              </div>
-              <div style={styles.metaCard}>
-                <div style={styles.metaLabel}>Budget</div>
-                <div style={styles.metaValue}>{job.budget}</div>
-              </div>
-            </div>
-
-            <div style={styles.scoreBlock}>
-              <div style={styles.scoreCircle}>
-                <div style={{ ...styles.scoreNumber, color: getScoreColor(job.score) }}>{job.score}%</div>
-                <div style={styles.scoreLabel}>Match score</div>
-              </div>
-              <div style={styles.scoreCopy}>
-                <h3 style={styles.sectionTitle}>Opportunity fit</h3>
-                <p style={styles.sectionText}>{job.score >= 70 ? 'This looks like a strong fit with clear upside for a tailored proposal.' : 'This looks workable, but the scope and budget should be verified before sending a bid.'}</p>
-              </div>
-            </div>
-
-            <div style={styles.sectionBlock}>
-              <h3 style={styles.sectionTitle}>Project description</h3>
-              <div style={styles.description}>{job.description}</div>
-            </div>
-
-            <div style={styles.actions}>
-              <button onClick={markAsViewed} style={styles.primaryBtn}>Open listing</button>
-              {!job.applied ? <button onClick={markAsApplied} style={styles.secondaryBtn}>Mark as applied</button> : null}
-            </div>
-          </section>
-
-          <aside style={styles.sidebar}>
-            {analyzing ? (
-              <div style={styles.aiCard}>
-                <h3 style={styles.sectionTitle}>AI review</h3>
-                <div style={styles.analyzingState}>
-                  <div style={styles.spinnerSmall} />
-                  <p style={styles.sectionText}>Reviewing scope, risk, and the best angle for outreach.</p>
-                </div>
-              </div>
-            ) : analysis ? (
-              <div style={styles.aiCard}>
-                <div style={styles.aiHeader}>
-                  <div>
-                    <h3 style={styles.sectionTitle}>AI review</h3>
-                    <p style={styles.sectionText}>A quick decision support layer for outreach.</p>
-                  </div>
-                </div>
-
-                <div style={styles.verdictRow}>
-                  <div style={styles.verdictItem}>
-                    <div style={styles.verdictLabel}>Score</div>
-                    <div style={{ ...styles.verdictValue, color: getScoreColor(analysis.score) }}>{analysis.score}/100</div>
-                  </div>
-                  <div style={styles.verdictItem}>
-                    <div style={styles.verdictLabel}>Risk</div>
-                    <div style={{ ...styles.verdictValue, color: analysis.risk === 'Low' ? '#16a34a' : analysis.risk === 'High' ? '#dc2626' : '#d97706' }}>{analysis.risk}</div>
-                  </div>
-                  <div style={styles.verdictItem}>
-                    <div style={styles.verdictLabel}>Bid</div>
-                    <div style={styles.verdictValue}>{analysis.bidAmount}</div>
-                  </div>
-                </div>
-
-                <div style={styles.sectionBlock}>
-                  <h4 style={styles.subTitle}>Executive summary</h4>
-                  <p style={styles.sectionText}>{analysis.summary}</p>
-                </div>
-
-                <div style={styles.sectionBlock}>
-                  <h4 style={styles.subTitle}>Project context and client details</h4>
-                  <div style={styles.infoGrid}>
-                    <div style={styles.infoCard}>
-                      <div style={styles.metaLabel}>Original budget</div>
-                      <div style={styles.metaValue}>{analysis.originalBudget || job.budget}</div>
-                    </div>
-                    <div style={styles.infoCard}>
-                      <div style={styles.metaLabel}>Original timeline</div>
-                      <div style={styles.metaValue}>{analysis.originalTimeline || 'Flexible'}</div>
-                    </div>
-                  </div>
-                  <p style={styles.sectionText}>{analysis.clientDetails || 'The client shared a scope request that should be reviewed carefully before you bid.'}</p>
-                </div>
-
-                <div style={styles.sectionBlock}>
-                  <h4 style={styles.subTitle}>What matters most</h4>
-                  <ul style={styles.list}>
-                    {analysis.reasons?.map((reason, index) => <li key={index} style={styles.listItem}>{reason}</li>)}
-                  </ul>
-                </div>
-
-                <div style={styles.sectionBlock}>
-                  <h4 style={styles.subTitle}>Technical blockers and suggested response</h4>
-                  <ul style={styles.list}>
-                    {(analysis.technicalBlockers?.length ? analysis.technicalBlockers : ['No major blocker detected from the listing.']).map((blocker, index) => (
-                      <li key={index} style={styles.listItem}>{blocker}</li>
-                    ))}
-                  </ul>
-                  {analysis.blockerSolutions?.length ? (
-                    <div style={styles.solutionBox}>
-                      <div style={styles.metaLabel}>Suggested approach</div>
-                      <ul style={styles.list}>
-                        {analysis.blockerSolutions.map((solution, index) => <li key={index} style={styles.listItem}>{solution}</li>)}
-                      </ul>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div style={styles.sectionBlock}>
-                  <h4 style={styles.subTitle}>Questions to ask</h4>
-                  <ul style={styles.list}>
-                    {analysis.questions?.map((question, index) => <li key={index} style={styles.listItem}>{question}</li>)}
-                  </ul>
-                </div>
-
-                <div style={styles.sectionBlock}>
-                  <div style={styles.proposalHeader}>
-                    <h4 style={styles.subTitle}>Suggested bid for this project</h4>
-                    <button onClick={() => job && void fetchAnalysis(job)} style={styles.ghostBtn} disabled={analyzing}>Refresh proposal</button>
-                  </div>
-                  <div style={styles.bidSummary}>
-                    <div style={styles.bidSummaryItem}>
-                      <div style={styles.metaLabel}>Project budget</div>
-                      <div style={styles.metaValue}>{analysis.originalBudget || job.budget}</div>
-                    </div>
-                    <div style={styles.bidSummaryItem}>
-                      <div style={styles.metaLabel}>AI suggested bid</div>
-                      <div style={styles.metaValue}>{bidSuggestion || analysis.bidAmount}</div>
-                    </div>
-                    <div style={styles.bidSummaryItem}>
-                      <div style={styles.metaLabel}>Suggested ETA</div>
-                      <div style={styles.metaValue}>{analysis.suggestedEta || 'Flexible'}</div>
-                    </div>
-                  </div>
-                  <input
-                    value={bidSuggestion}
-                    onChange={(event) => setBidSuggestion(event.target.value)}
-                    style={styles.bidInput}
-                    placeholder="Suggested bid"
-                  />
-                  <textarea
-                    value={proposalDraft}
-                    onChange={(event) => setProposalDraft(event.target.value)}
-                    style={styles.proposalTextarea}
-                    rows={showFullProposal ? 16 : 10}
-                  />
-                  <div style={styles.proposalActions}>
-                    <button onClick={() => setShowFullProposal((value) => !value)} style={styles.ghostBtn}>{showFullProposal ? 'Show less' : 'Read full'}</button>
-                    <button onClick={() => void copyProposal()} style={styles.primarySmallBtn}>Copy proposal</button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </aside>
+    <div style={s.page}>
+      <AdminLoginModal
+        isOpen={showAuthModal}
+        onClose={() => router.push('/')}
+        onSuccess={() => setShowAuthModal(false)}
+      />
+      {/* ── TOPBAR ── */}
+      <div style={s.topBar}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button onClick={() => router.push('/')} style={s.backBtn}>
+            &larr; Dashboard
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Lead Hunter Logo" style={{ height: 32, width: 'auto', cursor: 'pointer' }} onClick={() => router.push('/')} />
+          <span style={{ fontWeight: 800, fontSize: 16, color: '#0f172a', cursor: 'pointer' }} onClick={() => router.push('/')}>Lead Hunter</span>
         </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ ...s.badge, background: PLATFORM_COLORS[job.platform] ?? '#6c5ce7' }}>
+            {job.platform}
+          </span>
+          {job.isNew && <span style={{ ...s.badge, background: '#22c55e' }}>New</span>}
+          {job.applied && <span style={{ ...s.badge, background: '#3b82f6' }}>Applied</span>}
+          {job.viewed && !job.applied && <span style={{ ...s.badge, background: '#94a3b8' }}>Viewed</span>}
+          <span style={s.timeAgo}>{timeAgo(job.postedAt)}</span>
+        </div>
+      </div>
+
+      {/* ── MAIN LAYOUT: left | right ── */}
+      <div style={s.layout}>
+
+        {/* ──── LEFT: JOB INFO ──── */}
+        <section style={s.leftPanel}>
+          <h1 style={s.title}>{job.title}</h1>
+
+          {/* Meta strip */}
+          <div style={s.metaStrip}>
+            {clientLabel && <span style={s.metaChip}>Client: {clientLabel}</span>}
+            <span style={s.metaChip}>Location: {locationLabel}</span>
+            {job.budget && job.budget !== 'Negotiable' && (
+              <span style={{ ...s.metaChip, background: '#f0fdf4', color: '#16a34a' }}>Budget: {job.budget}</span>
+            )}
+            {connectionsLabel && (
+              <span style={{ ...s.metaChip, background: '#eff6ff', color: '#2563eb', fontWeight: 600 }}>
+                {connectionsLabel} required
+              </span>
+            )}
+            {job.clientSpend && <span style={s.metaChip}>Total spent: {job.clientSpend}</span>}
+          </div>
+
+          {/* Score bar */}
+          <div style={s.scoreRow}>
+            <span style={{ ...s.scorePct, color: getScoreColor(job.score) }}>{job.score}%</span>
+            <div style={s.barTrack}>
+              <div style={{ ...s.barFill, width: `${job.score}%`, background: getScoreColor(job.score) }} />
+            </div>
+            <span style={s.scoreText}>
+              {job.score >= 70 ? 'Strong fit' : job.score >= 50 ? 'Promising' : 'Low match'}
+            </span>
+          </div>
+
+          {/* Description */}
+          <div style={s.descWrap}>
+            <h3 style={s.sectionLabel}>Project Description</h3>
+            <div style={s.descBody}>{job.description || 'No description provided.'}</div>
+          </div>
+
+          {/* Actions */}
+          <div style={s.actions}>
+            <button onClick={openListing} style={s.btnPrimary}>Open on {job.platform}</button>
+            {!job.applied && (
+              <button onClick={markApplied} style={s.btnSecondary}>Mark as Applied</button>
+            )}
+          </div>
+        </section>
+
+        {/* ──── RIGHT: AI ANALYSIS ──── */}
+        <aside style={s.rightPanel}>
+
+          {/* Analyzing loader */}
+          {analyzing && (
+            <div style={s.card}>
+              <p style={s.sectionLabel}>Generating proposal…</p>
+              <div style={s.analyzeLoader}>
+                <div style={s.spinner} />
+                <p style={s.muted}>Reading the job, extracting requirements, writing a tailored proposal.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Non-critical error banner */}
+          {error && !analyzing && (
+            <div style={s.warnBox}>{error}</div>
+          )}
+
+          {/* Analysis loaded */}
+          {!analyzing && analysis && (
+            <>
+              {/* Verdict row */}
+              <div style={s.card}>
+                <div style={s.verdictGrid}>
+                  <div style={s.verdictCell}>
+                    <div style={s.vLabel}>AI Score</div>
+                    <div style={{ ...s.vValue, color: getScoreColor(analysis.score) }}>{analysis.score}/100</div>
+                  </div>
+                  <div style={s.verdictCell}>
+                    <div style={s.vLabel}>Risk</div>
+                    <div style={{
+                      ...s.vValue,
+                      color: analysis.risk === 'Low' ? '#16a34a' : analysis.risk === 'High' ? '#dc2626' : '#d97706',
+                    }}>{analysis.risk}</div>
+                  </div>
+                  <div style={s.verdictCell}>
+                    <div style={s.vLabel}>ETA</div>
+                    <div style={s.vValue}>{analysis.suggestedEta ?? 'Flexible'}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary */}
+              {analysis.summary && (
+                <div style={s.card}>
+                  <h4 style={s.sectionLabel}>Opportunity Summary</h4>
+                  <p style={s.muted}>{analysis.summary}</p>
+                </div>
+              )}
+
+              {/* Technical blockers */}
+              {(analysis.technicalBlockers?.length ?? 0) > 0 && (
+                <div style={s.card}>
+                  <h4 style={s.sectionLabel}>Technical Considerations</h4>
+                  <ul style={s.list}>
+                    {analysis.technicalBlockers!.map((b, i) => <li key={i} style={s.listItem}>{b}</li>)}
+                  </ul>
+                  {(analysis.blockerSolutions?.length ?? 0) > 0 && (
+                    <>
+                      <h4 style={{ ...s.sectionLabel, marginTop: 10 }}>Suggested Approach</h4>
+                      <ul style={s.list}>
+                        {analysis.blockerSolutions!.map((b, i) => <li key={i} style={s.listItem}>{b}</li>)}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Questions */}
+              {(analysis.questions?.length ?? 0) > 0 && (
+                <div style={s.card}>
+                  <h4 style={s.sectionLabel}>Questions to Ask</h4>
+                  <ol style={{ ...s.list, paddingLeft: 18 }}>
+                    {analysis.questions.map((q, i) => <li key={i} style={s.listItem}>{q}</li>)}
+                  </ol>
+                </div>
+              )}
+
+              {/* Bid + Proposal */}
+              <div style={s.card}>
+                <div style={s.proposalHeader}>
+                  <h4 style={s.sectionLabel}>Proposal</h4>
+                </div>
+
+                {/* Budget / bid row */}
+                <div style={s.bidRow}>
+                  <div style={s.bidCell}>
+                    <div style={s.vLabel}>Listed Budget</div>
+                    <div style={s.vValue}>{analysis.originalBudget || job.budget || 'Negotiable'}</div>
+                  </div>
+                  <div style={s.bidCell}>
+                    <div style={s.vLabel}>Suggested Bid</div>
+                    <input
+                      value={bidAmount}
+                      onChange={e => setBidAmount(e.target.value)}
+                      style={s.bidInput}
+                      aria-label="Bid amount"
+                    />
+                  </div>
+                </div>
+
+                <textarea
+                  value={proposalDraft}
+                  onChange={e => setProposalDraft(e.target.value)}
+                  style={s.proposalTA}
+                  aria-label="Proposal text"
+                />
+                <button onClick={() => void copyProposal()} style={s.btnPrimary}>
+                  {copied ? 'Copied!' : 'Copy Proposal'}
+                </button>
+              </div>
+            </>
+          )}
+        </aside>
       </div>
     </div>
   );
 }
 
-const styles = {
+/* ── STYLES ─────────────────────────────────────────────────────── */
+const s: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh',
-    background: '#f3f4f6',
+    height: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    background: '#f0f4ff',
+    fontFamily: 'Inter,"Segoe UI",sans-serif',
     color: '#111827',
-    padding: '24px',
-    fontFamily: 'Inter, "Segoe UI", sans-serif'
   },
-  shell: {
-    maxWidth: '1280px',
-    margin: '0 auto'
-  },
-  loading: {
-    textAlign: 'center' as const,
-    padding: '50px',
-    color: '#111827'
+  topBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '10px 20px',
+    background: '#fff',
+    borderBottom: '1px solid #e2e8f0',
+    flexShrink: 0,
+    flexWrap: 'wrap',
+    gap: 8,
   },
   backBtn: {
-    background: '#fff',
-    border: '1px solid #dbe2ea',
-    borderRadius: '999px',
-    padding: '10px 16px',
+    background: 'none',
+    border: 'none',
     cursor: 'pointer',
-    fontSize: '14px',
-    color: '#334155',
-    marginBottom: '20px'
+    fontSize: 14,
+    color: '#2563eb',
+    fontWeight: 600,
+    padding: '4px 0',
   },
-  notFound: {
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '16px',
-    padding: '36px',
-    textAlign: 'center' as const,
-    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)'
+  badge: {
+    color: '#fff',
+    borderRadius: 999,
+    padding: '3px 10px',
+    fontSize: 11,
+    fontWeight: 700,
   },
-  notFoundTitle: {
-    fontSize: '22px',
-    marginBottom: '12px',
-    color: '#0f172a'
-  },
+  timeAgo: { fontSize: 12, color: '#94a3b8' },
+
   layout: {
     display: 'grid',
-    gridTemplateColumns: '1.3fr 0.9fr',
-    gap: '20px'
+    gridTemplateColumns: '1fr 1fr',
+    gap: 0,
+    flex: 1,
+    overflow: 'hidden',
   },
-  mainCard: {
+
+  /* LEFT */
+  leftPanel: {
+    padding: '16px 20px',
+    overflowY: 'auto',
+    borderRight: '1px solid #e2e8f0',
     background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '18px',
-    padding: '18px',
-    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)'
-  },
-  sidebar: {
     display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '16px'
+    flexDirection: 'column',
+    gap: 12,
   },
-  aiCard: {
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '18px',
-    padding: '16px',
-    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)'
-  },
-  cardHeader: {
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-    flexWrap: 'wrap' as const,
-    marginBottom: '12px'
-  },
-  platformBadge: {
-    color: '#fff',
-    borderRadius: '999px',
-    padding: '4px 10px',
-    fontSize: '11px',
-    fontWeight: 700
-  },
-  newBadge: {
-    background: '#dcfce7',
-    color: '#166534',
-    borderRadius: '999px',
-    padding: '4px 10px',
-    fontSize: '11px',
-    fontWeight: 700
-  },
-  appliedBadge: {
-    background: '#dcfce7',
-    color: '#166534',
-    borderRadius: '999px',
-    padding: '4px 10px',
-    fontSize: '11px',
-    fontWeight: 700
-  },
-  viewedBadge: {
+  title: { fontSize: 20, fontWeight: 800, color: '#0f172a', lineHeight: 1.3, margin: 0 },
+  metaStrip: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  metaChip: {
     background: '#f1f5f9',
-    color: '#475569',
-    borderRadius: '999px',
+    color: '#334155',
+    borderRadius: 999,
     padding: '4px 10px',
-    fontSize: '11px',
-    fontWeight: 700
+    fontSize: 12,
+    fontWeight: 500,
   },
-  title: {
-    fontSize: '24px',
-    fontWeight: 700,
-    lineHeight: 1.25,
-    color: '#0f172a',
-    marginBottom: '6px'
-  },
-  subtitle: {
-    color: '#64748b',
-    fontSize: '13px',
-    marginBottom: '14px'
-  },
-  metaGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-    gap: '10px',
-    marginBottom: '14px'
-  },
-  metaCard: {
-    background: '#f8fafc',
-    borderRadius: '12px',
-    padding: '10px 12px'
-  },
-  metaLabel: {
-    fontSize: '11px',
-    color: '#94a3b8',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.04em',
-    marginBottom: '4px'
-  },
-  metaValue: {
-    fontSize: '14px',
-    color: '#0f172a',
-    fontWeight: 600
-  },
-  scoreBlock: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    padding: '12px',
-    border: '1px solid #e2e8f0',
-    borderRadius: '14px',
-    background: '#f8fafc',
-    marginBottom: '14px'
-  },
-  scoreCircle: {
-    minWidth: '84px',
-    textAlign: 'center' as const
-  },
-  scoreNumber: {
-    fontSize: '24px',
-    fontWeight: 700
-  },
-  scoreLabel: {
-    fontSize: '12px',
-    color: '#64748b',
-    marginTop: '4px'
-  },
-  scoreCopy: {
-    flex: 1
-  },
-  sectionTitle: {
-    fontSize: '15px',
-    fontWeight: 700,
-    color: '#0f172a',
-    marginBottom: '4px'
-  },
-  subTitle: {
-    fontSize: '14px',
-    fontWeight: 700,
-    color: '#0f172a',
-    marginBottom: '6px'
-  },
-  sectionText: {
-    color: '#64748b',
-    fontSize: '13px',
-    lineHeight: 1.6
-  },
-  sectionBlock: {
-    marginBottom: '14px'
-  },
-  description: {
-    whiteSpace: 'pre-wrap' as const,
+  scoreRow: { display: 'flex', alignItems: 'center', gap: 10 },
+  scorePct: { fontSize: 22, fontWeight: 800, minWidth: 48 },
+  barTrack: { flex: 1, height: 6, background: '#e2e8f0', borderRadius: 999, overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 999 },
+  scoreText: { fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' as const },
+
+  descWrap: { flex: 1, minHeight: 0 },
+  sectionLabel: { fontSize: 13, fontWeight: 700, color: '#374151', margin: '0 0 6px', textTransform: 'uppercase' as const, letterSpacing: '0.04em' },
+  descBody: {
+    fontSize: 13,
     color: '#475569',
     lineHeight: 1.7,
-    fontSize: '13px',
-    maxHeight: '280px',
-    overflowY: 'auto' as const,
-    paddingRight: '8px',
-    paddingTop: '2px',
-    paddingBottom: '2px'
+    whiteSpace: 'pre-wrap' as const,
+    overflowY: 'auto',
+    maxHeight: 'calc(100vh - 360px)',
+    paddingRight: 4,
   },
-  actions: {
-    display: 'flex',
-    gap: '10px',
-    flexWrap: 'wrap' as const,
-    marginTop: '14px'
-  },
-  primaryBtn: {
+
+  actions: { display: 'flex', gap: 8, flexWrap: 'wrap' as const, paddingTop: 4 },
+  btnPrimary: {
     background: '#2563eb',
     color: '#fff',
     border: 'none',
-    borderRadius: '999px',
-    padding: '10px 16px',
+    borderRadius: 999,
+    padding: '9px 18px',
+    fontSize: 13,
+    fontWeight: 700,
     cursor: 'pointer',
-    fontWeight: 600
   },
-  secondaryBtn: {
+  btnSecondary: {
     background: '#fff',
     color: '#334155',
     border: '1px solid #dbe2ea',
-    borderRadius: '999px',
-    padding: '10px 16px',
+    borderRadius: 999,
+    padding: '9px 16px',
+    fontSize: 13,
+    fontWeight: 600,
     cursor: 'pointer',
-    fontWeight: 600
   },
-  aiHeader: {
-    marginBottom: '12px'
-  },
-  verdictRow: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-    gap: '12px',
-    background: '#f8fafc',
-    borderRadius: '14px',
-    padding: '12px',
-    marginBottom: '14px'
-  },
-  verdictItem: {
-    textAlign: 'center' as const
-  },
-  verdictLabel: {
-    fontSize: '11px',
-    color: '#94a3b8',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.04em',
-    marginBottom: '4px'
-  },
-  verdictValue: {
-    fontSize: '14px',
-    fontWeight: 700,
-    color: '#0f172a'
-  },
-  list: {
-    paddingLeft: '18px',
-    color: '#475569'
-  },
-  listItem: {
-    marginBottom: '8px',
-    lineHeight: 1.6,
-    fontSize: '13px'
-  },
-  infoGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-    gap: '10px',
-    marginBottom: '8px'
-  },
-  infoCard: {
-    background: '#f8fafc',
-    borderRadius: '12px',
-    padding: '10px 12px'
-  },
-  solutionBox: {
-    marginTop: '8px',
+  btnGhost: {
+    background: 'none',
     border: '1px solid #dbe2ea',
-    borderRadius: '12px',
-    padding: '10px 12px',
-    background: '#f8fafc'
+    borderRadius: 999,
+    padding: '6px 12px',
+    fontSize: 12,
+    color: '#64748b',
+    cursor: 'pointer',
   },
-  proposalHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '10px',
-    marginBottom: '8px',
-    flexWrap: 'wrap' as const
-  },
-  bidSummary: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-    gap: '10px',
-    marginBottom: '10px'
-  },
-  bidSummaryItem: {
+
+  /* RIGHT */
+  rightPanel: {
+    padding: '16px',
+    overflowY: 'auto',
     background: '#f8fafc',
-    borderRadius: '12px',
-    padding: '10px 12px'
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
   },
+  card: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: 14,
+    padding: '14px 16px',
+  },
+
+  verdictGrid: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, textAlign: 'center' as const },
+  verdictCell: {},
+  vLabel: { fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginBottom: 4 },
+  vValue: { fontSize: 16, fontWeight: 800, color: '#0f172a' },
+
+  muted: { fontSize: 13, color: '#64748b', lineHeight: 1.6, margin: 0 },
+  list: { paddingLeft: 16, margin: 0 },
+  listItem: { fontSize: 13, color: '#475569', lineHeight: 1.6, marginBottom: 6 },
+
+  proposalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  bidRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 },
+  bidCell: { background: '#f8fafc', borderRadius: 10, padding: '8px 12px' },
   bidInput: {
     width: '100%',
-    border: '1px solid #dbe2ea',
-    borderRadius: '10px',
-    padding: '10px 12px',
-    fontSize: '13px',
-    marginBottom: '8px',
-    color: '#0f172a'
+    border: '1px solid #e2e8f0',
+    borderRadius: 8,
+    padding: '4px 8px',
+    fontSize: 14,
+    fontWeight: 700,
+    color: '#0f172a',
+    background: 'transparent',
+    boxSizing: 'border-box' as const,
   },
-  proposalTextarea: {
+  proposalTA: {
     width: '100%',
-    minHeight: '220px',
-    border: '1px solid #dbe2ea',
-    borderRadius: '12px',
-    padding: '12px',
+    height: 'calc(100vh - 620px)',
+    minHeight: 160,
+    maxHeight: 400,
+    border: '1px solid #e2e8f0',
+    borderRadius: 10,
+    padding: '10px 12px',
+    fontSize: 13,
+    lineHeight: 1.65,
     color: '#334155',
-    fontSize: '13px',
-    lineHeight: 1.6,
-    resize: 'vertical' as const,
     background: '#f8fafc',
-    marginBottom: '10px'
+    resize: 'vertical' as const,
+    marginBottom: 10,
+    boxSizing: 'border-box' as const,
+    display: 'block',
   },
-  proposalActions: {
-    display: 'flex',
-    gap: '10px',
-    flexWrap: 'wrap' as const
-  },
-  ghostBtn: {
-    background: '#fff',
-    border: '1px solid #dbe2ea',
-    borderRadius: '999px',
-    padding: '8px 12px',
-    cursor: 'pointer',
-    fontSize: '13px',
-    color: '#334155'
-  },
-  primarySmallBtn: {
-    background: '#2563eb',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '999px',
-    padding: '8px 12px',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: 600
-  },
-  analyzingState: {
-    textAlign: 'center' as const,
-    padding: '18px 0'
-  },
-  spinnerSmall: {
-    width: '30px',
-    height: '30px',
+
+  loadingCenter: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' },
+  spinner: {
+    width: 32, height: 32,
     border: '3px solid #dbeafe',
-    borderTop: '3px solid #2563eb',
+    borderTopColor: '#2563eb',
     borderRadius: '50%',
-    animation: 'spin 1s linear infinite',
-    margin: '0 auto 10px'
-  }
+    animation: 'spin 0.8s linear infinite',
+  },
+  analyzeLoader: { textAlign: 'center' as const, padding: '16px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 },
+  errorBox: { background: '#fff', border: '1px solid #fecaca', borderRadius: 14, padding: 24, textAlign: 'center' as const },
+  warnBox: {
+    background: '#fefce8',
+    border: '1px solid #fde68a',
+    borderRadius: 10,
+    padding: '10px 14px',
+    fontSize: 13,
+    color: '#92400e',
+  },
 };

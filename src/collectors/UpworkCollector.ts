@@ -118,11 +118,11 @@ export class UpworkCollector extends BaseCollector {
   }
 
   private isRecent(postedDate: string | Date | null | undefined): boolean {
-    if (!postedDate) return true;
+    if (!postedDate) return false;
     const normalized = typeof postedDate === 'string' ? postedDate : postedDate?.toISOString();
-    if (!normalized) return true;
+    if (!normalized) return false;
     const daysOld = this.getDaysOld(normalized);
-    return daysOld <= 3;
+    return daysOld <= 2;
   }
 
   async fetch(): Promise<RawOpportunity[]> {
@@ -247,15 +247,25 @@ export class UpworkCollector extends BaseCollector {
           postedDate = this.parsePostedDate(job.detected_extensions.posted_at);
         }
         
+        const descText = job.description || job.title || "";
+        const clientSpendMatch = descText.match(/(?:Client spent|Total spent)[:\s]*\$?(\d+[KMBkmb]?)/i);
+        const reviewsMatch = descText.match(/(\d+(?:\.\d+)?)\s*(?:out of 5|stars?)/i);
+
         const normalizedJob: RawOpportunity = {
           title: this.cleanTitle(job.title || "Untitled"),
-          description: job.description || job.title || "",
+          description: descText,
           url: `https://www.upwork.com/jobs/~${jobId}`,
           platform: "Upwork",
-          budget: this.extractBudget(job.description || job.title || ""),
+          budget: this.extractBudget(descText),
           location: job.location || "Remote",
-          postedDate: postedDate || new Date().toISOString(),
-          company: "Upwork Client"
+          postedDate: postedDate || new Date(0).toISOString(),
+          company: "Client",
+          status: "OPEN",
+          country: job.location || "Unknown",
+          clientName: job.company_name && job.company_name !== "Upwork" ? job.company_name : "Client",
+          clientSpend: clientSpendMatch ? `$${clientSpendMatch[1]}` : "",
+          clientReviews: reviewsMatch ? `${reviewsMatch[1]} stars` : "",
+          connections: 0
         };
 
         if (this.isLikelyAuthenticJob(normalizedJob)) {
@@ -303,7 +313,9 @@ export class UpworkCollector extends BaseCollector {
             budget: 'Negotiable',
             location: 'Remote',
             postedDate: new Date().toISOString(),
-            company: 'Upwork Client'
+            company: 'Client',
+            status: "OPEN",
+            connections: 0
           };
 
           if (this.isLikelyAuthenticJob(normalizedJob)) {
@@ -322,22 +334,42 @@ export class UpworkCollector extends BaseCollector {
 
   private parsePostedDate(dateString: string): string | null {
     const now = new Date();
+    const ds = dateString.toLowerCase();
     
-    if (dateString.includes('just now') || dateString.includes('moments ago')) {
+    if (ds.includes('just now') || ds.includes('moments ago') || ds.includes('today')) {
       return now.toISOString();
     }
     
-    const daysMatch = dateString.match(/(\d+)\s+days? ago/);
+    const daysMatch = ds.match(/(\d+)\s+days? ago/);
     if (daysMatch) {
       const days = parseInt(daysMatch[1]);
       const date = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
       return date.toISOString();
     }
     
-    const hoursMatch = dateString.match(/(\d+)\s+hours? ago/);
+    const hoursMatch = ds.match(/(\d+)\s+hours? ago/);
     if (hoursMatch) {
       const hours = parseInt(hoursMatch[1]);
       const date = new Date(now.getTime() - hours * 60 * 60 * 1000);
+      return date.toISOString();
+    }
+
+    const weeksMatch = ds.match(/(\d+)\s+weeks? ago/);
+    if (weeksMatch) {
+      const weeks = parseInt(weeksMatch[1]);
+      const date = new Date(now.getTime() - weeks * 7 * 24 * 60 * 60 * 1000);
+      return date.toISOString();
+    }
+
+    const monthsMatch = ds.match(/(\d+)\s+months? ago/);
+    if (monthsMatch) {
+      const months = parseInt(monthsMatch[1]);
+      const date = new Date(now.getTime() - months * 30 * 24 * 60 * 60 * 1000);
+      return date.toISOString();
+    }
+
+    if (ds.includes('last month')) {
+      const date = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       return date.toISOString();
     }
     

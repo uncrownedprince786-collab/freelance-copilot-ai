@@ -8,6 +8,12 @@ export interface RawOpportunity {
   postedDate?: Date | string | null;
   location?: string;
   company?: string;
+  status?: string;
+  country?: string;
+  clientName?: string;
+  clientSpend?: string;
+  clientReviews?: string;
+  connections?: number;
 }
 
 export interface CollectorInterface {

@@ -33,9 +33,7 @@ interface AnalysisData {
   riskAnalysis: any; // { level: string, reasons: string[] }
   bidRecommendation: any; // { minimum: string, recommended: string, premium: string }
   questions: any; // string[]
-  shortProposal: string;
-  standardProposal: string;
-  detailedProposal: string;
+  proposal: string;
 }
 
 interface TrackingData {
@@ -54,6 +52,11 @@ interface OpportunityItem {
   risk: string;
   analysis?: AnalysisData | null;
   tracking?: TrackingData | null;
+  country?: string;
+  clientName?: string;
+  clientSpend?: string;
+  clientReviews?: string;
+  connections?: number;
 }
 
 interface OpportunityDetailsProps {
@@ -63,7 +66,6 @@ interface OpportunityDetailsProps {
 export default function OpportunityDetails({ opportunity: initialOpportunity }: OpportunityDetailsProps) {
   const router = useRouter();
   const [opportunity, setOpportunity] = useState<OpportunityItem>(initialOpportunity);
-  const [activeTab, setActiveTab] = useState<"short" | "standard" | "detailed">("standard");
   const [copied, setCopied] = useState(false);
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -133,14 +135,7 @@ export default function OpportunityDetails({ opportunity: initialOpportunity }: 
     return "destructive";
   };
 
-  // Extract proposals text directly from the analysis object
-  const currentProposalText = analysis 
-    ? activeTab === "short" 
-      ? analysis.shortProposal 
-      : activeTab === "detailed" 
-        ? analysis.detailedProposal 
-        : analysis.standardProposal
-    : "";
+  const currentProposalText = analysis ? analysis.proposal : "";
 
   return (
     <div className="space-y-6">
@@ -246,6 +241,27 @@ export default function OpportunityDetails({ opportunity: initialOpportunity }: 
                   {opportunity.description}
                 </div>
               </div>
+
+              {/* Client & Additional Info */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-neutral-100 dark:border-neutral-900">
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-neutral-400 mb-1">Client Name</div>
+                  <div className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">{opportunity.clientName || "Unknown"}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-neutral-400 mb-1">Country</div>
+                  <div className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">{opportunity.country || "Unknown"}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-neutral-400 mb-1">Client Spend</div>
+                  <div className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">{opportunity.clientSpend || "No data"}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-neutral-400 mb-1">Required Connections</div>
+                  <div className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">{opportunity.connections || "Free/Unknown"}</div>
+                </div>
+              </div>
+
             </CardContent>
           </Card>
 
@@ -434,23 +450,6 @@ export default function OpportunityDetails({ opportunity: initialOpportunity }: 
             ) : (
               <>
                 <CardContent className="pt-4 space-y-4">
-                  {/* Proposal tabs switcher */}
-                  <div className="flex border border-neutral-200 rounded-md bg-neutral-50 p-0.5 text-xs dark:border-neutral-850 dark:bg-neutral-900">
-                    {(["short", "standard", "detailed"] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab)}
-                        className={`flex-1 py-1.5 rounded-sm font-semibold transition-colors cursor-pointer text-center capitalize ${
-                          activeTab === tab
-                            ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-neutral-100"
-                            : "text-neutral-400 hover:text-neutral-700"
-                        }`}
-                      >
-                        {tab}
-                      </button>
-                    ))}
-                  </div>
-
                   {/* Proposal preview container */}
                   <div className="relative">
                     <textarea

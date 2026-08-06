@@ -21,7 +21,8 @@ export async function analyzeOpportunity(opportunityId: string) {
     opportunity.title,
     opportunity.description,
     opportunity.budget,
-    opportunity.platform
+    opportunity.platform,
+    opportunity.clientName || "Client"
   );
 
   // 3. Save the results inside a database transaction to ensure consistency
@@ -53,9 +54,7 @@ export async function analyzeOpportunity(opportunityId: string) {
         premium: aiResult.bidRecommendation.premium,
       },
       questions: aiResult.questions,
-      shortProposal: aiResult.proposals.shortProposal,
-      standardProposal: aiResult.proposals.standardProposal,
-      detailedProposal: aiResult.proposals.detailedProposal,
+      proposal: aiResult.proposal,
     };
 
     const analysis = await tx.analysis.upsert({

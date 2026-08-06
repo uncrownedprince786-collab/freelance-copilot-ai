@@ -10,7 +10,10 @@ import { analyzeOpportunity } from "@/services/ai/analyzer";
 const GetOpportunitiesSchema = z.object({
   query: z.string().optional(),
   platform: z.string().optional(),
+  country: z.string().optional(),
   minScore: z.number().int().min(0).max(100).optional(),
+  minConnections: z.number().int().min(0).optional(),
+  maxConnections: z.number().int().min(0).optional(),
   sortBy: z.enum(["date", "score"]).default("date"),
   page: z.number().int().min(1).default(1),
   limit: z.number().int().min(1).max(100).default(15),
@@ -26,20 +29,27 @@ export async function getOpportunities(rawOptions: z.input<typeof GetOpportuniti
     const skip = (options.page - 1) * options.limit;
 
     // Build Prisma query filters
-    const where: any = {};
+    const where: any = {
+      // Only show OPEN jobs and exclude applied/skipped
+      status: "OPEN",
+      AND: [
+        {
+          OR: [
+            { tracking: null },
+            { tracking: { status: { notIn: ["APPLIED", "SKIPPED"] } } },
+          ],
+        },
+      ],
+    };
 
-    // 1. Include opportunities that have no tracking record OR a tracking status that is not APPLIED or SKIPPED
-    where.OR = [
-      { tracking: null },
-      { tracking: { status: { notIn: ["APPLIED", "SKIPPED"] } } },
-    ];
-
-    // 2. Keyword searching
+    // 2. Keyword searching - SQLite doesn't support mode: insensitive
     if (options.query) {
-      where.OR = [
-        { title: { contains: options.query, mode: "insensitive" } },
-        { description: { contains: options.query, mode: "insensitive" } },
-      ];
+      where.AND.push({
+        OR: [
+          { title: { contains: options.query } },
+          { description: { contains: options.query } },
+        ],
+      });
     }
 
     // 3. Platform filter
@@ -47,9 +57,25 @@ export async function getOpportunities(rawOptions: z.input<typeof GetOpportuniti
       where.platform = options.platform;
     }
 
-    // 4. Min Score filter
+    // 4. Country filter
+    if (options.country && options.country !== "All") {
+      where.country = options.country;
+    }
+
+    // 5. Min Score filter
     if (options.minScore) {
       where.score = { gte: options.minScore };
+    }
+
+    // 6. Connections filter
+    if (options.minConnections !== undefined || options.maxConnections !== undefined) {
+      where.connections = {};
+      if (options.minConnections !== undefined) {
+        where.connections.gte = options.minConnections;
+      }
+      if (options.maxConnections !== undefined) {
+        where.connections.lte = options.maxConnections;
+      }
     }
 
     // Determine sorting criteria
@@ -240,6 +266,16 @@ export async function getDashboardStats() {
       return acc;
     }, {});
 
+    const distinctCountries = await prisma.opportunity.findMany({
+      where: visibleWhere,
+      select: { country: true },
+      distinct: ['country'],
+    });
+    
+    const countries = distinctCountries
+      .map(c => c.country)
+      .filter((c): c is string => c !== null && c !== "Unknown" && c !== "");
+
     return {
       success: true,
       stats: {
@@ -247,6 +283,7 @@ export async function getDashboardStats() {
         highScoring,
         analyzedCount,
         platformBreakdown,
+        countries,
       },
     };
   } catch (error: any) {
@@ -258,6 +295,7 @@ export async function getDashboardStats() {
         highScoring: 0,
         analyzedCount: 0,
         platformBreakdown: {},
+        countries: [],
       },
       error: error?.message || "Stats unavailable.",
     };

@@ -6,19 +6,19 @@ export class FreelancerCollector extends BaseCollector {
   private keywords = [
     "wordpress",
     "php laravel",
-    "javascript typescript",
-    "react nextjs nodejs",
-    "python django",
+    "javascript react",
+    "nodejs python",
     "mobile app",
-    "shopify webflow",
-    "full stack api development"
+    "shopify",
+    "full stack",
+    "web development"
   ];
 
   async fetch(): Promise<RawOpportunity[]> {
     console.log('Fetching Freelancer opportunities...\n');
-    
+
     const allJobs: RawOpportunity[] = [];
-    
+
     for (const keyword of this.keywords) {
       try {
         const jobs = await this.searchFreelancer(keyword);
@@ -26,109 +26,92 @@ export class FreelancerCollector extends BaseCollector {
           console.log(`Found ${jobs.length} jobs for "${keyword}"`);
           allJobs.push(...jobs);
         }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 800));
       } catch (error: any) {
         console.warn(`Freelancer search failed for ${keyword}: ${error.message}`);
       }
     }
-    
+
     const uniqueJobs = this.deduplicateJobs(allJobs);
-    console.log(`Total Freelancer jobs: ${uniqueJobs.length}`);
-    
+    console.log(`Total unique Freelancer jobs: ${uniqueJobs.length}`);
     return uniqueJobs;
   }
 
   private async searchFreelancer(keyword: string): Promise<RawOpportunity[]> {
-    const url = `https://www.freelancer.com/api/projects/0.1/projects/active/?query=${encodeURIComponent(keyword)}&limit=20`;
-    
+    // Use full_description=true and user_details=true for richer data
+    const params = new URLSearchParams({
+      query: keyword,
+      limit: "20",
+      offset: "0",
+      compact: "true",
+      full_description: "true",
+      "user_details[]": "id",
+      "job_details[]": "skills",
+    });
+
+    const url = `https://www.freelancer.com/api/projects/0.1/projects/active/?${params}`;
+
     try {
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
       });
-      
-      if (!response.ok) return [];
-      
+
+      if (!response.ok) {
+        console.warn(`Freelancer API returned ${response.status} for "${keyword}"`);
+        return [];
+      }
+
       const data = await response.json();
-      
-      if (!data.result?.projects) return [];
-      
-      return Promise.all(data.result.projects.map(async (project: any) => {
-        const description = await this.extractDescription(project);
+      if (!data?.result?.projects) return [];
+
+      const sevenDaysAgo = Date.now() / 1000 - 7 * 24 * 60 * 60;
+      const recentProjects = data.result.projects.filter((p: any) => p.submitdate >= sevenDaysAgo);
+
+      return recentProjects.map((project: any): RawOpportunity => {
+        // Build description from available fields
+        const rawDesc =
+          project.description ||
+          project.preview_description ||
+          project.title ||
+          "No description available.";
+        const description = this.cleanText(rawDesc);
+
+        const budget = project.budget?.minimum
+          ? `$${project.budget.minimum} - $${project.budget.maximum}`
+          : "Negotiable";
+
+        const country = project.owner?.location?.country?.name || undefined;
+        const clientName = project.owner?.username || "Freelancer Client";
+        const jobsAwarded = project.owner?.jobs_award_count;
+        const clientSpend = jobsAwarded !== undefined ? `${jobsAwarded} jobs awarded` : undefined;
+
         return {
-          title: project.title || "Untitled",
+          title: project.title?.trim() || "Untitled",
           description,
-          url: `https://www.freelancer.com/projects/${project.seo_url}`,
+          url: `https://www.freelancer.com/projects/${project.seo_url || project.id}`,
           platform: "Freelancer",
-          budget: project.budget?.minimum ? `$${project.budget.minimum}-${project.budget.maximum}` : "Negotiable",
+          budget,
           location: "Remote",
-          postedDate: new Date(project.submitdate * 1000).toISOString(),
-          company: project.owner?.username || "Freelancer Client"
+          postedAt: new Date(project.submitdate * 1000),
+          company: clientName,
+          status: "OPEN",
+          country,
+          clientName,
+          clientSpend,
+          connections: 1,
         };
-      }));
-      
-    } catch (error) {
+      });
+    } catch (error: any) {
+      console.warn(`Freelancer fetch error for "${keyword}": ${error.message}`);
       return [];
     }
   }
 
-  private async extractDescription(project: any): Promise<string> {
-    const candidates = [
-      project.description,
-      project.preview_description,
-      project.description_html,
-      project.preview_description_html,
-      project.title
-    ].filter(Boolean);
-
-    const text = candidates[0];
-    const seoUrl = project.seo_url;
-
-    if (seoUrl) {
-      const fetchedDescription = await this.fetchProjectPageDescription(seoUrl);
-      if (fetchedDescription) return fetchedDescription;
-    }
-
-    if (typeof text === 'string' && text.trim().length > 80) {
-      return this.normalizeText(text);
-    }
-
-    return typeof text === 'string' ? this.normalizeText(text) : 'No detailed description provided yet.';
-  }
-
-  private async fetchProjectPageDescription(seoUrl: string): Promise<string | null> {
-    try {
-      const response = await fetch(`https://www.freelancer.com/projects/${seoUrl}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-
-      if (!response.ok) return null;
-
-      const html = await response.text();
-      const metaMatch = html.match(/<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)["']/i);
-      if (metaMatch?.[1]) return this.normalizeText(metaMatch[1]);
-
-      const ldMatch = html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
-      if (ldMatch?.[1]) {
-        try {
-          const parsed = JSON.parse(ldMatch[1]);
-          const description = typeof parsed === 'string' ? parsed : parsed?.description;
-          if (description) return this.normalizeText(description);
-        } catch {
-          // ignore invalid JSON and fall back
-        }
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  private normalizeText(text: string): string {
+  private cleanText(text: string): string {
     return text
       .replace(/<[^>]+>/g, ' ')
       .replace(/&nbsp;/gi, ' ')
@@ -142,15 +125,13 @@ export class FreelancerCollector extends BaseCollector {
   private deduplicateJobs(jobs: RawOpportunity[]): RawOpportunity[] {
     const seen = new Set<string>();
     const unique: RawOpportunity[] = [];
-    
     for (const job of jobs) {
-      const key = `${job.title.toLowerCase().trim()}|${job.platform}`;
-      if (!seen.has(key)) {
+      const key = job.url || `${job.title}|${job.platform}`;
+      if (key && !seen.has(key)) {
         seen.add(key);
         unique.push(job);
       }
     }
-    
     return unique;
   }
 }

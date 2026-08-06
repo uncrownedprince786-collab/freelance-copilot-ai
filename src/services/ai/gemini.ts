@@ -17,11 +17,7 @@ export interface AIAnalysisResult {
     premium: string;
   };
   questions: string[];
-  proposals: {
-    shortProposal: string;
-    standardProposal: string;
-    detailedProposal: string;
-  };
+  proposal: string;
 }
 
 // Instantiate the SDK (handles empty key gracefully at runtime without crash)
@@ -50,20 +46,22 @@ export async function analyzeOpportunityWithAI(
   title: string,
   description: string,
   budget: string,
-  platform: string
+  platform: string,
+  clientName: string = "Client"
 ): Promise<AIAnalysisResult> {
   const genAI = getGenAIClient();
 
   if (!genAI) {
-    return getFallbackAnalysis(title, description, budget, platform, "Google Gemini API key is missing. Please configure GEMINI_API_KEY in your .env file.");
+    return getFallbackAnalysis(title, description, budget, platform, clientName, "Google Gemini API key is missing. Please configure GEMINI_API_KEY in your .env file.");
   }
 
   const prompt = `
-You are an expert Freelance Copilot AI assistant. Your task is to analyze a freelance opportunity and generate a structured review, bid strategy, and tailored proposals.
+You are an expert Freelance Copilot AI assistant. Your task is to analyze a freelance opportunity and generate a structured review, bid strategy, and tailored proposal.
 
 Job Details:
 - Platform: ${platform}
 - Title: ${title}
+- Client Name: ${clientName}
 - Budget/Salary Info: ${budget}
 - Description: ${description}
 
@@ -87,18 +85,14 @@ TypeScript Type Definition:
     "premium": string // Bidding rate/amount for premium value delivery
   },
   "questions": string[], // Exactly 5 highly useful clarifying questions to ask the client to stand out.
-  "proposals": {
-    "shortProposal": string, // Short proposal (1-2 paragraphs), sounds human, zero AI clichés (do not use "delve", "testament", "leverage", "passion", "dynamic", "thrilled"). Direct and problem-solving.
-    "standardProposal": string, // Standard proposal (3-4 paragraphs), outlines approach, brief milestones, and call to action.
-    "detailedProposal": string // Detailed proposal (comprehensive structure), breaks down approach step-by-step, mentions technical suggestions, deliverables, and next steps.
-  }
+  "proposal": string // Single highly professional proposal (3-4 paragraphs). Tone: Humanized, direct, problem-solving. ZERO AI clichés (do not use "delve", "testament", "leverage", "passion", "dynamic", "thrilled"). Address the client by name if it is not "Client" or "Upwork Client".
 }
 
-Make sure all proposal types:
-- Sound like a real, experienced human developer/freelancer.
-- Do NOT use typical AI jargon, generic greetings, or long fluff.
-- Start directly by addressing the client's problem.
-- Include a clear call to action to discuss details.
+Make sure the proposal:
+- Sounds like a real, experienced human developer/freelancer.
+- Does NOT use typical AI jargon, generic greetings, or long fluff.
+- Starts directly by addressing the client's problem.
+- Includes a clear call to action to discuss details.
 `;
 
   try {
@@ -128,7 +122,7 @@ Make sure all proposal types:
         typeof parsed.score !== "number" ||
         !parsed.summary ||
         !parsed.risk ||
-        !parsed.proposals ||
+        !parsed.proposal ||
         !parsed.questions ||
         parsed.questions.length === 0
       ) {
@@ -144,6 +138,7 @@ Make sure all proposal types:
       description,
       budget,
       platform,
+      clientName,
       `AI analysis failed at runtime: ${error?.message || error}`
     );
   }
@@ -155,6 +150,7 @@ function getFallbackAnalysis(
   description: string,
   budget: string,
   platform: string,
+  clientName: string,
   reason: string
 ): AIAnalysisResult {
   const words = description.split(/\s+/).length;
@@ -167,6 +163,7 @@ function getFallbackAnalysis(
   score = Math.min(score, 85);
 
   const cleanTitle = title.replace(/[^\w\s-]/g, "");
+  const greeting = clientName && clientName !== "Client" && clientName !== "Upwork Client" && clientName !== "Freelancer Client" ? `Hi ${clientName},` : "Hi,";
 
   return {
     score,
@@ -200,10 +197,6 @@ function getFallbackAnalysis(
       "Do you have a design system or wireframes ready?",
       "What level of post-deployment support do you expect?"
     ],
-    proposals: {
-      shortProposal: `Hi there,\n\nI saw your post for "${title}" and would love to help you build this. I specialize in web development and can deliver a clean, robust solution matching your goals.\n\nCould we jump on a quick call to discuss the milestones?\n\nBest regards,\nFreelancer`,
-      standardProposal: `Hi,\n\nI am writing in response to your project post seeking support for "${title}". Based on your description, you need someone who can jump in and handle features like core integrations and code organization.\n\nHere is how I would approach it:\n1. Requirements sync & architecture outline\n2. Iterative feature development with regular demos\n3. Verification, optimization, and deployment.\n\nLet's schedule a call to clarify details.\n\nSincerely,\nFreelancer`,
-      detailedProposal: `Subject: Proposal for ${cleanTitle}\n\nDear Client,\n\nI understand you are looking for an experienced developer to execute "${title}". To ensure success, we need to focus on clean structure, testable logic, and seamless integration.\n\nProject Roadmap:\n- Week 1: Core setup, database/API connections, and first functional drafts.\n- Week 2: Refining code logic, styling, and error handling.\n- Week 3: Testing, revision loop, and deployment preparation.\n\nI look forward to discussing how we can work together.\n\nBest,\nFreelancer`,
-    },
+    proposal: `${greeting}\n\nI am writing in response to your project post seeking support for "${title}". Based on your description, you need someone who can jump in and handle features like core integrations and code organization.\n\nHere is how I would approach it:\n1. Requirements sync & architecture outline\n2. Iterative feature development with regular demos\n3. Verification, optimization, and deployment.\n\nLet's schedule a call to clarify details.\n\nSincerely,\nFreelancer`,
   };
 }

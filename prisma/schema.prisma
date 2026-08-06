@@ -3,13 +3,13 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
 }
 
 model Opportunity {
   id          String    @id @default(uuid())
   title       String
-  description String    @db.Text
+  description String
   budget      String
   platform    String
   url         String    @unique
@@ -18,6 +18,14 @@ model Opportunity {
   risk        String    @default("Medium")
   viewed      Boolean   @default(false)
   viewedAt    DateTime?
+  
+  // New fields
+  status        String    @default("OPEN")
+  country       String?
+  clientName    String?
+  clientSpend   String?
+  clientReviews String?
+  connections   Int?
 
   // Relations
   analysis    Analysis?
@@ -35,15 +43,13 @@ model Analysis {
   opportunityId     String      @unique
   opportunity       Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   
-  summary           String      @db.Text
+  summary           String
   scope             Json
   riskAnalysis      Json
   bidRecommendation Json
   questions         Json
   
-  shortProposal     String      @db.Text
-  standardProposal  String      @db.Text
-  detailedProposal  String      @db.Text
+  proposal          String
   
   createdAt         DateTime    @default(now())
 

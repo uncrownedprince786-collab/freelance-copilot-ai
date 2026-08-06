@@ -39,6 +39,9 @@ interface OpportunityItem {
   analysis?: {
     summary: string;
   } | null;
+  country?: string;
+  clientName?: string;
+  connections?: number;
 }
 
 interface DashboardStats {
@@ -46,6 +49,7 @@ interface DashboardStats {
   highScoring: number;
   analyzedCount: number;
   platformBreakdown: Record<string, number>;
+  countries?: string[];
 }
 
 interface DashboardProps {
@@ -66,6 +70,8 @@ export default function Dashboard({
   const [stats, setStats] = useState<DashboardStats>(initialStats);
   const [search, setSearch] = useState("");
   const [platform, setPlatform] = useState("All");
+  const [country, setCountry] = useState("All");
+  const [connectionsFilter, setConnectionsFilter] = useState("all");
   const [minScore, setMinScore] = useState<number>(0);
   const [sortBy, setSortBy] = useState<"date" | "score">("date");
   const [page, setPage] = useState(1);
@@ -85,14 +91,28 @@ export default function Dashboard({
     }, 300); // 300ms debounce for keyboard search input
 
     return () => clearTimeout(delayDebounce);
-  }, [search, platform, minScore, sortBy, page]);
+  }, [search, platform, country, connectionsFilter, minScore, sortBy, page]);
 
   const refetchData = () => {
     startTransition(async () => {
+      let minConn: number | undefined = undefined;
+      let maxConn: number | undefined = undefined;
+      if (connectionsFilter === "low") {
+        maxConn = 5;
+      } else if (connectionsFilter === "med") {
+        minConn = 6;
+        maxConn = 12;
+      } else if (connectionsFilter === "high") {
+        minConn = 13;
+      }
+
       const result = await getOpportunities({
         query: search || undefined,
         platform: platform === "All" ? undefined : platform,
+        country: country === "All" ? undefined : country,
         minScore: minScore > 0 ? minScore : undefined,
+        minConnections: minConn,
+        maxConnections: maxConn,
         sortBy,
         page,
         limit: 15,
@@ -320,7 +340,45 @@ export default function Dashboard({
           </div>
         </div>
 
-        <div className="flex gap-3 w-full md:w-auto justify-end">
+        <div className="flex gap-3 w-full md:w-auto justify-end flex-wrap md:flex-nowrap">
+          {/* Country filter */}
+          {stats.countries && stats.countries.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-neutral-500 dark:text-neutral-400 font-medium whitespace-nowrap">Country:</span>
+              <select
+                value={country}
+                onChange={(e) => {
+                  setCountry(e.target.value);
+                  setPage(1);
+                }}
+                className="h-9 rounded-md border border-neutral-200 bg-white px-3 py-1 text-xs focus-visible:outline-none dark:border-neutral-800 dark:bg-neutral-950 w-full md:w-auto"
+              >
+                <option value="All">All Countries</option>
+                {stats.countries.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Connections / Bids Cost filter */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-neutral-500 dark:text-neutral-400 font-medium whitespace-nowrap">Bid Cost:</span>
+            <select
+              value={connectionsFilter}
+              onChange={(e) => {
+                setConnectionsFilter(e.target.value);
+                setPage(1);
+              }}
+              className="h-9 rounded-md border border-neutral-200 bg-white px-3 py-1 text-xs focus-visible:outline-none dark:border-neutral-800 dark:bg-neutral-950"
+            >
+              <option value="all">Any Cost</option>
+              <option value="low">Low (<= 5 Connects/Bids)</option>
+              <option value="med">Medium (6-12 Connects/Bids)</option>
+              <option value="high">High (13+ Connects/Bids)</option>
+            </select>
+          </div>
+
           {/* Score rating filter */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-neutral-500 dark:text-neutral-400 font-medium whitespace-nowrap">Min Score:</span>
@@ -386,6 +444,13 @@ export default function Dashboard({
                       <CardTitle className="text-base font-bold line-clamp-2 mt-1">
                         {item.title}
                       </CardTitle>
+                      {(item.clientName || item.country) && (
+                        <div className="text-[11px] text-neutral-500 flex items-center gap-1.5 mt-1">
+                          {item.clientName && <span className="font-medium text-neutral-700 dark:text-neutral-300">{item.clientName}</span>}
+                          {item.clientName && item.country && <span>•</span>}
+                          {item.country && <span>{item.country}</span>}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex flex-col items-end shrink-0 gap-1">
@@ -415,10 +480,21 @@ export default function Dashboard({
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 mt-4 text-xs font-medium text-neutral-500">
-                    <DollarSign className="h-4 w-4 shrink-0 text-neutral-400" />
-                    <span>Budget:</span>
-                    <span className="text-neutral-800 dark:text-neutral-200 font-semibold">{item.budget}</span>
+                  <div className="flex items-center gap-4 mt-4 text-xs font-medium text-neutral-500">
+                    <div className="flex items-center gap-1">
+                      <DollarSign className="h-4 w-4 shrink-0 text-neutral-400" />
+                      <span>Budget:</span>
+                      <span className="text-neutral-800 dark:text-neutral-200 font-semibold">{item.budget}</span>
+                    </div>
+                    {item.connections !== undefined && item.connections !== null && (
+                      <div className="flex items-center gap-1">
+                        <Zap className="h-4 w-4 shrink-0 text-amber-500" />
+                        <span>Cost:</span>
+                        <span className="text-neutral-800 dark:text-neutral-200 font-semibold">
+                          {item.connections} {item.platform === "Upwork" ? "Connects" : "Bid(s)"}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
 

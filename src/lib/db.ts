@@ -1,28 +1,33 @@
 import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import pg from "pg";
+import { createRequire } from "module";
+import path from "path";
 
-let prisma: PrismaClient;
-
-const connectionString = process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/freelance_copilot?schema=public";
-
-if (process.env.NODE_ENV === "production") {
-  const pool = new pg.Pool({ connectionString });
-  const adapter = new PrismaPg(pool);
-  prisma = new PrismaClient({ adapter });
-} else {
-  // Ensure the database client is a singleton in development to prevent hot reloading from creating new connection pools.
-  const globalWithPrisma = global as typeof globalThis & {
-    prisma?: PrismaClient;
-  };
-
-  if (!globalWithPrisma.prisma) {
-    const pool = new pg.Pool({ connectionString });
-    const adapter = new PrismaPg(pool);
-    globalWithPrisma.prisma = new PrismaClient({ adapter });
-  }
-  prisma = globalWithPrisma.prisma;
+declare global {
+  // eslint-disable-next-line no-var
+  var __prisma: PrismaClient | undefined;
 }
 
-export { prisma };
+// Use createRequire so the CJS native modules (better-sqlite3, adapter) load correctly
+// in both tsx/ESM dev and production Next.js environments.
+const require = createRequire(import.meta.url);
+
+function createPrismaClient(): PrismaClient {
+  const rawUrl = process.env.DATABASE_URL || "file:./prisma/dev.db";
+  const dbPath = rawUrl.startsWith("file:")
+    ? path.resolve(process.cwd(), rawUrl.slice(5))
+    : path.resolve(process.cwd(), rawUrl);
+
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { PrismaBetterSqlite3 } = require("@prisma/adapter-better-sqlite3");
+
+  const adapter = new PrismaBetterSqlite3({ url: dbPath });
+  return new PrismaClient({ adapter });
+}
+
+export const prisma = global.__prisma ?? createPrismaClient();
+
+if (process.env.NODE_ENV !== "production") {
+  global.__prisma = prisma;
+}
+
 export default prisma;

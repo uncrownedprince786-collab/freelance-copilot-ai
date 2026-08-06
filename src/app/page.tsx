@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { isAuthenticated } from '@/lib/auth';
+import { AdminLoginModal } from '@/components/AdminLoginModal';
 
 interface Job {
   id: string;
@@ -17,158 +19,231 @@ interface Job {
   isNew?: boolean;
   company?: string;
   location?: string;
+  country?: string;
+  clientName?: string;
+  clientSpend?: string;
+  clientReviews?: string;
+  connections?: number;
+}
+
+const PLATFORM_COLORS: Record<string, string> = {
+  Upwork: '#14a800',
+  Freelancer: '#29b2fe',
+  RemoteOK: '#ff6b35',
+  'Remote OK': '#ff6b35',
+  WeWorkRemotely: '#3b82f6',
+  Remotive: '#8b5cf6',
+};
+
+function getScoreColor(score: number) {
+  if (score >= 70) return '#10b981';
+  if (score >= 50) return '#f59e0b';
+  return '#ef4444';
+}
+
+function timeAgo(dateStr: string) {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diff = now - then;
+  const mins = Math.floor(diff / 60000);
+  const hrs = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (mins < 2) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${days}d ago`;
 }
 
 export default function Home() {
+  return (
+    <React.Suspense fallback={<div style={styles.splashLoad}>Loading…</div>}>
+      <HomeContent />
+    </React.Suspense>
+  );
+}
+
+function HomeContent() {
   const router = useRouter();
+
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [filteredJobs, setFilteredJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState('');
-  const [newJobsCount, setNewJobsCount] = useState(0);
-  const [filter, setFilter] = useState<'all' | 'new' | 'viewed' | 'applied' | 'hot'>('all');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
-  const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [sortBy, setSortBy] = useState('score');
-  const [availablePlatforms, setAvailablePlatforms] = useState<string[]>([]);
-  const itemsPerPage = 12;
+  const [syncMsg, setSyncMsg] = useState('');
+  const [showIntroPopup, setShowIntroPopup] = useState(true);
+  const [newCount, setNewCount] = useState(0);
 
   useEffect(() => {
-    void fetchJobs();
+    if (typeof window !== 'undefined') {
+      const dismissed = sessionStorage.getItem('hideLeadHunterIntroSession');
+      if (dismissed === 'true') {
+        setShowIntroPopup(false);
+      }
+    }
   }, []);
 
-  useEffect(() => {
-    const result = [...jobs].filter((job) => {
-      if (filter === 'new') return !job.viewed && !job.applied;
-      if (filter === 'viewed') return job.viewed && !job.applied;
-      if (filter === 'applied') return job.applied;
-      if (filter === 'hot') return job.score >= 70;
-      return true;
-    });
-
-    const filtered = result.filter((job) => {
-      if (selectedPlatforms.length > 0 && !selectedPlatforms.includes(job.platform)) {
-        return false;
-      }
-
-      if (scoreFilter === 'high') return job.score >= 70;
-      if (scoreFilter === 'medium') return job.score >= 50 && job.score < 70;
-      if (scoreFilter === 'low') return job.score < 50;
-      return true;
-    });
-
-    const searchValue = searchTerm.trim().toLowerCase();
-    const searched = searchValue
-      ? filtered.filter((job) => {
-          const haystack = `${job.title} ${job.description} ${job.platform} ${job.company || ''} ${job.location || ''}`.toLowerCase();
-          return haystack.includes(searchValue);
-        })
-      : filtered;
-
-    if (sortBy === 'score') {
-      searched.sort((a, b) => b.score - a.score);
-    } else if (sortBy === 'date') {
-      searched.sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
-    } else if (sortBy === 'budget') {
-      searched.sort((a, b) => a.budget.localeCompare(b.budget));
-    }
-
-    setFilteredJobs(searched);
-    setCurrentPage(1);
-  }, [jobs, filter, searchTerm, selectedPlatforms, scoreFilter, sortBy]);
-
-  const fetchJobs = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/jobs');
-      const data = await res.json();
-      setJobs(data);
-      const platforms: string[] = [...new Set<string>(data.map((job: Job) => job.platform))];
-      setAvailablePlatforms(platforms);
-      if (selectedPlatforms.length === 0) {
-        setSelectedPlatforms(platforms);
-      }
-      setNewJobsCount(0);
-    } catch (error) {
-      console.error('Error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSync = async () => {
-    setSyncing(true);
-    setSyncMessage('Checking for new opportunities...');
-
-    try {
-      const res = await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await res.json();
-
-      if (data.newJobs > 0) {
-        setSyncMessage(`Found ${data.newJobs} new jobs! Refreshing...`);
-        setNewJobsCount(data.newJobs);
-        await fetchJobs();
-        window.setTimeout(() => setSyncMessage(''), 3000);
-      } else {
-        setSyncMessage('No new jobs found. Cache is fresh.');
-        window.setTimeout(() => setSyncMessage(''), 2000);
-      }
-    } catch (error) {
-      setSyncMessage('Sync failed. Try again.');
-      window.setTimeout(() => setSyncMessage(''), 2000);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const handleJobClick = (job: Job) => {
+  const closeIntroPopup = () => {
+    setShowIntroPopup(false);
     if (typeof window !== 'undefined') {
-      sessionStorage.setItem('selectedJob', JSON.stringify(job));
+      sessionStorage.setItem('hideLeadHunterIntroSession', 'true');
     }
-    router.push(`/job/${job.id}`);
   };
 
-  const handleStatFilter = (nextFilter: 'all' | 'new' | 'viewed' | 'applied' | 'hot') => {
-    setFilter((current) => (current === nextFilter ? 'all' : nextFilter));
+  const openIntroPopup = () => {
+    setShowIntroPopup(true);
   };
+
+  // Filters
+  const [search, setSearch] = useState('');
+  const [platformFilter, setPlatformFilter] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'viewed' | 'applied' | 'hot'>('all');
+  const [countryFilter, setCountryFilter] = useState('All');
+  const [connectionsFilter, setConnectionsFilter] = useState('all');
+  const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
+  const [sortBy, setSortBy] = useState<'score' | 'date' | 'budget'>('date');
+  const [page, setPage] = useState(1);
+  const PER_PAGE = 12;
+
+  // Derived metadata from jobs
+  const availablePlatforms = useMemo(() => [...new Set(jobs.map(j => j.platform))], [jobs]);
+  const availableCountries = useMemo(() => {
+    const countries = jobs
+      .map(j => j.country || j.clientName || '')
+      .filter(c => Boolean(c));
+    return ['All', ...Array.from(new Set(countries)).sort()];
+  }, [jobs]);
 
   const stats = useMemo(() => ({
     total: jobs.length,
-    new: jobs.filter((job) => !job.viewed && !job.applied).length,
-    hot: jobs.filter((job) => job.score >= 70).length,
-    applied: jobs.filter((job) => job.applied).length
+    new: jobs.filter(j => !j.viewed && !j.applied).length,
+    hot: jobs.filter(j => j.score >= 70).length,
+    applied: jobs.filter(j => j.applied).length,
   }), [jobs]);
 
-  const paginatedJobs = useMemo(() => filteredJobs.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage), [filteredJobs, currentPage]);
-  const totalPages = Math.ceil(filteredJobs.length / itemsPerPage);
+  const filteredJobs = useMemo(() => {
+    let result = [...jobs];
 
-  const getPlatformColor = (platform: string) => {
-    const colors: Record<string, string> = {
-      Upwork: '#14a800',
-      Freelancer: '#29b2fe',
-      'Remote OK': '#ff6b35',
-      'WeWorkRemotely': '#3b82f6'
-    };
-    return colors[platform] || '#6c5ce7';
+    // Status filter
+    if (statusFilter === 'new') result = result.filter(j => !j.viewed && !j.applied);
+    else if (statusFilter === 'viewed') result = result.filter(j => j.viewed && !j.applied);
+    else if (statusFilter === 'applied') result = result.filter(j => j.applied);
+    else if (statusFilter === 'hot') result = result.filter(j => j.score >= 70);
+
+    // Platform filter
+    if (platformFilter.length > 0) result = result.filter(j => platformFilter.includes(j.platform));
+
+    // Country filter
+    if (countryFilter !== 'All') result = result.filter(j => (j.country || j.location || '') === countryFilter);
+
+    // Connections filter
+    if (connectionsFilter === 'low') result = result.filter(j => (j.connections ?? 0) <= 5);
+    else if (connectionsFilter === 'med') result = result.filter(j => { const c = j.connections ?? 0; return c >= 6 && c <= 12; });
+    else if (connectionsFilter === 'high') result = result.filter(j => (j.connections ?? 0) >= 13);
+
+    // Score filter
+    if (scoreFilter === 'high') result = result.filter(j => j.score >= 70);
+    else if (scoreFilter === 'medium') result = result.filter(j => j.score >= 50 && j.score < 70);
+    else if (scoreFilter === 'low') result = result.filter(j => j.score < 50);
+
+    // Search
+    const q = search.trim().toLowerCase();
+    if (q) result = result.filter(j =>
+      `${j.title} ${j.description} ${j.platform} ${j.clientName || ''} ${j.country || ''}`.toLowerCase().includes(q)
+    );
+
+    // Sort
+    if (sortBy === 'score') result.sort((a, b) => b.score - a.score);
+    else if (sortBy === 'date') result.sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
+    else if (sortBy === 'budget') {
+      result.sort((a, b) => {
+        const extract = (s: string) => { const m = s.match(/\$?([\d,]+)/); return m ? parseInt(m[1].replace(',', '')) : 0; };
+        return extract(b.budget) - extract(a.budget);
+      });
+    }
+
+    // Push applied jobs to the very end (bottom) unless user is explicitly on the 'Applied' filter tab
+    if (statusFilter !== 'applied') {
+      result.sort((a, b) => {
+        if (a.applied && !b.applied) return 1;
+        if (!a.applied && b.applied) return -1;
+        return 0;
+      });
+    }
+
+    return result;
+  }, [jobs, statusFilter, platformFilter, countryFilter, connectionsFilter, scoreFilter, search, sortBy]);
+
+  const totalPages = Math.ceil(filteredJobs.length / PER_PAGE);
+  const paginatedJobs = useMemo(() => filteredJobs.slice((page - 1) * PER_PAGE, page * PER_PAGE), [filteredJobs, page]);
+
+  const fetchJobs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/jobs');
+      const data: Job[] = await res.json();
+      setJobs(data);
+      setPlatformFilter([...new Set(data.map(j => j.platform))]);
+    } catch (err) {
+      console.error('Failed to fetch jobs', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void fetchJobs(); }, [fetchJobs]);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncMsg('Scanning for fresh opportunities…');
+    try {
+      const res = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      const data = await res.json();
+      if (data.newJobs > 0) {
+        setSyncMsg(`✅ Found ${data.newJobs} new jobs!`);
+        setNewCount(data.newJobs);
+        await fetchJobs();
+      } else {
+        setSyncMsg('✓ All caught up — no new jobs since last sync.');
+      }
+    } catch {
+      setSyncMsg('⚠️ Sync failed. Check your connection.');
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncMsg(''), 4000);
+    }
   };
 
-  const getScoreColor = (score: number) => {
-    if (score >= 70) return '#10b981';
-    if (score >= 50) return '#f59e0b';
-    return '#ef4444';
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [pendingJob, setPendingJob] = useState<Job | null>(null);
+
+  const handleJobClick = (job: Job) => {
+    if (!isAuthenticated()) {
+      setPendingJob(job);
+      setShowAuthModal(true);
+      return;
+    }
+    if (typeof window !== 'undefined') sessionStorage.setItem('selectedJob', JSON.stringify(job));
+    router.push(`/job/${job.id}`);
+  };
+
+  const handleAuthSuccess = () => {
+    setShowAuthModal(false);
+    if (pendingJob) {
+      if (typeof window !== 'undefined') sessionStorage.setItem('selectedJob', JSON.stringify(pendingJob));
+      router.push(`/job/${pendingJob.id}`);
+      setPendingJob(null);
+    }
+  };
+
+  const togglePlatform = (p: string) => {
+    setPlatformFilter(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
+    setPage(1);
   };
 
   if (loading) {
     return (
-      <div style={styles.loadingContainer}>
+      <div style={styles.splashLoad}>
         <div style={styles.spinner} />
-        <div style={styles.loadingText}>Loading opportunities...</div>
+        <p style={{ marginTop: 16, color: '#64748b', fontSize: 14 }}>Loading opportunities…</p>
       </div>
     );
   }
@@ -176,575 +251,448 @@ export default function Home() {
   return (
     <div style={styles.page}>
       <div style={styles.shell}>
-        <header style={styles.header}>
-          <div>
-            <div style={styles.brand}>Lead Hunter</div>
-            <div style={styles.tagline}>Freelance opportunities, scored and ready for outreach.</div>
+
+        {/* ── INTRODUCTORY POPUP ── */}
+        {showIntroPopup && (
+          <div style={styles.modalOverlay}>
+            <div style={styles.modalContent}>
+              <button onClick={closeIntroPopup} style={styles.modalCloseBtn}>&times;</button>
+              <div style={styles.modalHeaderGroup}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/logo.png" alt="Lead Hunter Logo" style={{ height: 50, width: 'auto', marginBottom: 8 }} />
+                <h2 style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', margin: '4px 0' }}>Welcome to Lead Hunter</h2>
+                <p style={{ fontSize: 13, color: '#16a34a', fontWeight: 700, margin: 0 }}>Stop scrolling. Start winning</p>
+              </div>
+              <div style={styles.modalBody}>
+                <p style={{ fontSize: 15, fontWeight: 700, color: '#2563eb', margin: '12px 0 8px', textAlign: 'center' }}>
+                  Only the leads worth chasing.
+                </p>
+                <p style={{ fontSize: 13, color: '#475569', lineHeight: 1.6, textAlign: 'center' }}>
+                  Lead Hunter automatically scans Upwork and Freelancer for high-probability contracts, scores opportunities based on verified client history, and crafts tailored, humanized proposals instantly.
+                </p>
+              </div>
+              <button onClick={closeIntroPopup} style={styles.modalActionBtn}>
+                Get Started &rarr;
+              </button>
+            </div>
           </div>
-          <div style={styles.headerActions}>
-            {syncMessage ? <span style={styles.syncMessage}>{syncMessage}</span> : null}
+        )}
+
+        <AdminLoginModal
+          isOpen={showAuthModal}
+          onClose={() => setShowAuthModal(false)}
+          onSuccess={handleAuthSuccess}
+        />
+
+        {/* ── HEADER ── */}
+        <header style={styles.header}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="Lead Hunter Logo" style={{ height: 48, width: 'auto', objectFit: 'contain' }} />
+            <div>
+              <h1 style={styles.brand}>Lead Hunter</h1>
+              <p style={{ fontSize: 13, color: '#16a34a', fontWeight: 700, margin: '2px 0 0' }}>
+                Stop scrolling. Start winning
+              </p>
+            </div>
+          </div>
+          <div style={styles.headerRight}>
+            <button onClick={openIntroPopup} style={styles.btnGhost}>
+              ℹ️ About
+            </button>
+            <button onClick={() => router.push('/cron-logs')} style={styles.btnCron}>
+              📋 Cron Activity Logs
+            </button>
           </div>
         </header>
 
-        <div style={styles.syncStrip}>
-          <div style={styles.syncText}>Keep the list fresh before you reach out.</div>
-          <div style={styles.syncActions}>
-            <button onClick={handleSync} disabled={syncing} style={{ ...styles.primaryBtn, opacity: syncing ? 0.7 : 1 }}>
-              {syncing ? 'Syncing...' : 'Sync latest jobs'}
-            </button>
-            <button onClick={() => void fetchJobs()} style={styles.secondaryBtn}>Refresh list</button>
-          </div>
-        </div>
-
-        {newJobsCount > 0 ? (
+        {/* ── NEW JOBS BANNER ── */}
+        {newCount > 0 && (
           <div style={styles.banner}>
-            <span>{newJobsCount} new opportunities are ready to review.</span>
-            <button onClick={() => void fetchJobs()} style={styles.bannerBtn}>View new</button>
+            <span><strong>{newCount} new opportunities</strong> just fetched!</span>
+            <button onClick={() => { setNewCount(0); setStatusFilter('new'); }} style={styles.bannerBtn}>View New</button>
           </div>
-        ) : null}
+        )}
 
-        <div style={styles.statsGrid}>
-          <button type="button" onClick={() => handleStatFilter('all')} style={{ ...styles.statCard, ...(filter === 'all' ? styles.statCardActive : {}) }}>
-            <div style={styles.statValue}>{stats.total}</div>
-            <div style={styles.statLabel}>Total leads</div>
-          </button>
-          <button type="button" onClick={() => handleStatFilter('new')} style={{ ...styles.statCard, ...(filter === 'new' ? styles.statCardActive : {}) }}>
-            <div style={styles.statValue}>{stats.new}</div>
-            <div style={styles.statLabel}>New</div>
-          </button>
-          <button type="button" onClick={() => handleStatFilter('hot')} style={{ ...styles.statCard, ...(filter === 'hot' ? styles.statCardActive : {}) }}>
-            <div style={styles.statValue}>{stats.hot}</div>
-            <div style={styles.statLabel}>Hot leads</div>
-          </button>
-          <button type="button" onClick={() => handleStatFilter('applied')} style={{ ...styles.statCard, ...(filter === 'applied' ? styles.statCardActive : {}) }}>
-            <div style={styles.statValue}>{stats.applied}</div>
-            <div style={styles.statLabel}>Applied</div>
-          </button>
+        {/* ── STATS ── */}
+        <div style={styles.statsRow}>
+          {[
+            { label: 'Total', value: stats.total, key: 'all' as const },
+            { label: 'New', value: stats.new, key: 'new' as const },
+            { label: 'Hot (70+)', value: stats.hot, key: 'hot' as const },
+            { label: 'Applied', value: stats.applied, key: 'applied' as const },
+          ].map(s => (
+            <button
+              key={s.key}
+              onClick={() => { setStatusFilter(f => f === s.key ? 'all' : s.key); setPage(1); }}
+              style={{
+                ...styles.statCard,
+                borderWidth: '2px',
+                borderStyle: 'solid',
+                borderColor: statusFilter === s.key ? '#2563eb' : '#e2e8f0',
+                boxShadow: statusFilter === s.key ? '0 0 0 3px rgba(37,99,235,0.12)' : '0 1px 2px rgba(15,23,42,0.04)',
+              }}
+            >
+              <div style={styles.statNum}>{s.value}</div>
+              <div style={styles.statLabel}>{s.label}</div>
+            </button>
+          ))}
         </div>
 
-        <div style={styles.filtersPanel}>
-          <div style={styles.filterGroup}>
-            <label style={styles.filterLabel}>Status</label>
-            <div style={styles.buttonGroup}>
-              <button onClick={() => setFilter('all')} style={{ ...styles.filterBtn, ...(filter === 'all' ? styles.filterActive : {}) }}>All</button>
-              <button onClick={() => setFilter('new')} style={{ ...styles.filterBtn, ...(filter === 'new' ? styles.filterActive : {}) }}>New</button>
-              <button onClick={() => setFilter('viewed')} style={{ ...styles.filterBtn, ...(filter === 'viewed' ? styles.filterActive : {}) }}>Viewed</button>
-              <button onClick={() => setFilter('applied')} style={{ ...styles.filterBtn, ...(filter === 'applied' ? styles.filterActive : {}) }}>Applied</button>
-            </div>
+        {/* ── FILTERS ── */}
+        <div style={styles.filtersBox}>
+          {/* Search */}
+          <div style={styles.filterRow}>
+            <input
+              type="text"
+              placeholder="🔍 Search by title, client, tech, location…"
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1); }}
+              style={styles.searchInput}
+            />
+            <select value={sortBy} onChange={e => { setSortBy(e.target.value as any); setPage(1); }} style={styles.select}>
+              <option value="date">Sort: Latest first</option>
+              <option value="score">Sort: Best score</option>
+              <option value="budget">Sort: Highest budget</option>
+            </select>
           </div>
 
-          <div style={styles.filterGroup}>
-            <label style={styles.filterLabel}>Platforms</label>
-            <div style={styles.buttonGroup}>
-              {availablePlatforms.map((platform) => (
+          {/* Platform toggle pills */}
+          <div style={styles.filterRow}>
+            <span style={styles.filterLabel}>Platform:</span>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {availablePlatforms.map(p => (
                 <button
-                  key={platform}
-                  onClick={() => {
-                    if (selectedPlatforms.includes(platform)) {
-                      setSelectedPlatforms(selectedPlatforms.filter((item) => item !== platform));
-                    } else {
-                      setSelectedPlatforms([...selectedPlatforms, platform]);
-                    }
-                  }}
+                  key={p}
+                  onClick={() => togglePlatform(p)}
                   style={{
-                    ...styles.platformBtn,
-                    background: selectedPlatforms.includes(platform) ? getPlatformColor(platform) : '#f3f4f6',
-                    color: selectedPlatforms.includes(platform) ? '#fff' : '#475569'
+                    ...styles.pill,
+                    background: platformFilter.includes(p) ? (PLATFORM_COLORS[p] || '#6c5ce7') : '#f1f5f9',
+                    color: platformFilter.includes(p) ? '#fff' : '#475569',
+                    borderColor: platformFilter.includes(p) ? (PLATFORM_COLORS[p] || '#6c5ce7') : '#e2e8f0',
                   }}
                 >
-                  {platform}
+                  {p}
                 </button>
               ))}
             </div>
           </div>
 
-          <div style={styles.filterGroup}>
-            <label style={styles.filterLabel}>Score</label>
-            <select value={scoreFilter} onChange={(event) => setScoreFilter(event.target.value as 'all' | 'high' | 'medium' | 'low')} style={styles.sortSelect}>
-              <option value="all">Any score</option>
-              <option value="high">70%+ strong fit</option>
-              <option value="medium">50%–69% promising</option>
+          {/* Row 2: Country, Connections, Score */}
+          <div style={styles.filterRow}>
+            <span style={styles.filterLabel}>Country:</span>
+            <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }} style={styles.select}>
+              {availableCountries.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+
+            <span style={styles.filterLabel}>Bid Cost:</span>
+            <select value={connectionsFilter} onChange={e => { setConnectionsFilter(e.target.value); setPage(1); }} style={styles.select}>
+              <option value="all">Any Connects</option>
+              <option value="low">Low (≤5 connects)</option>
+              <option value="med">Medium (6-12)</option>
+              <option value="high">High (13+)</option>
+            </select>
+
+            <span style={styles.filterLabel}>Score:</span>
+            <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value as any); setPage(1); }} style={styles.select}>
+              <option value="all">Any Score</option>
+              <option value="high">70%+ Strong fit</option>
+              <option value="medium">50–69% Promising</option>
               <option value="low">Below 50%</option>
             </select>
           </div>
 
-          <div style={styles.filterGroup}>
-            <input type="text" placeholder="Search by title, description, or platform" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} style={styles.searchInput} />
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} style={styles.sortSelect}>
-              <option value="score">Sort by score</option>
-              <option value="date">Sort by date</option>
-              <option value="budget">Sort by budget</option>
-            </select>
+          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
+            Showing {filteredJobs.length} of {jobs.length} jobs
           </div>
         </div>
 
-        <div style={styles.cardsGrid}>
-          {paginatedJobs.map((job) => (
-            <button key={job.id} type="button" onClick={() => handleJobClick(job)} style={styles.cardButton}>
-              <article style={styles.card}>
-                <div style={styles.cardHeader}>
-                  <span style={{ ...styles.platformBadge, background: getPlatformColor(job.platform) }}>{job.platform}</span>
-                  {job.isNew ? <span style={styles.newBadge}>New</span> : null}
-                  {job.score >= 70 ? <span style={styles.hotBadge}>High fit</span> : null}
-                  {job.applied ? <span style={styles.appliedBadge}>Applied</span> : null}
-                  {job.viewed && !job.applied ? <span style={styles.viewedBadge}>Viewed</span> : null}
-                </div>
-
-                <h3 style={styles.cardTitle}>{job.title}</h3>
-                <p style={styles.cardDescription}>{job.description?.substring(0, 140)}...</p>
-
-                <div style={styles.cardMeta}>
-                  <div>
-                    <div style={styles.metaLabel}>Budget</div>
-                    <div style={styles.budget}>{job.budget}</div>
-                  </div>
-                  <div>
-                    <div style={styles.metaLabel}>Posted</div>
-                    <div style={styles.date}>{new Date(job.postedAt).toLocaleDateString()}</div>
-                  </div>
-                </div>
-
-                <div style={styles.scoreContainer}>
-                  <div style={styles.scoreBar}>
-                    <div style={{ ...styles.scoreFill, width: `${job.score}%`, background: getScoreColor(job.score) }} />
-                  </div>
-                  <div style={styles.scoreText}>Match score {job.score}%</div>
-                </div>
-              </article>
-            </button>
-          ))}
-        </div>
-
-        {filteredJobs.length === 0 ? (
-          <div style={styles.emptyState}>
-            <p style={styles.emptyStateTitle}>Nothing matches that filter yet.</p>
-            <p style={styles.emptyStateText}>Try widening the score range, clearing a platform, or running a fresh sync.</p>
-            <button onClick={handleSync} style={styles.emptyBtn}>Sync now</button>
+        {/* ── JOB GRID ── */}
+        {paginatedJobs.length === 0 ? (
+          <div style={styles.emptyBox}>
+            <p style={{ fontWeight: 700, fontSize: 18, color: '#0f172a' }}>No jobs match your filters</p>
+            <p style={{ color: '#64748b', marginBottom: 16 }}>Try widening the filters or run a fresh sync.</p>
+            <button onClick={handleSync} style={styles.btnPrimary}>Sync Now</button>
           </div>
-        ) : null}
+        ) : (
+          <div style={styles.grid}>
+            {paginatedJobs.map(job => (
+              <button
+                key={job.id}
+                type="button"
+                onClick={() => handleJobClick(job)}
+                style={styles.cardBtn}
+              >
+                <article style={styles.card}>
+                  {/* Card header badges */}
+                  <div style={styles.cardTop}>
+                    <span style={{ ...styles.badge, background: PLATFORM_COLORS[job.platform] || '#6c5ce7' }}>
+                      {job.platform}
+                    </span>
+                    {job.isNew && <span style={{ ...styles.badge, background: '#22c55e' }}>New</span>}
+                    {job.score >= 70 && <span style={{ ...styles.badge, background: '#f59e0b' }}>Hot</span>}
+                    {job.applied && <span style={{ ...styles.badge, background: '#3b82f6' }}>Applied</span>}
+                    {job.viewed && !job.applied && <span style={{ ...styles.badge, background: '#94a3b8' }}>Viewed</span>}
+                    <span style={{ marginLeft: 'auto', fontSize: 11, color: '#94a3b8' }}>{timeAgo(job.postedAt)}</span>
+                  </div>
 
-        {totalPages > 1 ? (
-          <div style={styles.pagination}>
-            <button onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={currentPage === 1} style={styles.pageBtn}>Previous</button>
-            <span style={styles.pageInfo}>{currentPage} / {totalPages}</span>
-            <button onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={currentPage === totalPages} style={styles.pageBtn}>Next</button>
+                  {/* Title */}
+                  <h3 style={styles.cardTitle}>{job.title}</h3>
+
+                  {/* Client info */}
+                  <p style={styles.clientLine}>
+                    {job.clientName && !job.clientName.toLowerCase().includes('client') 
+                      ? `Client: ${job.clientName}` 
+                      : `Country: ${job.country || 'Remote'}`}
+                    {job.clientSpend ? ` · Spent: ${job.clientSpend}` : ''}
+                    {job.clientReviews ? ` · Rating: ${job.clientReviews}` : ''}
+                  </p>
+
+                  {/* Description snippet */}
+                  <p style={styles.snippet}>{job.description?.substring(0, 130)}…</p>
+
+                  {/* Meta row */}
+                  <div style={styles.metaRow}>
+                    <div>
+                      <div style={styles.metaKey}>Budget</div>
+                      <div style={styles.metaVal}>{job.budget || 'Negotiable'}</div>
+                    </div>
+                    {(job.connections ?? 0) > 0 && (
+                      <div>
+                        <div style={styles.metaKey}>Bid Cost</div>
+                        <div style={{ ...styles.metaVal, color: '#2563eb', fontWeight: 700 }}>
+                          {job.connections} connects
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                      <div style={styles.metaKey}>Match</div>
+                      <div style={{ ...styles.metaVal, color: getScoreColor(job.score) }}>{job.score}%</div>
+                    </div>
+                  </div>
+
+                  {/* Score bar */}
+                  <div style={styles.barTrack}>
+                    <div style={{ ...styles.barFill, width: `${job.score}%`, background: getScoreColor(job.score) }} />
+                  </div>
+                </article>
+              </button>
+            ))}
           </div>
-        ) : null}
+        )}
+
+        {/* ── FOOTER ── */}
+        <footer style={{
+          marginTop: 48,
+          paddingTop: 24,
+          borderTop: '1px solid #cbd5e1',
+          textAlign: 'center',
+          color: '#64748b',
+          fontSize: 13,
+          lineHeight: 1.6
+        }}>
+          <p style={{ margin: 0, fontWeight: 600 }}>
+            Lead Hunter &bull; Developed by <strong style={{ color: '#0f172a' }}>Abdul Raheem</strong> &bull; <a href="mailto:geeksxperts@gmail.com" style={{ color: '#2563eb', textDecoration: 'none' }}>geeksxperts@gmail.com</a>
+          </p>
+          <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94a3b8' }}>
+            Stop scrolling. Start winning. &copy; {new Date().getFullYear()} All rights reserved.
+          </p>
+        </footer>
       </div>
     </div>
   );
 }
 
-const styles = {
+/* ── STYLES ─────────────────────────────────────────────────────────── */
+const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100vh',
-    background: '#f3f4f6',
+    background: 'linear-gradient(135deg,#f0f4ff 0%,#f8fafc 100%)',
     color: '#111827',
-    padding: '24px',
-    fontFamily: 'Inter, "Segoe UI", sans-serif'
+    padding: '24px 16px',
+    fontFamily: 'Inter,"Segoe UI",sans-serif',
   },
-  shell: {
-    maxWidth: '1280px',
-    margin: '0 auto'
-  },
-  loadingContainer: {
+  shell: { maxWidth: 1320, margin: '0 auto' },
+
+  splashLoad: {
     minHeight: '100vh',
     display: 'flex',
-    flexDirection: 'column' as const,
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    background: '#f3f4f6',
-    color: '#111827',
-    fontFamily: 'Inter, "Segoe UI", sans-serif'
+    fontFamily: 'Inter,"Segoe UI",sans-serif',
   },
   spinner: {
-    width: '42px',
-    height: '42px',
+    width: 40,
+    height: 40,
     border: '3px solid #dbeafe',
-    borderTop: '3px solid #2563eb',
+    borderTopColor: '#2563eb',
     borderRadius: '50%',
-    animation: 'spin 1s linear infinite'
+    animation: 'spin 0.8s linear infinite',
   },
-  loadingText: {
-    marginTop: '16px',
-    color: '#475569'
-  },
+
   header: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '16px',
-    marginBottom: '24px',
-    flexWrap: 'wrap' as const
+    alignItems: 'flex-start',
+    gap: 16,
+    marginBottom: 24,
+    flexWrap: 'wrap',
   },
-  brand: {
-    fontSize: '28px',
-    fontWeight: 700,
-    color: '#0f172a',
-    letterSpacing: '-0.02em'
+  brand: { fontSize: 26, fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.03em' },
+  tagline: { color: '#64748b', fontSize: 13, marginTop: 4 },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+  syncBadge: {
+    background: '#eff6ff', color: '#2563eb', borderRadius: 999,
+    padding: '6px 12px', fontSize: 12, fontWeight: 600,
   },
-  tagline: {
-    color: '#64748b',
-    marginTop: '4px',
-    fontSize: '14px'
+  btnPrimary: {
+    background: '#2563eb', color: '#fff', border: 'none',
+    borderRadius: 999, padding: '10px 18px', fontSize: 13,
+    fontWeight: 700, cursor: 'pointer',
   },
-  headerActions: {
-    display: 'flex',
-    alignItems: 'center',
-    flexWrap: 'wrap' as const,
-    gap: '10px'
+  btnGhost: {
+    background: '#fff', color: '#475569',
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
+    borderRadius: 999, padding: '10px 14px', fontSize: 13, cursor: 'pointer',
   },
-  primaryBtn: {
-    background: '#2563eb',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '999px',
-    padding: '10px 16px',
-    fontSize: '13px',
-    fontWeight: 600,
-    cursor: 'pointer'
-  },
-  secondaryBtn: {
-    background: '#fff',
-    color: '#334155',
-    border: '1px solid #dbe2ea',
-    borderRadius: '999px',
-    padding: '10px 16px',
-    fontSize: '13px',
-    fontWeight: 600,
-    cursor: 'pointer'
-  },
-  syncMessage: {
-    fontSize: '13px',
-    color: '#2563eb',
-    background: '#eff6ff',
-    borderRadius: '999px',
-    padding: '8px 12px'
-  },
-  syncStrip: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '12px',
-    padding: '12px 14px',
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '14px',
-    marginBottom: '20px',
-    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)'
-  },
-  syncText: {
-    color: '#475569',
-    fontSize: '13px'
-  },
-  syncActions: {
-    display: 'flex',
-    gap: '10px',
-    flexWrap: 'wrap' as const
-  },
+
   banner: {
     background: '#eff6ff',
-    border: '1px solid #bfdbfe',
-    borderRadius: '14px',
-    padding: '14px 16px',
-    marginBottom: '20px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '12px',
-    flexWrap: 'wrap' as const,
-    color: '#1d4ed8'
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#bfdbfe',
+    borderRadius: 12, padding: '12px 16px', marginBottom: 20,
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    flexWrap: 'wrap', gap: 10, color: '#1d4ed8',
   },
   bannerBtn: {
-    background: '#2563eb',
+    background: '#2563eb', color: '#fff', border: 'none',
+    borderRadius: 999, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+  },
+
+  btnCron: {
+    background: '#16a34a',
     color: '#fff',
     border: 'none',
-    borderRadius: '999px',
-    padding: '8px 12px',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: 600
-  },
-  statsGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-    gap: '12px',
-    marginBottom: '20px'
-  },
-  statCard: {
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '14px',
-    padding: '16px',
-    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
-    cursor: 'pointer',
-    textAlign: 'left' as const,
-    transition: 'transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease'
-  },
-  statCardActive: {
-    borderColor: '#2563eb',
-    boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.12)',
-    transform: 'translateY(-1px)'
-  },
-  statValue: {
-    fontSize: '24px',
+    borderRadius: 999,
+    padding: '10px 20px',
+    fontSize: 13,
     fontWeight: 700,
-    color: '#0f172a'
-  },
-  statLabel: {
-    fontSize: '13px',
-    color: '#64748b',
-    marginTop: '4px'
-  },
-  filtersPanel: {
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '16px',
-    padding: '16px',
-    marginBottom: '20px',
-    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)'
-  },
-  filterGroup: {
-    display: 'flex',
-    flexWrap: 'wrap' as const,
-    alignItems: 'center',
-    gap: '10px',
-    marginBottom: '12px'
-  },
-  filterLabel: {
-    minWidth: '70px',
-    color: '#475569',
-    fontSize: '13px',
-    fontWeight: 600
-  },
-  buttonGroup: {
-    display: 'flex',
-    gap: '8px',
-    flexWrap: 'wrap' as const
-  },
-  filterBtn: {
-    border: '1px solid #dbe2ea',
-    background: '#fff',
-    color: '#475569',
-    borderRadius: '999px',
-    padding: '8px 12px',
     cursor: 'pointer',
-    fontSize: '13px'
+    boxShadow: '0 2px 4px rgba(22,163,74,0.2)'
   },
-  filterActive: {
+  modalOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(15, 23, 42, 0.65)',
+    backdropFilter: 'blur(4px)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+    padding: 16
+  },
+  modalContent: {
+    background: '#fff',
+    borderRadius: 20,
+    padding: '28px 32px',
+    maxWidth: 480,
+    width: '100%',
+    position: 'relative',
+    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+    textAlign: 'center'
+  },
+  modalCloseBtn: {
+    position: 'absolute',
+    top: 14,
+    right: 18,
+    background: 'none',
+    border: 'none',
+    fontSize: 24,
+    color: '#94a3b8',
+    cursor: 'pointer'
+  },
+  modalHeaderGroup: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
+  modalBody: { margin: '16px 0 24px' },
+  modalActionBtn: {
+    width: '100%',
     background: '#2563eb',
     color: '#fff',
-    border: '1px solid #2563eb'
-  },
-  platformBtn: {
-    borderRadius: '999px',
-    padding: '8px 12px',
-    border: '1px solid #dbe2ea',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: 600
-  },
-  scoreRange: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    flexWrap: 'wrap' as const
-  },
-  rangeInput: {
-    accentColor: '#2563eb',
-    width: '140px'
-  },
-  rangeValue: {
-    color: '#2563eb',
-    fontSize: '13px',
-    fontWeight: 600
-  },
-  searchInput: {
-    flex: 1,
-    minWidth: '240px',
-    border: '1px solid #dbe2ea',
-    background: '#fff',
-    borderRadius: '999px',
-    padding: '10px 14px',
-    color: '#0f172a',
-    fontSize: '13px'
-  },
-  sortSelect: {
-    border: '1px solid #dbe2ea',
-    background: '#fff',
-    color: '#475569',
-    borderRadius: '999px',
-    padding: '10px 14px',
-    fontSize: '13px',
-    cursor: 'pointer'
-  },
-  cardsGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-    gap: '16px'
-  },
-  cardButton: {
-    background: 'transparent',
     border: 'none',
-    padding: 0,
-    width: '100%',
-    textAlign: 'left' as const,
+    borderRadius: 999,
+    padding: '12px 24px',
+    fontSize: 15,
+    fontWeight: 700,
     cursor: 'pointer'
   },
+  statsRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12, marginBottom: 20 },
+  statCard: {
+    background: '#fff', borderRadius: 14, padding: '16px',
+    cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
+  },
+  statNum: { fontSize: 28, fontWeight: 800, color: '#0f172a' },
+  statLabel: { fontSize: 13, color: '#64748b', marginTop: 2 },
+
+  filtersBox: {
+    background: '#fff',
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
+    borderRadius: 16, padding: '16px 20px', marginBottom: 24,
+    display: 'flex', flexDirection: 'column', gap: 12,
+    boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+  },
+  filterRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
+  filterLabel: { fontSize: 12, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' },
+  searchInput: {
+    flex: 1, minWidth: 240,
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
+    borderRadius: 999, padding: '10px 16px', fontSize: 13, color: '#0f172a',
+    background: '#f8fafc',
+  },
+  select: {
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
+    borderRadius: 999, padding: '8px 14px', fontSize: 13,
+    color: '#334155', background: '#fff', cursor: 'pointer',
+  },
+  pill: {
+    borderWidth: '1px', borderStyle: 'solid',
+    borderRadius: 999, padding: '6px 14px', fontSize: 12,
+    fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s',
+  },
+
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))', gap: 16 },
+  cardBtn: { background: 'transparent', border: 'none', padding: 0, width: '100%', textAlign: 'left', cursor: 'pointer' },
   card: {
     background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '16px',
-    padding: '18px',
-    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
-    cursor: 'pointer',
-    transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
+    borderRadius: 18, padding: '18px 20px',
+    boxShadow: '0 1px 3px rgba(15,23,42,0.05)',
+    transition: 'box-shadow 0.15s, transform 0.15s',
+    display: 'flex', flexDirection: 'column', gap: 10,
   },
-  cardHeader: {
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-    flexWrap: 'wrap' as const,
-    marginBottom: '10px'
-  },
-  platformBadge: {
-    color: '#fff',
-    borderRadius: '999px',
-    padding: '4px 10px',
-    fontSize: '11px',
-    fontWeight: 700
-  },
-  newBadge: {
-    background: '#dcfce7',
-    color: '#166534',
-    borderRadius: '999px',
-    padding: '4px 10px',
-    fontSize: '11px',
-    fontWeight: 700
-  },
-  hotBadge: {
-    background: '#fef3c7',
-    color: '#92400e',
-    borderRadius: '999px',
-    padding: '4px 10px',
-    fontSize: '11px',
-    fontWeight: 700
-  },
-  appliedBadge: {
-    background: '#dcfce7',
-    color: '#166534',
-    borderRadius: '999px',
-    padding: '4px 10px',
-    fontSize: '11px',
-    fontWeight: 700
-  },
-  viewedBadge: {
-    background: '#f1f5f9',
-    color: '#475569',
-    borderRadius: '999px',
-    padding: '4px 10px',
-    fontSize: '11px',
-    fontWeight: 700
-  },
-  cardTitle: {
-    fontSize: '17px',
-    fontWeight: 700,
-    color: '#0f172a',
-    marginBottom: '8px',
-    lineHeight: 1.4
-  },
-  cardDescription: {
-    fontSize: '13px',
-    color: '#64748b',
-    lineHeight: 1.6,
-    marginBottom: '14px'
-  },
-  cardMeta: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    gap: '10px',
-    marginBottom: '12px'
-  },
-  metaLabel: {
-    fontSize: '11px',
-    color: '#94a3b8',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.04em',
-    marginBottom: '4px'
-  },
-  budget: {
-    fontSize: '13px',
-    color: '#0f766e',
-    fontWeight: 600
-  },
-  date: {
-    fontSize: '13px',
-    color: '#334155'
-  },
-  scoreContainer: {
-    marginTop: '8px'
-  },
-  scoreBar: {
-    height: '6px',
-    borderRadius: '999px',
-    background: '#e2e8f0',
-    overflow: 'hidden'
-  },
-  scoreFill: {
-    height: '100%',
-    borderRadius: '999px'
-  },
-  scoreText: {
-    fontSize: '12px',
-    color: '#64748b',
-    marginTop: '6px'
-  },
-  emptyState: {
+  cardTop: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  badge: { color: '#fff', borderRadius: 999, padding: '3px 10px', fontSize: 11, fontWeight: 700 },
+  cardTitle: { fontSize: 16, fontWeight: 700, color: '#0f172a', lineHeight: 1.35, margin: 0 },
+  clientLine: { fontSize: 12, color: '#64748b', margin: 0 },
+  snippet: { fontSize: 13, color: '#64748b', lineHeight: 1.55, margin: 0 },
+  metaRow: { display: 'flex', alignItems: 'flex-end', gap: 16 },
+  metaKey: { fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginBottom: 2 },
+  metaVal: { fontSize: 14, fontWeight: 700, color: '#0f172a' },
+  barTrack: { height: 5, borderRadius: 999, background: '#e2e8f0', overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 999, transition: 'width 0.3s' },
+
+  emptyBox: {
     background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '16px',
-    padding: '28px',
-    textAlign: 'center' as const,
-    marginTop: '20px'
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
+    borderRadius: 18, padding: '48px 24px', textAlign: 'center',
+    boxShadow: '0 1px 3px rgba(15,23,42,0.05)',
   },
-  emptyStateTitle: {
-    fontSize: '18px',
-    fontWeight: 700,
-    color: '#0f172a',
-    marginBottom: '6px'
-  },
-  emptyStateText: {
-    color: '#64748b',
-    marginBottom: '14px'
-  },
-  emptyBtn: {
-    background: '#2563eb',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '999px',
-    padding: '10px 16px',
-    cursor: 'pointer',
-    fontWeight: 600
-  },
-  pagination: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: '16px',
-    marginTop: '24px'
-  },
+
+  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, marginTop: 32 },
   pageBtn: {
-    border: '1px solid #dbe2ea',
-    background: '#fff',
-    borderRadius: '999px',
-    padding: '8px 14px',
-    cursor: 'pointer',
-    fontSize: '13px',
-    color: '#334155'
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
+    background: '#fff', borderRadius: 999, padding: '8px 16px',
+    fontSize: 13, cursor: 'pointer', color: '#334155',
   },
-  pageInfo: {
-    color: '#64748b',
-    fontSize: '13px',
-    fontWeight: 600
-  }
 };

@@ -244,7 +244,7 @@ Return JSON with these exact keys:
       reasons: reasons.slice(0, 4),
       bidAmount,
       questions,
-      proposal: this.generateProposal(title, description),
+      proposal: this.generateProposal(title, description, options.clientName),
       originalBudget: this.extractBudgetText(description, options),
       originalTimeline: this.extractTimeline(description),
       clientDetails: this.extractClientDetails(title, description),
@@ -314,10 +314,48 @@ Return JSON with these exact keys:
     return '$500-$1500';
   }
 
-  private generateProposal(title: string, description: string): string {
+  private generateProposal(title: string, description: string, rawClientName?: string): string {
     const text = `${title} ${description}`.toLowerCase();
-    const stack = /wordpress|php|laravel|react|next|node|python|django|mobile|flutter|react native|shopify|webflow|api/i.test(text) ? 'technical' : 'project';
 
-    return `Hi there,\n\nI reviewed your request for ${title} and I can see this is a ${stack} opportunity that needs both strong execution and clear communication. I would approach it with a practical delivery plan, close collaboration, and attention to the details that matter most to the client. My goal would be to make the process feel smooth, reliable, and low-risk while delivering a polished result that fits your goals.\n\nIf you want, I’d be happy to discuss the scope in more detail and propose a plan that fits both the timeline and budget.\n\nBest regards,\nFreelancer`;
+    // 1. Detect Secret Test Words / Instructions (e.g. "Start your proposal with BLUEBERRY", "Include keyword xyz")
+    let secretWordLine = '';
+    const secretMatch = description.match(/(?:start|begin|include|type|write|code|keyword|phrase)[^.\n]*["']([a-zA-Z0-9 _-]+)["']/i) ||
+                        description.match(/(?:start your proposal with|use the word|secret word is)\s*[:\-]?\s*([a-zA-Z0-9_-]+)/i);
+    
+    if (secretMatch?.[1]) {
+      const secret = secretMatch[1].trim();
+      secretWordLine = `[Verification Word: ${secret}]\n\n`;
+    }
+
+    // 2. Extract catchwords / key technical requirements
+    let catchPhrase = '';
+    const reqMatch = description.match(/need[s]? (someone|a developer) (to|who can) ([a-zA-Z0-9 ]{10,50})/i);
+    const techMatch = description.match(/(experience|proficient) (with|in) ([a-zA-Z0-9, ]{5,30})/i);
+
+    if (reqMatch) {
+      catchPhrase = `specifically regarding your requirement to ${reqMatch[3].trim()}`;
+    } else if (techMatch) {
+      catchPhrase = `especially leveraging ${techMatch[3].trim()} as requested`;
+    } else if (text.includes('bug') || text.includes('fix')) {
+      catchPhrase = 'specifically addressing the bugs and stability improvements mentioned in your post';
+    } else if (text.includes('api')) {
+      catchPhrase = 'especially regarding the API integration work required';
+    } else {
+      catchPhrase = `specifically your requirements for this ${/mobile/i.test(title) ? 'mobile application' : 'project'}`;
+    }
+
+    // 3. Clean Client Greeting (Ensure no "United States Client" or generic country boilerplate is used as a name)
+    let greeting = 'Hi there,';
+    if (rawClientName && !rawClientName.toLowerCase().includes('client') && !rawClientName.toLowerCase().includes('remote')) {
+      greeting = `Hi ${rawClientName.trim()},`;
+    }
+
+    const intro = `${secretWordLine}${greeting}\n\nI reviewed your listing for "${title.trim()}". I understand you are seeking an experienced developer to deliver this, ${catchPhrase}.`;
+    
+    const body = `I focus on writing clean, maintainable code and maintaining transparent communication throughout development. Rather than sending a generic boilerplate, I review the existing technical setup first to make sure I can deliver exactly what you need with fast turnaround and high quality.`;
+    
+    const closing = `I'm available to discuss your scope and technical milestones immediately. Let me know if you'd like to schedule a quick chat to get started.`;
+
+    return `${intro}\n\n${body}\n\n${closing}`;
   }
 }

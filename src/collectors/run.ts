@@ -124,6 +124,8 @@ export async function runAllCollectors(): Promise<{
     try {
       const cleanedBudget = item.budget?.trim() || "Undetermined";
       const baseScore = calculateBaseScore(item);
+      // Normalize the posted date - different collectors use different field names
+      const postedAt = (item.postedAt || item.postedDate) ? new Date((item.postedAt || item.postedDate) as any) : new Date();
       await prisma.opportunity.upsert({
         where: { url: item.url },
         update: {},
@@ -135,7 +137,13 @@ export async function runAllCollectors(): Promise<{
           url: item.url,
           score: baseScore,
           risk: "Medium",
-          createdAt: item.postedAt || new Date(),
+          createdAt: postedAt,
+          status: item.status || "OPEN",
+          country: item.country,
+          clientName: item.clientName,
+          clientSpend: item.clientSpend,
+          clientReviews: item.clientReviews,
+          connections: item.connections,
         },
       });
       totalImported++;
@@ -154,6 +162,7 @@ export async function runAllCollectors(): Promise<{
         try {
           const cleanedBudget = item.budget?.trim() || "Undetermined";
           const baseScore = calculateBaseScore(item);
+          const postedAt2 = (item.postedAt || item.postedDate) ? new Date((item.postedAt || item.postedDate) as any) : new Date();
           await prisma.opportunity.upsert({
             where: { url: item.url },
             update: {},
@@ -165,7 +174,13 @@ export async function runAllCollectors(): Promise<{
               url: item.url,
               score: baseScore,
               risk: "Medium",
-              createdAt: item.postedAt || new Date(),
+              createdAt: postedAt2,
+              status: item.status || "OPEN",
+              country: item.country,
+              clientName: item.clientName,
+              clientSpend: item.clientSpend,
+              clientReviews: item.clientReviews,
+              connections: item.connections,
             },
           });
           totalImported++;
