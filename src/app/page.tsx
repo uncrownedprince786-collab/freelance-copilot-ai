@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated, isAdmin } from '@/lib/auth';
+import { isAuthenticated, isAdmin, logout, getRole } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
 
 interface Job {
@@ -72,14 +72,20 @@ function HomeContent() {
   const [showIntroPopup, setShowIntroPopup] = useState(true);
   const [newCount, setNewCount] = useState(0);
 
+  const [authed, setAuthed] = useState(false);
+  const [adminMode, setAdminMode] = useState(false);
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const dismissed = sessionStorage.getItem('hideLeadHunterIntroSession');
       if (dismissed === 'true') {
         setShowIntroPopup(false);
       }
+      setAuthed(isAuthenticated());
+      setAdminMode(isAdmin());
     }
   }, []);
+
 
   const closeIntroPopup = () => {
     setShowIntroPopup(false);
@@ -185,8 +191,19 @@ function HomeContent() {
     try {
       const res = await fetch('/api/jobs');
       const data: Job[] = await res.json();
-      setJobs(data);
-      setPlatformFilter([...new Set(data.map(j => j.platform))]);
+      // Guests see NO server-persisted applied state — only admin's applied list is preserved
+      const role = typeof window !== 'undefined' ? sessionStorage.getItem('lh_auth_role') : null;
+      const isAdminUser = role === 'admin';
+      const guestApplied: Set<string> = new Set(
+        JSON.parse(typeof window !== 'undefined' ? (sessionStorage.getItem('guest_applied') || '[]') : '[]')
+      );
+      const cleaned = data.map(j => ({
+        ...j,
+        applied: isAdminUser ? j.applied : guestApplied.has(j.id),
+        viewed: isAdminUser ? j.viewed : false,
+      }));
+      setJobs(cleaned);
+      setPlatformFilter([...new Set(cleaned.map(j => j.platform))]);
     } catch (err) {
       console.error('Failed to fetch jobs', err);
     } finally {
@@ -232,10 +249,15 @@ function HomeContent() {
 
   const handleAuthSuccess = () => {
     setShowAuthModal(false);
+    setAuthed(isAuthenticated());
+    setAdminMode(isAdmin());
     if (pendingJob) {
       if (typeof window !== 'undefined') sessionStorage.setItem('selectedJob', JSON.stringify(pendingJob));
       router.push(`/job/${pendingJob.id}`);
       setPendingJob(null);
+    } else {
+      // Re-fetch to apply correct role-based applied state
+      void fetchJobs();
     }
   };
 
@@ -303,17 +325,31 @@ function HomeContent() {
           </div>
           <div style={styles.headerRight}>
             <button onClick={openIntroPopup} style={styles.btnGhost}>
-              ℹ️ About
+              About
             </button>
             <button onClick={() => router.push('/trends')} style={styles.btnCron}>
-              📊 Market Trends
+              Market Trends
             </button>
-            <button onClick={() => router.push('/cron-logs')} style={styles.btnCron}>
-              📋 Cron Logs
-            </button>
-            {isAdmin() && (
-              <button onClick={() => router.push('/admin/sessions')} style={{ ...styles.btnCron, background: '#1e40af', color: '#fff', borderColor: '#1e40af' }}>
-                🛡️ Sessions
+            {adminMode && (
+              <>
+                <button onClick={() => router.push('/cron-logs')} style={styles.btnCron}>
+                  Cron Logs
+                </button>
+                <button onClick={() => router.push('/admin/sessions')} style={{ ...styles.btnCron, background: '#1e3a8a', color: '#fff', borderColor: '#1e3a8a' }}>
+                  Sessions
+                </button>
+              </>
+            )}
+            {authed && (
+              <button
+                onClick={() => {
+                  logout();
+                  setAuthed(false);
+                  setAdminMode(false);
+                }}
+                style={{ ...styles.btnGhost, color: '#dc2626', borderColor: '#fca5a5' }}
+              >
+                Logout
               </button>
             )}
           </div>

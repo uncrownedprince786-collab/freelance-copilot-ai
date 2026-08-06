@@ -181,12 +181,27 @@ export default function JobDetailPage() {
   const markApplied = async () => {
     if (!job) return;
     const nextState = !job.applied;
+    const role = typeof window !== 'undefined' ? (sessionStorage.getItem('lh_auth_role') || 'guest') : 'guest';
+
     try {
       await fetch('/api/jobs/applied', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: job.id, applied: nextState }),
+        body: JSON.stringify({ jobId: job.id, applied: nextState, role }),
       });
+
+      // For guests: persist only in sessionStorage (lost on refresh by design)
+      if (role !== 'admin' && typeof window !== 'undefined') {
+        const guestApplied: string[] = JSON.parse(sessionStorage.getItem('guest_applied') || '[]');
+        if (nextState) {
+          if (!guestApplied.includes(job.id)) guestApplied.push(job.id);
+        } else {
+          const idx = guestApplied.indexOf(job.id);
+          if (idx >= 0) guestApplied.splice(idx, 1);
+        }
+        sessionStorage.setItem('guest_applied', JSON.stringify(guestApplied));
+      }
+
       setJob(prev => prev ? { ...prev, applied: nextState } : prev);
     } catch {/* non-critical */}
   };

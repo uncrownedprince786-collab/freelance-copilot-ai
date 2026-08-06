@@ -26,6 +26,24 @@ export async function GET() {
       rawJobs = data.jobs || [];
     }
 
+    // --- 40-day auto-cleanup: filter out stale jobs and write back ---
+    const FORTY_DAYS_MS = 40 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const freshJobs = rawJobs.filter((j: any) => {
+      const posted = j.postedAt || j.postedDate || j.fetchedAt;
+      if (!posted) return true; // keep if no date
+      return now - new Date(posted).getTime() < FORTY_DAYS_MS;
+    });
+    // Write back if we cleaned anything
+    if (freshJobs.length < rawJobs.length && fs.existsSync(jobsCachePath)) {
+      try {
+        const cacheData = JSON.parse(fs.readFileSync(jobsCachePath, 'utf-8'));
+        cacheData.jobs = freshJobs;
+        fs.writeFileSync(jobsCachePath, JSON.stringify(cacheData, null, 2));
+      } catch { /* non-critical */ }
+    }
+    rawJobs = freshJobs;
+
     const jobs = rawJobs.map((job: any) => {
       const jobId = job.id || job.url;
       const isApplied = Boolean(job.applied) || appliedSet.has(jobId) || appliedSet.has(job.url);

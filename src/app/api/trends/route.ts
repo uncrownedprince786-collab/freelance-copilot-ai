@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getRawJobs } from '@/lib/jobsCache';
 
 const cacheFile = path.join(process.cwd(), '.trends-cache.json');
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -30,7 +31,6 @@ function readCache(): TrendsCache | null {
 }
 
 function analyzeJobsLocally(): { skills: Record<string, number>, categories: Record<string, number>, budgets: string[], titles: string[], descriptions: string[] } {
-  const jobsPath = path.join(process.cwd(), '.jobs-cache.json');
   const skills: Record<string, number> = {};
   const categories: Record<string, number> = {};
   const budgets: string[] = [];
@@ -62,27 +62,42 @@ function analyzeJobsLocally(): { skills: Record<string, number>, categories: Rec
     'Automation / Scraping': ['web scraping', 'automation', 'selenium', 'playwright'],
   };
 
-  try {
-    if (!fs.existsSync(jobsPath)) return { skills, categories, budgets, titles, descriptions };
-    const jobs = JSON.parse(fs.readFileSync(jobsPath, 'utf-8'));
+  const jobs = getRawJobs(); // Use shared utility — same source as jobs API
 
-    for (const job of jobs) {
-      const text = `${job.title || ''} ${job.description || ''}`.toLowerCase();
-      titles.push(job.title || '');
-      descriptions.push((job.description || '').slice(0, 500));
-      if (job.budget) budgets.push(job.budget);
+  for (const job of jobs) {
+    const skillsText = Array.isArray(job.skills) ? job.skills.join(' ').toLowerCase() : '';
+    const text = `${job.title || ''} ${job.description || ''} ${skillsText}`.toLowerCase();
+    titles.push(job.title || '');
+    descriptions.push((job.description || '').slice(0, 500));
 
-      for (const kw of SKILL_KEYWORDS) {
-        if (text.includes(kw)) skills[kw] = (skills[kw] || 0) + 1;
-      }
+    // Budget
+    if (job.budget) {
+      if (typeof job.budget === 'object' && job.budget.amount) budgets.push(`$${job.budget.amount}`);
+      else if (typeof job.budget === 'string') budgets.push(job.budget);
+    }
 
-      for (const [cat, kws] of Object.entries(CATEGORY_MAP)) {
-        if (kws.some(kw => text.includes(kw))) {
-          categories[cat] = (categories[cat] || 0) + 1;
+    // Skills from actual skills array first
+    if (Array.isArray(job.skills)) {
+      for (const sk of job.skills) {
+        const skl = sk.toLowerCase();
+        if (SKILL_KEYWORDS.some(kw => skl.includes(kw) || kw.includes(skl))) {
+          const matched = SKILL_KEYWORDS.find(kw => skl.includes(kw) || kw === skl) || skl;
+          skills[matched] = (skills[matched] || 0) + 1;
         }
       }
     }
-  } catch { /* ignore */ }
+
+    // Also scan description
+    for (const kw of SKILL_KEYWORDS) {
+      if (text.includes(kw)) skills[kw] = (skills[kw] || 0) + 1;
+    }
+
+    for (const [cat, kws] of Object.entries(CATEGORY_MAP)) {
+      if (kws.some(kw => text.includes(kw))) {
+        categories[cat] = (categories[cat] || 0) + 1;
+      }
+    }
+  }
 
   return { skills, categories, budgets, titles, descriptions };
 }
@@ -108,9 +123,12 @@ async function generateWithGemini(prompt: string): Promise<string> {
 }
 
 export async function GET(req: NextRequest) {
-  // Check cache first
+  // Check cache — but skip if it shows 0 jobs (stale/empty data)
   const cached = readCache();
-  if (cached) return NextResponse.json({ ...cached.trends, cached: true, generatedAt: cached.generatedAt });
+  const rawJobCount = getRawJobs().length;
+  if (cached && cached.trends.totalJobsAnalyzed > 0 && rawJobCount > 0) {
+    return NextResponse.json({ ...cached.trends, cached: true, generatedAt: cached.generatedAt });
+  }
 
   const { skills, categories, budgets, titles, descriptions } = analyzeJobsLocally();
 

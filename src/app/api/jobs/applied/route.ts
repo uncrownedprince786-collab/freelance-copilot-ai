@@ -7,18 +7,24 @@ const cacheFile = path.join(process.cwd(), '.jobs-cache.json');
 
 export async function POST(request: Request) {
   try {
-    const { jobId, applied } = await request.json();
-    const isApplied = applied !== false; // default true if toggled
+    const body = await request.json();
+    const { jobId, applied, role } = body;
+    const isApplied = applied !== false;
 
-    // 1. Update applied-jobs.json
+    // Only persist to server if the request is from an admin user
+    // Guests' applied state is managed purely in sessionStorage on the client
+    if (role !== 'admin') {
+      // Guest: acknowledge but don't persist server-side
+      return NextResponse.json({ success: true, jobId, applied: isApplied, persisted: false });
+    }
+
+    // 1. Update applied-jobs.json (admin only)
     let appliedJobs: string[] = [];
     if (fs.existsSync(appliedFile)) {
       try {
         const data = JSON.parse(fs.readFileSync(appliedFile, 'utf-8'));
         appliedJobs = data.applied || [];
-      } catch {
-        appliedJobs = [];
-      }
+      } catch { appliedJobs = []; }
     }
 
     if (isApplied) {
@@ -35,9 +41,7 @@ export async function POST(request: Request) {
         const cacheData = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
         if (Array.isArray(cacheData.jobs)) {
           cacheData.jobs = cacheData.jobs.map((job: any) => {
-            if (job.id === jobId || job.url === jobId) {
-              return { ...job, applied: isApplied };
-            }
+            if (job.id === jobId || job.url === jobId) return { ...job, applied: isApplied };
             return job;
           });
           fs.writeFileSync(cacheFile, JSON.stringify(cacheData, null, 2));
@@ -47,7 +51,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, jobId, applied: isApplied });
+    return NextResponse.json({ success: true, jobId, applied: isApplied, persisted: true });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
