@@ -1,24 +1,20 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { JobPipeline } from '../../../providers/JobPipeline';
-import * as fs from 'fs';
-import * as path from 'path';
+import { prisma } from '@/lib/db';
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   try {
+    const authHeader = req.headers.get('authorization');
+    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const pipeline = new JobPipeline();
     const jobs = await pipeline.execute();
 
-    const cacheFile = path.join(process.cwd(), '.jobs-cache.json');
-    fs.writeFileSync(cacheFile, JSON.stringify({
-      timestamp: new Date().toISOString(),
-      jobs: jobs
-    }, null, 2));
-
     // Clear trends cache so next visit gets fresh AI analysis
-    const trendsCacheFile = path.join(process.cwd(), '.trends-cache.json');
-    if (fs.existsSync(trendsCacheFile)) {
-      try { fs.unlinkSync(trendsCacheFile); } catch { /* non-critical */ }
-    }
+    await prisma.systemKv.delete({ where: { key: 'trends_cache' } }).catch(() => {});
+
 
     return NextResponse.json({
       success: true,

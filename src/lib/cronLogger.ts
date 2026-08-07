@@ -1,5 +1,4 @@
-import * as fs from 'fs';
-import * as path from 'path';
+import { prisma } from './db';
 
 export interface CronLogEntry {
   id: string;
@@ -10,50 +9,51 @@ export interface CronLogEntry {
   sourceSummary: string;
 }
 
-const cronLogsPath = path.join(process.cwd(), '.cron-logs.json');
-
-export function logCronRun(entry: Omit<CronLogEntry, 'id' | 'timestamp'>): CronLogEntry {
-  const newLog: CronLogEntry = {
-    id: `cron-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-    timestamp: new Date().toISOString(),
-    ...entry
-  };
-
-  let logs: CronLogEntry[] = [];
+export async function logCronRun(entry: Omit<CronLogEntry, 'id' | 'timestamp'>): Promise<CronLogEntry> {
+  const timestamp = new Date();
   try {
-    if (fs.existsSync(cronLogsPath)) {
-      const raw = fs.readFileSync(cronLogsPath, 'utf-8');
-      logs = JSON.parse(raw);
-    }
-  } catch {
-    logs = [];
-  }
-
-  // Prepend latest log
-  logs.unshift(newLog);
-
-  // Filter out logs older than 7 days from storage
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  logs = logs.filter(l => l.timestamp >= sevenDaysAgo);
-
-  try {
-    fs.writeFileSync(cronLogsPath, JSON.stringify(logs, null, 2));
+    const created = await prisma.cronLog.create({
+      data: {
+        timestamp,
+        status: entry.status,
+        jobsFetched: entry.jobsFetched,
+        newJobsAdded: entry.newJobsAdded,
+        sourceSummary: entry.sourceSummary,
+      },
+    });
+    return {
+      id: created.id,
+      timestamp: created.timestamp.toISOString(),
+      status: created.status as any,
+      jobsFetched: created.jobsFetched,
+      newJobsAdded: created.newJobsAdded,
+      sourceSummary: created.sourceSummary,
+    };
   } catch (err: any) {
-    console.error('[cronLogger] Error writing log:', err.message);
+    console.error('[cronLogger] Error writing log to DB:', err.message);
+    return {
+      id: `cron-${Date.now()}`,
+      timestamp: timestamp.toISOString(),
+      ...entry,
+    };
   }
-
-  return newLog;
 }
 
-export function getTodayCronLogs(): CronLogEntry[] {
+export async function getTodayCronLogs(): Promise<CronLogEntry[]> {
   try {
-    if (!fs.existsSync(cronLogsPath)) return [];
-    const raw = fs.readFileSync(cronLogsPath, 'utf-8');
-    const logs: CronLogEntry[] = JSON.parse(raw);
-
-    // Filter logs within the last 24 hours (today)
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    return logs.filter(l => l.timestamp >= twentyFourHoursAgo);
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const logs = await prisma.cronLog.findMany({
+      where: { timestamp: { gte: twentyFourHoursAgo } },
+      orderBy: { timestamp: 'desc' },
+    });
+    return logs.map(l => ({
+      id: l.id,
+      timestamp: l.timestamp.toISOString(),
+      status: l.status as any,
+      jobsFetched: l.jobsFetched,
+      newJobsAdded: l.newJobsAdded,
+      sourceSummary: l.sourceSummary,
+    }));
   } catch {
     return [];
   }

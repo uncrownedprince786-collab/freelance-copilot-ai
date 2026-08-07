@@ -1,48 +1,22 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import { getRawJobs, getAppliedSet } from '@/lib/jobsCache';
+import { prisma } from '@/lib/db';
 
 export async function GET() {
   try {
-    const jobsCachePath = path.join(process.cwd(), '.jobs-cache.json');
-    const syncResultsPath = path.join(process.cwd(), 'sync-results.json');
-    const appliedPath = path.join(process.cwd(), 'applied-jobs.json');
+    const rawJobs = await getRawJobs();
+    const appliedSet = await getAppliedSet();
 
-    let rawJobs: any[] = [];
-    let appliedSet = new Set<string>();
-
-    if (fs.existsSync(appliedPath)) {
-      try {
-        const appData = JSON.parse(fs.readFileSync(appliedPath, 'utf-8'));
-        if (Array.isArray(appData.applied)) appliedSet = new Set(appData.applied);
-      } catch {}
-    }
-
-    if (fs.existsSync(jobsCachePath)) {
-      const data = JSON.parse(fs.readFileSync(jobsCachePath, 'utf-8'));
-      rawJobs = data.jobs || [];
-    } else if (fs.existsSync(syncResultsPath)) {
-      const data = JSON.parse(fs.readFileSync(syncResultsPath, 'utf-8'));
-      rawJobs = data.jobs || [];
-    }
-
-    // --- 40-day auto-cleanup: filter out stale jobs and write back ---
-    const FORTY_DAYS_MS = 40 * 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    const freshJobs = rawJobs.filter((j: any) => {
-      const posted = j.postedAt || j.postedDate || j.fetchedAt;
-      if (!posted) return true; // keep if no date
-      return now - new Date(posted).getTime() < FORTY_DAYS_MS;
-    });
-    // Write back if we cleaned anything
-    if (freshJobs.length < rawJobs.length && fs.existsSync(jobsCachePath)) {
-      try {
-        const cacheData = JSON.parse(fs.readFileSync(jobsCachePath, 'utf-8'));
-        cacheData.jobs = freshJobs;
-        fs.writeFileSync(jobsCachePath, JSON.stringify(cacheData, null, 2));
-      } catch { /* non-critical */ }
-    }
-    rawJobs = freshJobs;
+    // 40-day auto-cleanup in DB
+    const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    try {
+      await prisma.opportunity.deleteMany({
+        where: {
+          createdAt: { lt: fortyDaysAgo },
+          applied: false,
+        },
+      });
+    } catch { /* non-critical */ }
 
     const jobs = rawJobs.map((job: any) => {
       const jobId = job.id || job.url;

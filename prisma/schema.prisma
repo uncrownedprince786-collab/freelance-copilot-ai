@@ -19,13 +19,25 @@ model Opportunity {
   viewed      Boolean   @default(false)
   viewedAt    DateTime?
   
-  // New fields
-  status        String    @default("OPEN")
-  country       String?
-  clientName    String?
-  clientSpend   String?
-  clientReviews String?
-  connections   Int?
+  status            String    @default("OPEN")
+  country           String?
+  clientName        String?
+  clientSpend       String?
+  clientReviews     String?
+  connections       Int?
+  budgetType        String?
+  experienceLevel   String?
+  duration          String?
+  skills            String?
+  proposalCount     Int?
+  interviewingCount Int?      @default(0)
+  hiresCount        Int?      @default(0)
+  paymentVerified   Boolean   @default(false)
+  clientRating      String?
+  jobsPosted        Int?
+  applied           Boolean   @default(false)
+  appliedAt         DateTime?
+  rawPayload        String?
 
   // Relations
   analysis    Analysis?
@@ -65,4 +77,36 @@ model ProjectTracking {
   updatedAt     DateTime    @updatedAt
 
   @@map("project_tracking")
+}
+
+model UserSession {
+  id         String    @id @default(uuid())
+  guestId    String    @unique
+  role       String
+  startTime  DateTime  @default(now())
+  endTime    DateTime?
+  durationMs Int?
+  lastSeen   DateTime  @default(now())
+  events     String    // JSON stringified SessionEvent[]
+
+  @@map("user_sessions")
+}
+
+model CronLog {
+  id            String   @id @default(uuid())
+  timestamp     DateTime @default(now())
+  status        String
+  jobsFetched   Int
+  newJobsAdded  Int
+  sourceSummary String
+
+  @@map("cron_logs")
+}
+
+model SystemKv {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("system_kv")
 }

@@ -79,8 +79,8 @@ export function trackActivity(event: string, detail?: string): void {
 export function logout(): void {
   if (typeof window !== 'undefined') {
     const role = getRole();
-    const guestId = sessionStorage.getItem('lh_guest_id');
-    if (role) {
+    const guestId = sessionStorage.getItem('lh_guest_id') || (role === 'admin' ? 'admin' : null);
+    if (role && guestId) {
       fetch('/api/sessions/track', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

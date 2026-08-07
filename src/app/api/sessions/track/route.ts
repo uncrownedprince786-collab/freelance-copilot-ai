@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as fs from 'fs';
-import * as path from 'path';
-
-const sessionsPath = path.join(process.cwd(), '.sessions.json');
+import { prisma } from '@/lib/db';
 
 interface SessionEvent {
   guestId: string;
@@ -12,85 +9,84 @@ interface SessionEvent {
   timestamp: string;
 }
 
-interface Session {
-  guestId: string;
-  role: 'admin' | 'guest';
-  startTime: string;
-  endTime?: string;
-  durationMs?: number;
-  events: SessionEvent[];
-  lastSeen: string;
-}
-
-function readSessions(): Session[] {
-  try {
-    if (!fs.existsSync(sessionsPath)) return [];
-    return JSON.parse(fs.readFileSync(sessionsPath, 'utf-8'));
-  } catch { return []; }
-}
-
-function writeSessions(sessions: Session[]) {
-  // Keep only last 40 days
-  const cutoff = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
-  const filtered = sessions.filter(s => s.startTime >= cutoff);
-  fs.writeFileSync(sessionsPath, JSON.stringify(filtered, null, 2));
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body: SessionEvent = await req.json();
-    const sessions = readSessions();
+    if (!body.guestId) return NextResponse.json({ ok: false, error: 'Missing guestId' }, { status: 400 });
 
-    const idx = sessions.findIndex(s => s.guestId === body.guestId);
+    const existing = await prisma.userSession.findUnique({
+      where: { guestId: body.guestId }
+    });
 
-    if (body.event === 'session_start') {
-      const newSession: Session = {
-        guestId: body.guestId,
-        role: body.role,
-        startTime: body.timestamp,
-        lastSeen: body.timestamp,
-        events: [{ ...body }],
-      };
-      if (idx >= 0) sessions[idx] = newSession;
-      else sessions.unshift(newSession);
-    } else if (body.event === 'session_end') {
-      if (idx >= 0) {
-        sessions[idx].endTime = body.timestamp;
-        sessions[idx].lastSeen = body.timestamp;
-        sessions[idx].durationMs = new Date(body.timestamp).getTime() - new Date(sessions[idx].startTime).getTime();
-        sessions[idx].events.push({ ...body });
-      }
-    } else {
-      // Activity event
-      if (idx >= 0) {
-        sessions[idx].lastSeen = body.timestamp;
-        sessions[idx].events.push({ ...body });
-      } else {
-        // Session started before tracking was set up
-        sessions.unshift({
+    let events: SessionEvent[] = existing?.events ? JSON.parse(existing.events) : [];
+    events.push(body);
+
+    const now = new Date(body.timestamp || Date.now());
+
+    if (body.event === 'session_start' || !existing) {
+      await prisma.userSession.upsert({
+        where: { guestId: body.guestId },
+        update: {
+          role: body.role,
+          lastSeen: now,
+          events: JSON.stringify(events),
+        },
+        create: {
           guestId: body.guestId,
           role: body.role,
-          startTime: body.timestamp,
-          lastSeen: body.timestamp,
-          events: [{ ...body }],
-        });
-      }
+          startTime: now,
+          lastSeen: now,
+          events: JSON.stringify([body]),
+        },
+      });
+    } else if (body.event === 'session_end') {
+      const startTime = existing.startTime ? new Date(existing.startTime).getTime() : now.getTime();
+      const durationMs = Math.max(0, now.getTime() - startTime);
+      await prisma.userSession.update({
+        where: { guestId: body.guestId },
+        data: {
+          endTime: now,
+          lastSeen: now,
+          durationMs,
+          events: JSON.stringify(events),
+        },
+      });
+    } else {
+      await prisma.userSession.update({
+        where: { guestId: body.guestId },
+        data: {
+          lastSeen: now,
+          events: JSON.stringify(events),
+        },
+      });
     }
 
-    writeSessions(sessions);
     return NextResponse.json({ ok: true });
   } catch (err: any) {
+    console.error('Session track DB error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
 
-export async function GET(req: NextRequest) {
-  const adminToken = req.headers.get('x-admin-token');
-  if (adminToken !== 'lh_admin_session_token') {
-    // Allow from server-side admin page requests
+export async function GET() {
+  try {
+    const records = await prisma.userSession.findMany({
+      orderBy: { startTime: 'desc' },
+      take: 100,
+    });
+
+    const sessions = records.map(r => ({
+      guestId: r.guestId,
+      role: r.role as 'admin' | 'guest',
+      startTime: r.startTime.toISOString(),
+      endTime: r.endTime ? r.endTime.toISOString() : undefined,
+      durationMs: r.durationMs ?? undefined,
+      events: r.events ? JSON.parse(r.events) : [],
+      lastSeen: r.lastSeen.toISOString(),
+    }));
+
+    return NextResponse.json({ sessions });
+  } catch (err: any) {
+    return NextResponse.json({ sessions: [], error: err.message });
   }
-  const sessions = readSessions();
-  // Sort newest first
-  sessions.sort((a, b) => b.startTime.localeCompare(a.startTime));
-  return NextResponse.json({ sessions });
 }

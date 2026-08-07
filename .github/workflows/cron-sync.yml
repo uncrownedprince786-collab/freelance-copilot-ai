@@ -1,0 +1,17 @@
+name: Scheduled Job Sync
+
+on:
+  schedule:
+    # Run every 4 hours
+    - cron: '0 */4 * * *'
+  workflow_dispatch: # Allows manual trigger from the GitHub UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel Sync Endpoint
+        run: |
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            ${{ secrets.PROD_URL }}/api/sync

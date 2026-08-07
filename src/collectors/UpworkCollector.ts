@@ -1,12 +1,12 @@
 import { BaseCollector } from "./BaseCollector";
 import { RawOpportunity } from "./types";
 import * as fs from 'fs';
-import * as path from 'path';
 import { getJson } from "serpapi";
+import { getStoragePath } from "@/lib/storage";
 
 export class UpworkCollector extends BaseCollector {
   name = "Upwork";
-  private quotaFile = path.join(process.cwd(), '.upwork-quota.json');
+  private get quotaFile() { return getStoragePath('.upwork-quota.json'); }
   private totalQuota = 100;
   private searchesUsed = 0;
 

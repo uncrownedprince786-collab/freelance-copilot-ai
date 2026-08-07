@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as fs from 'fs';
-import * as path from 'path';
+import { prisma } from '@/lib/db';
 import { getRawJobs } from '@/lib/jobsCache';
 
-const cacheFile = path.join(process.cwd(), '.trends-cache.json');
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 interface TrendsCache {
@@ -21,16 +19,27 @@ export interface MarketTrends {
   totalJobsAnalyzed: number;
 }
 
-function readCache(): TrendsCache | null {
+async function readCache(): Promise<TrendsCache | null> {
   try {
-    if (!fs.existsSync(cacheFile)) return null;
-    const data: TrendsCache = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
+    const record = await prisma.systemKv.findUnique({ where: { key: 'trends_cache' } });
+    if (!record) return null;
+    const data: TrendsCache = JSON.parse(record.value);
     if (Date.now() - new Date(data.generatedAt).getTime() < CACHE_TTL_MS) return data;
     return null;
   } catch { return null; }
 }
 
-function analyzeJobsLocally(): { skills: Record<string, number>, categories: Record<string, number>, budgets: string[], titles: string[], descriptions: string[] } {
+async function writeCache(cacheData: TrendsCache): Promise<void> {
+  try {
+    await prisma.systemKv.upsert({
+      where: { key: 'trends_cache' },
+      update: { value: JSON.stringify(cacheData) },
+      create: { key: 'trends_cache', value: JSON.stringify(cacheData) },
+    });
+  } catch { /* non-critical */ }
+}
+
+async function analyzeJobsLocally(): Promise<{ skills: Record<string, number>, categories: Record<string, number>, budgets: string[], titles: string[], descriptions: string[] }> {
   const skills: Record<string, number> = {};
   const categories: Record<string, number> = {};
   const budgets: string[] = [];
@@ -62,7 +71,7 @@ function analyzeJobsLocally(): { skills: Record<string, number>, categories: Rec
     'Automation / Scraping': ['web scraping', 'automation', 'selenium', 'playwright'],
   };
 
-  const jobs = getRawJobs(); // Use shared utility — same source as jobs API
+  const jobs = await getRawJobs(); // Use shared utility — same source as jobs API
 
   for (const job of jobs) {
     const skillsText = Array.isArray(job.skills) ? job.skills.join(' ').toLowerCase() : '';
@@ -123,14 +132,14 @@ async function generateWithGemini(prompt: string): Promise<string> {
 }
 
 export async function GET(req: NextRequest) {
-  // Check cache — but skip if it shows 0 jobs (stale/empty data)
-  const cached = readCache();
-  const rawJobCount = getRawJobs().length;
+  const cached = await readCache();
+  const rawJobsList = await getRawJobs();
+  const rawJobCount = rawJobsList.length;
   if (cached && cached.trends.totalJobsAnalyzed > 0 && rawJobCount > 0) {
     return NextResponse.json({ ...cached.trends, cached: true, generatedAt: cached.generatedAt });
   }
 
-  const { skills, categories, budgets, titles, descriptions } = analyzeJobsLocally();
+  const { skills, categories, budgets, titles, descriptions } = await analyzeJobsLocally();
 
   // Sort and top-10
   const topSkillsRaw = Object.entries(skills).sort((a, b) => b[1] - a[1]).slice(0, 12);
@@ -213,7 +222,7 @@ Respond with this exact JSON (no markdown, pure JSON):
 
   // Cache
   const cacheData: TrendsCache = { generatedAt: new Date().toISOString(), trends };
-  try { fs.writeFileSync(cacheFile, JSON.stringify(cacheData, null, 2)); } catch { /* ignore */ }
+  await writeCache(cacheData);
 
   return NextResponse.json({ ...trends, cached: false, generatedAt: cacheData.generatedAt });
 }
