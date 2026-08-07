@@ -49,11 +49,10 @@ export async function GET() {
         : '';
 
       // --- Experience Level: clean up "IntermediateLevel" → "Intermediate"
-      const expRaw = job.experienceLevel || '';
+      const expRaw = typeof job.experienceLevel === 'string' ? job.experienceLevel : '';
       const experienceLevel = expRaw
-        .replace('Level', '')
-        .replace(/([A-Z])/g, ' $1')
-        .trim();
+        ? expRaw.replace('Level', '').replace(/([A-Z])/g, ' $1').trim()
+        : '';
 
       // --- Client spend
       let clientSpend = '';

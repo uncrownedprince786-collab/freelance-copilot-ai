@@ -2,7 +2,7 @@ export interface RawOpportunity {
   title: string;
   description: string;
   url: string;
-  budget: string;
+  budget: string | { type?: string; amount?: number; min?: number; max?: number };
   platform: string;
   postedAt?: Date | string | null;
   postedDate?: Date | string | null;
@@ -14,6 +14,17 @@ export interface RawOpportunity {
   clientSpend?: string;
   clientReviews?: string;
   connections?: number;
+  skills?: string[];
+  experienceLevel?: string | null;
+  duration?: string | null;
+  proposalCount?: number | null;
+  interviewingCount?: number | null;
+  hiresCount?: number | null;
+  rating?: number | null;
+  totalSpent?: number | null;
+  paymentVerified?: boolean | null;
+  lastActivityAt?: Date | string | null;
+  openJobs?: number | null;
 }
 
 export interface CollectorInterface {

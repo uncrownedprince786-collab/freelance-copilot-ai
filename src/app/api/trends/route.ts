@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getRawJobs } from '@/lib/jobsCache';
 
+export const dynamic = 'force-dynamic';
+
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 interface TrendsCache {

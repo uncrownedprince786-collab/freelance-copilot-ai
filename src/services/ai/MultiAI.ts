@@ -190,32 +190,68 @@ Return JSON with these exact keys:
 
   private fallbackAnalysis(title: string, description: string, options: AnalysisOptions): JobAnalysis {
     const text = `${title} ${description}`.toLowerCase();
+    const projectType = this.classifyProjectType(title, description);
+
     let score = 50;
     const reasons: string[] = [];
 
-    const goodSignals = ['urgent', 'long term', 'ongoing', 'production', 'api', 'database', 'mobile', 'web app', 'full stack', 'senior', 'architecture', 'cloud', 'aws'];
-    const badSignals = ['simple', 'easy', 'small budget', 'quick fix', 'beginner', 'cheap', 'low price'];
+    const growthSignals = ['growth', 'acquisition', 'meta', 'paid media', 'cac', 'ltv', 'roas', 'telehealth', 'e-commerce', 'd2c', 'conversion', 'funnel', 'marketing strategy'];
+    const devSignals = ['full stack', 'api', 'database', 'mobile app', 'frontend', 'backend', 'next.js', 'react', 'node', 'wordpress'];
+    const strongSignals = ['long term', 'ongoing', 'production', 'architecture', 'saas', 'platform', 'dashboard', 'performance', 'scale', 'growth', 'strategy'];
+    const badSignals = ['simple', 'easy', 'quick fix', 'small website', 'beginner', 'cheap', 'low price'];
     const riskSignals = ['payment', 'deposit', 'advance', 'whatsapp', 'telegram', 'crypto', 'bitcoin', 'western union', 'upfront'];
 
-    goodSignals.forEach((signal) => {
-      if (text.includes(signal)) score += 4;
+    if (projectType === 'growth') {
+      growthSignals.forEach((signal) => {
+        if (text.includes(signal)) score += 8;
+      });
+      if (/paid acquisition|meta|facebook|instagram|tiktok|google ads/i.test(text)) {
+        score += 10;
+        reasons.push('Performance marketing requirements show clear business upside');
+      }
+      if (/cac|aov|cvr|ltv|roas|funnel/i.test(text)) {
+        score += 12;
+        reasons.push('The role is tied to measurable acquisition and revenue metrics');
+      }
+      if (/telehealth|healthcare|e-commerce|d2c|saas/i.test(text)) {
+        score += 8;
+        reasons.push('The client is operating in a scalable, high-ROI vertical');
+      }
+    } else if (projectType === 'development') {
+      devSignals.forEach((signal) => {
+        if (text.includes(signal)) score += 6;
+      });
+      if (/full stack|senior|architecture|api|database|mobile|platform/i.test(text)) {
+        score += 10;
+        reasons.push('Technical complexity suggests this project has real delivery value');
+      }
+    }
+
+    strongSignals.forEach((signal) => {
+      if (text.includes(signal)) score += 5;
     });
     badSignals.forEach((signal) => {
       if (text.includes(signal)) score -= 6;
     });
+
     if (riskSignals.some((signal) => text.includes(signal))) {
       score -= 18;
-      reasons.push('Potential payment or advance-payment red flags detected');
+      reasons.push('Potential payment or trust concerns should be clarified upfront');
     }
 
     if (description.length < 120) {
       score -= 8;
-      reasons.push('Description is short and may lack detail');
+      reasons.push('Description is sparse and may require more discovery questions');
     }
 
-    if (title.toLowerCase().includes('full stack') || title.toLowerCase().includes('senior')) {
+    if (projectType === 'growth' && /ongoing|monthly|retainer|scale|portfolio/i.test(text)) {
+      score += 10;
+      reasons.push('This looks like an ongoing growth engagement rather than a one-off task');
+    }
+
+    if (projectType === 'development' && /long term|ongoing|production|scalable/i.test(text)) {
       score += 8;
-      reasons.push('Senior or full-stack scope suggests stronger opportunity value');
+      reasons.push('The project appears to have product continuity and long-term value');
     }
 
     score = Math.min(100, Math.max(0, score));
@@ -225,26 +261,20 @@ Return JSON with these exact keys:
     else if (score <= 35) risk = 'High';
 
     if (!reasons.length) {
-      reasons.push('Standard review based on keyword and scope signals');
+      reasons.push('Opportunity looks viable based on the scope and structure of the request');
     }
 
-    const bidAmount = this.estimateBidAmount(title, description, score);
-    const questions = [
-      'What is the exact timeline and milestones for this project?',
-      'Do you have an existing codebase or are you starting from scratch?',
-      'What is your budget range and preferred engagement model?',
-      'Will there be ongoing support after delivery?',
-      'Do you already have technical requirements or design assets?'
-    ];
+    const bidAmount = this.estimateBidAmount(title, description, score, projectType);
+    const questions = this.buildQuestions(projectType, title, description);
 
     return {
-      summary: `Fallback review for "${title}" on ${options.platform ?? 'Unknown'}: ${score >= 70 ? 'Strong signals for a quality opportunity' : score >= 45 ? 'Moderate opportunity that needs a closer look' : 'High caution recommended before bidding'}`,
+      summary: this.buildSummary(title, projectType, score, options.platform),
       score,
       risk,
       reasons: reasons.slice(0, 4),
       bidAmount,
       questions,
-      proposal: this.generateProposal(title, description, options.clientName),
+      proposal: this.generateProposal(title, description, options.clientName, projectType),
       originalBudget: this.extractBudgetText(description, options),
       originalTimeline: this.extractTimeline(description),
       clientDetails: this.extractClientDetails(title, description),
@@ -252,6 +282,54 @@ Return JSON with these exact keys:
       blockerSolutions: this.inferBlockerSolutions(title, description),
       suggestedEta: this.suggestEta(title, description, score)
     };
+  }
+
+  private buildSummary(title: string, projectType: string, score: number, platform?: string): string {
+    const platformName = platform ?? 'Unknown';
+    if (projectType === 'growth') {
+      return `This ${platformName} opportunity looks like a growth-focused engagement with measurable commercial upside. The brief emphasizes funnel quality, acquisition strategy, and performance metrics, which makes it a strong fit if you can improve conversion, scale channels, or reduce CAC.`;
+    }
+    if (projectType === 'development') {
+      return `This ${platformName} opportunity appears to be a technical delivery project with clear scope and moderate-to-high execution risk. It is strongest if the work is structured, time-boxed, and supported by a clean technical plan.`;
+    }
+    return `Fallback review for "${title}" on ${platformName}: ${score >= 70 ? 'Strong signals for a worthwhile opportunity' : score >= 45 ? 'A moderate opportunity that needs a closer look' : 'High caution recommended before bidding'}`;
+  }
+
+  private buildQuestions(projectType: string, title: string, description: string): string[] {
+    if (projectType === 'growth') {
+      return [
+        'What is the current funnel and which acquisition channel is underperforming?',
+        'What are your CAC, AOV, and target LTV or ROAS goals?',
+        'Are you looking for strategy only, execution support, or both?',
+        'What are the current conversion bottlenecks and what is the testing roadmap?',
+      ];
+    }
+    if (projectType === 'development') {
+      return [
+        'Do you have an existing codebase or should this be built from scratch?',
+        'What is the exact timeline, milestone structure, and handoff process?',
+        'Are there any API, hosting, or third-party dependencies we should plan around?',
+        'What success metrics will define the project as complete?',
+      ];
+    }
+    return [
+      'What is the exact timeline and milestones for this project?',
+      'Do you have an existing codebase or are you starting from scratch?',
+      'What is your budget range and preferred engagement model?',
+      'Will there be ongoing support after delivery?',
+      'Do you already have technical requirements or design assets?',
+    ];
+  }
+
+  private classifyProjectType(title: string, description: string): 'growth' | 'development' | 'general' {
+    const text = `${title} ${description}`.toLowerCase();
+    if (/growth|marketing|meta|cac|ltv|roas|funnel|customer acquisition|telehealth|e-commerce|d2c|strategy|paid media|conversion/i.test(text)) {
+      return 'growth';
+    }
+    if (/full stack|react|next.js|api|database|mobile app|wordpress|frontend|backend|web app|website|development|developer/i.test(text)) {
+      return 'development';
+    }
+    return 'general';
   }
 
   private extractBudgetText(description: string, options: AnalysisOptions): string {

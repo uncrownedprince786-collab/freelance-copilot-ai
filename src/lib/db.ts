@@ -13,11 +13,45 @@ const require = createRequire(import.meta.url);
 
 import { getStoragePath } from "./storage";
 
+function getDatabaseUrl(): string | null {
+  const candidates = [
+    process.env.DATABASE_URL,
+    process.env.POSTGRES_URL,
+    process.env.POSTGRES_PRISMA_URL,
+    process.env.POSTGRES_URL_NON_POOLING,
+  ].filter((value): value is string => Boolean(value && value.trim()));
+
+  if (candidates.length > 0) {
+    return candidates[0].trim();
+  }
+
+  return null;
+}
+
 function createPrismaClient(): PrismaClient {
-  const rawUrl = process.env.DATABASE_URL || "file:./prisma/dev.db";
-  let dbPath = rawUrl.startsWith("file:")
-    ? path.resolve(process.cwd(), rawUrl.slice(5))
-    : path.resolve(process.cwd(), rawUrl);
+  const connectionUrl = getDatabaseUrl();
+
+  if (!connectionUrl) {
+    console.warn(
+      "[db] No DATABASE_URL/POSTGRES_URL is configured yet. Prisma is initialized in deferred mode for build compatibility; database calls will fail until the env is set.",
+    );
+    const { PrismaPg } = require("@prisma/adapter-pg");
+    const adapter = new PrismaPg({
+      connectionString: "postgresql://user:password@127.0.0.1:5432/freelance-copilot-ai",
+    });
+    return new PrismaClient({ adapter });
+  }
+
+  if (/^postgres(?:ql)?:\/\//i.test(connectionUrl)) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { PrismaPg } = require("@prisma/adapter-pg");
+    const adapter = new PrismaPg({ connectionString: connectionUrl });
+    return new PrismaClient({ adapter });
+  }
+
+  let dbPath = connectionUrl.startsWith("file:")
+    ? path.resolve(process.cwd(), connectionUrl.slice(5))
+    : path.resolve(process.cwd(), connectionUrl);
 
   if (dbPath.includes(process.cwd())) {
     dbPath = getStoragePath("dev.db");

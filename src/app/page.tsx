@@ -202,6 +202,7 @@ function HomeContent() {
         applied: isAdminUser ? j.applied : guestApplied.has(j.id),
         viewed: isAdminUser ? j.viewed : false,
       }));
+      setPage(1);
       setJobs(cleaned);
       setPlatformFilter([...new Set(cleaned.map(j => j.platform))]);
     } catch (err) {

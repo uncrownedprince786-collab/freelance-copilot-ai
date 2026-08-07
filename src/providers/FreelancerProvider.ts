@@ -10,43 +10,46 @@ export class FreelancerProvider implements JobProvider {
     try {
       console.log('[FreelancerProvider] Fetching Freelancer opportunities...');
       const rawJobs = await this.collector.fetch();
-      
-      return rawJobs.map(raw => ({
-        id: 'fl-' + (raw.url ? raw.url.split('/').pop()?.replace(/[^a-zA-Z0-9_-]/g, '') : Math.random().toString(36).substring(7)),
-        url: raw.url,
-        title: raw.title,
-        description: raw.description,
-        skills: [],
-        budget: {
-          type: "fixed",
-          amount: undefined
-        },
-        experienceLevel: null,
-        duration: null,
-        connectsRequired: null,
-        proposalCount: null,
-        interviewingCount: 0,
-        hiresCount: 0,
-        postedAt: raw.postedDate ? new Date(raw.postedDate) : new Date(),
-        client: {
-          name: raw.company || "Client",
-          country: raw.country || raw.location || "Remote",
-          rating: null,
-          totalSpent: null,
-          jobsPosted: null,
-          totalHires: null,
-          paymentVerified: null,
-          lastActivityAt: null,
-          openJobs: null
-        },
-        source: "freelancer",
-        score: null,
-        fetchedAt: new Date(),
-        platform: "Freelancer",
-        country: raw.country || raw.location || "Remote",
-        clientName: raw.company || "Client",
-        isNew: true
-      }));
+
+      return rawJobs.map(raw => {
+        const clientCountry = raw.country || raw.location || 'Remote';
+        const clientName = raw.company && !/^freelancer client$/i.test(raw.company) ? raw.company : null;
+        const detailSkills = Array.isArray(raw.skills) ? raw.skills : [];
+
+        return {
+          id: 'fl-' + (raw.url ? raw.url.split('/').pop()?.replace(/[^a-zA-Z0-9_-]/g, '') : Math.random().toString(36).substring(7)),
+          url: raw.url,
+          title: raw.title,
+          description: raw.description || '',
+          skills: detailSkills,
+          budget: typeof raw.budget === 'object' ? raw.budget : { type: 'fixed', amount: undefined },
+          experienceLevel: raw.experienceLevel || null,
+          duration: raw.duration || null,
+          connectsRequired: null,
+          proposalCount: raw.proposalCount ?? null,
+          interviewingCount: raw.interviewingCount ?? 0,
+          hiresCount: raw.hiresCount ?? 0,
+          postedAt: raw.postedAt ? new Date(raw.postedAt) : new Date(),
+          client: {
+            name: clientName,
+            country: clientCountry,
+            rating: raw.rating ?? null,
+            totalSpent: raw.totalSpent ?? null,
+            jobsPosted: raw.jobsPosted ?? null,
+            totalHires: raw.totalHires ?? null,
+            paymentVerified: raw.paymentVerified ?? null,
+            lastActivityAt: raw.lastActivityAt ? new Date(raw.lastActivityAt) : null,
+            openJobs: raw.openJobs ?? null,
+          },
+          source: 'freelancer',
+          score: null,
+          fetchedAt: new Date(),
+          platform: 'Freelancer',
+          country: clientCountry,
+          clientName: clientName ?? undefined,
+          isNew: true,
+        };
+      });
     } catch (err: any) {
       console.error('[FreelancerProvider] Error:', err.message);
       return [];

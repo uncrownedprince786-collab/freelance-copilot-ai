@@ -4,13 +4,19 @@ import { RawOpportunity } from "./types";
 export class FreelancerCollector extends BaseCollector {
   name = "Freelancer";
   private keywords = [
+    "client growth manager",
+    "telehealth growth manager",
+    "marketing strategy",
+    "ecommerce growth manager",
+    "growth marketing",
+    "full stack developer",
+    "react developer",
     "wordpress",
     "php laravel",
     "javascript react",
     "nodejs python",
     "mobile app",
     "shopify",
-    "full stack",
     "web development"
   ];
 
@@ -38,15 +44,14 @@ export class FreelancerCollector extends BaseCollector {
   }
 
   private async searchFreelancer(keyword: string): Promise<RawOpportunity[]> {
-    // Use full_description=true and user_details=true for richer data
     const params = new URLSearchParams({
       query: keyword,
-      limit: "20",
-      offset: "0",
-      compact: "true",
-      full_description: "true",
-      "user_details[]": "id",
-      "job_details[]": "skills",
+      limit: '20',
+      offset: '0',
+      compact: 'true',
+      full_description: 'true',
+      'user_details[]': 'id',
+      'job_details[]': 'skills',
     });
 
     const url = `https://www.freelancer.com/api/projects/0.1/projects/active/?${params}`;
@@ -69,40 +74,49 @@ export class FreelancerCollector extends BaseCollector {
       if (!data?.result?.projects) return [];
 
       const sevenDaysAgo = Date.now() / 1000 - 7 * 24 * 60 * 60;
-      const recentProjects = data.result.projects.filter((p: any) => p.submitdate >= sevenDaysAgo);
+      const recentProjects = data.result.projects.filter((p: any) => Number(p.submitdate || 0) >= sevenDaysAgo);
 
       return recentProjects.map((project: any): RawOpportunity => {
-        // Build description from available fields
-        const rawDesc =
-          project.description ||
-          project.preview_description ||
-          project.title ||
-          "No description available.";
+        const rawDesc = project.description || project.preview_description || project.title || 'No description available.';
         const description = this.cleanText(rawDesc);
+        const skills = Array.isArray(project.skills) ? project.skills.map((s: any) => this.cleanText(s.name || s)) : [];
+        const budgetRaw = project.budget || {};
+        const budget = budgetRaw.minimum && budgetRaw.maximum
+          ? `$${budgetRaw.minimum} - $${budgetRaw.maximum}`
+          : (budgetRaw.minimum ? `$${budgetRaw.minimum}` : 'Negotiable');
 
-        const budget = project.budget?.minimum
-          ? `$${project.budget.minimum} - $${project.budget.maximum}`
-          : "Negotiable";
-
-        const country = project.owner?.location?.country?.name || undefined;
-        const clientName = project.owner?.username || "Freelancer Client";
-        const jobsAwarded = project.owner?.jobs_award_count;
+        const owner = project.owner || {};
+        const country = owner.location?.country?.name || owner.country || undefined;
+        const clientName = owner.username || owner.display_name || 'Freelancer Client';
+        const jobsAwarded = owner.jobs_award_count ?? owner.jobsAwarded ?? undefined;
         const clientSpend = jobsAwarded !== undefined ? `${jobsAwarded} jobs awarded` : undefined;
+        const rating = owner.rating ?? owner.score ?? undefined;
+        const totalSpent = owner.total_spent ?? owner.totalSpent ?? undefined;
+        const paymentVerified = Boolean(owner.payment_verified ?? owner.paymentVerified ?? false);
 
         return {
-          title: project.title?.trim() || "Untitled",
+          title: this.cleanText(project.title || 'Untitled'),
           description,
           url: `https://www.freelancer.com/projects/${project.seo_url || project.id}`,
-          platform: "Freelancer",
+          platform: 'Freelancer',
           budget,
-          location: "Remote",
-          postedAt: new Date(project.submitdate * 1000),
+          location: country || 'Remote',
+          postedAt: new Date((project.submitdate || Date.now() / 1000) * 1000),
           company: clientName,
-          status: "OPEN",
+          status: 'OPEN',
           country,
           clientName,
           clientSpend,
           connections: 1,
+          skills,
+          experienceLevel: project.experience_level || project.experienceLevel || undefined,
+          duration: project.duration || undefined,
+          proposalCount: project.bid_count ?? project.bids ?? undefined,
+          interviewingCount: project.interviewing_count ?? 0,
+          hiresCount: project.hires_count ?? 0,
+          rating,
+          totalSpent,
+          paymentVerified,
         };
       });
     } catch (error: any) {
