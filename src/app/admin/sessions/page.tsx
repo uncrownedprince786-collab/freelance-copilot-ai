@@ -110,7 +110,7 @@ export default function AdminSessionsPage() {
         </div>
 
         {/* Filter */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
           {(['all', 'admin', 'guest'] as const).map(f => (
             <button key={f} onClick={() => setRoleFilter(f)} style={{
               ...st.filterBtn,
@@ -206,7 +206,7 @@ const st: Record<string, React.CSSProperties> = {
   backBtn: { background: '#fff', border: '1px solid #dbe2ea', borderRadius: 999, padding: '8px 16px', fontSize: 13, fontWeight: 600, color: '#2563eb', cursor: 'pointer' },
   pageTitle: { fontSize: 22, fontWeight: 800, color: '#0f172a', margin: '0 0 6px' },
   pageSubtitle: { fontSize: 13, color: '#64748b', margin: 0 },
-  statsRow: { display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 24 },
+  statsRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(150px,100%),1fr))', gap: 12, marginBottom: 24 },
   statCard: { background: '#fff', borderRadius: 12, padding: '16px', border: '1px solid #e2e8f0', textAlign: 'center' },
   statVal: { fontSize: 26, fontWeight: 800 },
   statLabel: { fontSize: 12, color: '#64748b', marginTop: 4 },
@@ -215,7 +215,7 @@ const st: Record<string, React.CSSProperties> = {
   spinner: { width: 32, height: 32, border: '3px solid #dbeafe', borderTopColor: '#2563eb', borderRadius: '50%', animation: 'spin 0.8s linear infinite' },
   emptyBox: { background: '#fff', borderRadius: 14, padding: 40, textAlign: 'center', border: '1px solid #e2e8f0' },
   card: { background: '#fff', borderRadius: 14, border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(15,23,42,0.04)' },
-  cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', cursor: 'pointer' },
+  cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', cursor: 'pointer', flexWrap: 'wrap', gap: 8 },
   roleBadge: { fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, marginLeft: 8 },
   eventLog: { borderTop: '1px solid #f1f5f9', padding: '12px 20px', background: '#f8fafc' },
   eventHeader: { fontSize: 12, fontWeight: 700, color: '#64748b', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' },

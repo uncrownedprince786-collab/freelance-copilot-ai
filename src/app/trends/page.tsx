@@ -155,7 +155,7 @@ export default function TrendsPage() {
             </div>
 
             {/* Categories + Budget */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(320px,100%),1fr))', gap: 20 }}>
 
               {/* Categories */}
               <div className="fade-up" style={s.card}>
@@ -199,7 +199,7 @@ export default function TrendsPage() {
             {/* AI Insights */}
             <div className="fade-up" style={s.card}>
               <h2 style={s.cardTitle}>AI Market Insights</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 4 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(300px,100%),1fr))', gap: 10, marginTop: 4 }}>
                 {data.aiInsights.map((insight, i) => (
                   <div key={i} style={s.insightCard}>
                     <p style={{ fontSize: 13, color: '#374151', lineHeight: 1.65, margin: 0 }}>{insight}</p>

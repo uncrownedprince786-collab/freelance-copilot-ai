@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { JobPipeline } from '../../../providers/JobPipeline';
 import { prisma } from '@/lib/db';
 
-export async function POST(req: NextRequest) {
+async function runSync(req: NextRequest) {
   try {
     const authHeader = req.headers.get('authorization');
     const expectedSecret = process.env.CRON_SECRET;
@@ -29,4 +29,14 @@ export async function POST(req: NextRequest) {
     console.error('API sync error:', err);
     return NextResponse.json({ error: 'Sync failed: ' + err.message }, { status: 500 });
   }
+}
+
+export async function POST(req: NextRequest) {
+  return runSync(req);
+}
+
+// Vercel Cron invokes the configured path with a GET request and sends
+// `Authorization: Bearer <CRON_SECRET>` when the CRON_SECRET env var is set.
+export async function GET(req: NextRequest) {
+  return runSync(req);
 }

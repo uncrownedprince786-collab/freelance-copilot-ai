@@ -245,8 +245,15 @@ export default function JobDetailPage() {
 
   /* ── RENDER ── */
   return (
-    <div style={s.page}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}`}</style>
+    <div style={s.page} className="lj-page">
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+        @media (max-width: 768px) {
+          .lj-page { height: auto !important; overflow: visible !important; }
+          .lj-layout { grid-template-columns: 1fr !important; overflow: visible !important; }
+          .lj-left { border-right: none !important; }
+        }
+      `}</style>
       <AdminLoginModal
         isOpen={showAuthModal}
         onClose={() => router.push('/')}
@@ -272,10 +279,10 @@ export default function JobDetailPage() {
       </div>
 
       {/* ── MAIN LAYOUT ── */}
-      <div style={s.layout}>
+      <div style={s.layout} className="lj-layout">
 
         {/* ──── LEFT PANEL ──── */}
-        <section style={s.leftPanel}>
+        <section style={s.leftPanel} className="lj-left">
 
           {/* Title */}
           <h1 style={s.title}>{job.title}</h1>
@@ -418,7 +425,7 @@ export default function JobDetailPage() {
         </section>
 
         {/* ──── RIGHT PANEL: AI ANALYSIS ──── */}
-        <aside style={s.rightPanel}>
+        <aside style={s.rightPanel} className="lj-right">
 
           {analyzing && (
             <div style={s.card}>
@@ -606,7 +613,7 @@ const s: Record<string, React.CSSProperties> = {
   activityRow: { display: 'flex', flexWrap: 'wrap', gap: 16, fontSize: 13, color: '#4b5563' },
   actItem: { fontSize: 13, color: '#4b5563' },
 
-  clientGrid: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 },
+  clientGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(140px,100%),1fr))', gap: 10 },
   clientItem: { background: '#f9fafb', borderRadius: 8, padding: '10px 12px', border: '1px solid #e5e7eb' },
   clientLabel: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 },
   clientVal: { fontSize: 14, fontWeight: 600, color: '#374151' },
@@ -620,7 +627,7 @@ const s: Record<string, React.CSSProperties> = {
   rightPanel: { padding: '16px', overflowY: 'auto', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 12 },
   card: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '16px' },
 
-  verdictGrid: { display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginTop: 12, textAlign: 'center' },
+  verdictGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100px,100%),1fr))', gap: 8, marginTop: 12, textAlign: 'center' },
   verdictCell: { background: '#f9fafb', borderRadius: 8, padding: '10px 4px' },
   vLabel: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 },
   vValue: { fontSize: 16, fontWeight: 800, color: '#111827' },
@@ -629,7 +636,7 @@ const s: Record<string, React.CSSProperties> = {
   list: { paddingLeft: 16, margin: 0 },
   listItem: { fontSize: 13, color: '#374151', lineHeight: 1.65, marginBottom: 5 },
 
-  bidRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 },
+  bidRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(150px,100%),1fr))', gap: 10, marginBottom: 12 },
   bidCell: { background: '#f9fafb', borderRadius: 8, padding: '10px 12px' },
   bidInput: { width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', fontSize: 14, fontWeight: 700, color: '#111827', background: 'transparent', boxSizing: 'border-box' },
   proposalTA: {

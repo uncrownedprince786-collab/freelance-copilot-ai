@@ -759,7 +759,7 @@ const styles: Record<string, React.CSSProperties> = {
   filterRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   filterLabel: { fontSize: 12, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' },
   searchInput: {
-    flex: 1, minWidth: 240,
+    flex: 1, minWidth: 'min(240px,100%)',
     borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
     borderRadius: 999, padding: '10px 16px', fontSize: 13, color: '#0f172a',
     background: '#f8fafc',
@@ -775,7 +775,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s',
   },
 
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))', gap: 16 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(340px,100%),1fr))', gap: 16 },
   cardBtn: { background: 'transparent', border: 'none', padding: 0, width: '100%', textAlign: 'left', cursor: 'pointer' },
   card: {
     background: '#fff',
