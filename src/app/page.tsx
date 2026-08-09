@@ -220,6 +220,10 @@ function HomeContent() {
     try {
       const res = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const data = await res.json();
+      if (!res.ok) {
+        setSyncMsg('Manual sync requires admin access.');
+        return;
+      }
       if (data.newJobs > 0) {
         setSyncMsg(`Found ${data.newJobs} new jobs!`);
         setNewCount(data.newJobs);
@@ -464,7 +468,7 @@ function HomeContent() {
           <div style={styles.emptyBox}>
             <p style={{ fontWeight: 700, fontSize: 18, color: '#0f172a' }}>No jobs match your filters</p>
             <p style={{ color: '#64748b', marginBottom: 16 }}>Try widening the filters or run a fresh sync.</p>
-            <button onClick={handleSync} style={styles.btnPrimary}>Sync Now</button>
+            {adminMode && <button onClick={handleSync} style={styles.btnPrimary}>Sync Now</button>}
           </div>
         ) : (
           <div style={styles.grid}>

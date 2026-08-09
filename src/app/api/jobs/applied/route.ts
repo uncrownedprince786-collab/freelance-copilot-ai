@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { isAdminRequest } from '@/lib/adminAuth';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { jobId, applied, role } = body;
+    const { jobId, applied } = body;
     const isApplied = applied !== false;
 
-    // Only persist to server if the request is from an admin user
-    // Guests' applied state is managed purely in sessionStorage on the client
-    if (role !== 'admin') {
+    // Only persist to server if the request carries a valid admin session.
+    // Guests' applied state is managed purely in sessionStorage on the client.
+    if (!(await isAdminRequest())) {
       return NextResponse.json({ success: true, jobId, applied: isApplied, persisted: false });
     }
 

@@ -30,22 +30,31 @@ export function getRole(): UserRole | null {
   return sessionStorage.getItem('lh_auth_role') as UserRole | null;
 }
 
-export function login(username: string, pass: string): boolean {
-  if (username.trim() === 'admin' && pass === 'Admin@123') {
-    if (typeof window !== 'undefined') {
-      sessionStorage.setItem('lh_auth_token', 'lh_admin_session_token');
-      sessionStorage.setItem('lh_auth_expires', (Date.now() + SESSION_DURATION_MS).toString());
-      sessionStorage.setItem('lh_auth_role', 'admin');
-      // Track admin session start
-      fetch('/api/sessions/track', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event: 'session_start', guestId: 'admin', role: 'admin', timestamp: new Date().toISOString() }),
-      }).catch(() => {});
-    }
+export async function login(username: string, pass: string): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password: pass }),
+    });
+    if (!res.ok) return false;
+
+    // sessionStorage remains a UI-only hint; the server authorizes via the
+    // httpOnly session cookie set by /api/auth/login.
+    sessionStorage.setItem('lh_auth_token', 'lh_admin_session_token');
+    sessionStorage.setItem('lh_auth_expires', (Date.now() + SESSION_DURATION_MS).toString());
+    sessionStorage.setItem('lh_auth_role', 'admin');
+    // Track admin session start
+    fetch('/api/sessions/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'session_start', guestId: 'admin', role: 'admin', timestamp: new Date().toISOString() }),
+    }).catch(() => {});
     return true;
+  } catch {
+    return false;
   }
-  return false;
 }
 
 export function loginAsGuest(): void {
@@ -87,6 +96,8 @@ export function logout(): void {
         body: JSON.stringify({ event: 'session_end', guestId, role, timestamp: new Date().toISOString() }),
       }).catch(() => {});
     }
+    // Clear the server-side admin session cookie
+    fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     sessionStorage.removeItem('lh_auth_token');
     sessionStorage.removeItem('lh_auth_expires');
     sessionStorage.removeItem('lh_auth_role');

@@ -1,17 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { JobPipeline } from '../../../providers/JobPipeline';
 import { prisma } from '@/lib/db';
+import { isAdminRequest } from '@/lib/adminAuth';
 
 async function runSync(req: NextRequest) {
   try {
     const authHeader = req.headers.get('authorization');
     const expectedSecret = process.env.CRON_SECRET;
 
+    // Fail-closed: authorize only with a valid Bearer CRON_SECRET (Vercel cron /
+    // GitHub Actions) or a valid admin session cookie (manual sync from the UI).
+    let authorized = false;
     if (authHeader && expectedSecret) {
       const providedSecret = authHeader.replace(/^Bearer\s+/i, '').trim();
-      if (providedSecret !== expectedSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
+      authorized = providedSecret === expectedSecret;
+    }
+    if (!authorized && (await isAdminRequest())) {
+      authorized = true;
+    }
+    if (!authorized) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const pipeline = new JobPipeline();

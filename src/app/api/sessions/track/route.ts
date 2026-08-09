@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { isAdminRequest } from '@/lib/adminAuth';
 
 interface SessionEvent {
   guestId: string;
@@ -69,6 +70,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
+  if (!(await isAdminRequest())) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const records = await prisma.userSession.findMany({
       orderBy: { startTime: 'desc' },

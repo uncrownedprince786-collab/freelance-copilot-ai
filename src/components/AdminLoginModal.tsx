@@ -17,10 +17,11 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (login(username, password)) {
+    const ok = await login(username, password);
+    if (ok) {
       setUsername('');
       setPassword('');
       onSuccess();

@@ -12,6 +12,14 @@ jobs:
     steps:
       - name: Trigger Vercel Sync Endpoint
         run: |
-          curl -X POST \
+          HTTP_CODE=$(curl -s -o /tmp/sync-response.json -w '%{http_code}' \
+            -X POST \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            ${{ secrets.PROD_URL }}/api/sync
+            "${{ secrets.PROD_URL }}/api/sync")
+          echo "HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::Sync endpoint returned HTTP $HTTP_CODE"
+            cat /tmp/sync-response.json
+            exit 1
+          fi
+          cat /tmp/sync-response.json
