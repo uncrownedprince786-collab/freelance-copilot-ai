@@ -5,6 +5,46 @@ import { useRouter } from 'next/navigation';
 import { isAuthenticated, isAdmin, logout, trackActivity } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
 
+const FILTERS_KEY = 'lh_jobs_filters';
+
+interface JobsFilters {
+  search: string;
+  platformFilter: string[];
+  statusFilter: 'all' | 'new' | 'viewed' | 'applied' | 'hot';
+  countryFilter: string;
+  connectionsFilter: string;
+  scoreFilter: 'all' | 'high' | 'medium' | 'low';
+  sortBy: 'score' | 'date' | 'budget';
+}
+
+// Per-tab session defaults. A brand-new session defaults to Upwork only.
+const DEFAULT_FILTERS: JobsFilters = {
+  search: '',
+  platformFilter: ['Upwork'],
+  statusFilter: 'all',
+  countryFilter: 'All',
+  connectionsFilter: 'all',
+  scoreFilter: 'all',
+  sortBy: 'date',
+};
+
+function loadFilters(): JobsFilters {
+  if (typeof window === 'undefined') return DEFAULT_FILTERS;
+  try {
+    const raw = sessionStorage.getItem(FILTERS_KEY);
+    if (!raw) return DEFAULT_FILTERS;
+    const parsed = JSON.parse(raw) as Partial<JobsFilters>;
+    return { ...DEFAULT_FILTERS, ...parsed };
+  } catch {
+    return DEFAULT_FILTERS;
+  }
+}
+
+function saveFilters(f: JobsFilters) {
+  if (typeof window === 'undefined') return;
+  try { sessionStorage.setItem(FILTERS_KEY, JSON.stringify(f)); } catch { /* quota/non-window */ }
+}
+
 interface Job {
   id: string;
   title: string;
@@ -112,15 +152,21 @@ function HomeContent() {
     setShowIntroPopup(true);
   };
 
-  // Filters
-  const [search, setSearch] = useState('');
-  const [platformFilter, setPlatformFilter] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'viewed' | 'applied' | 'hot'>('all');
-  const [countryFilter, setCountryFilter] = useState('All');
-  const [connectionsFilter, setConnectionsFilter] = useState('all');
-  const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
-  const [sortBy, setSortBy] = useState<'score' | 'date' | 'budget'>('date');
+  // Filters — restored from per-tab sessionStorage; a completely new session
+  // defaults to Upwork only (not overwritten by async job fetching).
+  const [search, setSearch] = useState(() => loadFilters().search);
+  const [platformFilter, setPlatformFilter] = useState<string[]>(() => loadFilters().platformFilter);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'viewed' | 'applied' | 'hot'>(() => loadFilters().statusFilter);
+  const [countryFilter, setCountryFilter] = useState(() => loadFilters().countryFilter);
+  const [connectionsFilter, setConnectionsFilter] = useState(() => loadFilters().connectionsFilter);
+  const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'medium' | 'low'>(() => loadFilters().scoreFilter);
+  const [sortBy, setSortBy] = useState<'score' | 'date' | 'budget'>(() => loadFilters().sortBy);
   const [page, setPage] = useState(1);
+
+  // Persist filter state across navigation/refresh (per-tab sessionStorage).
+  useEffect(() => {
+    saveFilters({ search, platformFilter, statusFilter, countryFilter, connectionsFilter, scoreFilter, sortBy });
+  }, [search, platformFilter, statusFilter, countryFilter, connectionsFilter, scoreFilter, sortBy]);
   const PER_PAGE = 24;
 
   // Derived metadata from jobs
@@ -218,7 +264,6 @@ function HomeContent() {
       }));
       setPage(1);
       setJobs(cleaned);
-      setPlatformFilter([...new Set(cleaned.map(j => j.platform))]);
     } catch (err) {
       console.error('Failed to fetch jobs', err);
     } finally {

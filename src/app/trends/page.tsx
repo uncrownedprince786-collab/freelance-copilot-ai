@@ -137,21 +137,25 @@ export default function TrendsPage() {
             <div className="fade-up" style={s.card}>
               <h2 style={s.cardTitle}>Top Skills in Demand</h2>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
-                {data.topSkills.map((sk, i) => (
-                  <div key={sk.skill} style={s.skillRow}>
-                    <span style={s.rank}>#{i + 1}</span>
-                    <span style={s.skillName}>{sk.skill}</span>
-                    <span style={{ ...s.trendTag, color: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#6b7280', background: i < 3 ? '#f0fdf4' : i < 7 ? '#eff6ff' : '#f9fafb' }}>
-                      {sk.growth}
-                    </span>
-                    <div style={{ flex: 1, margin: '0 12px' }}>
-                      <div style={s.barTrack}>
-                        <div style={{ ...s.barFill, width: `${Math.round(sk.count / maxSkillCount * 100)}%`, background: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#94a3b8' }} />
+                {data.topSkills.length ? (
+                  data.topSkills.map((sk, i) => (
+                    <div key={sk.skill} style={s.skillRow}>
+                      <span style={s.rank}>#{i + 1}</span>
+                      <span style={s.skillName}>{sk.skill}</span>
+                      <span style={{ ...s.trendTag, color: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#6b7280', background: i < 3 ? '#f0fdf4' : i < 7 ? '#eff6ff' : '#f9fafb' }}>
+                        {sk.growth}
+                      </span>
+                      <div style={{ flex: 1, margin: '0 12px' }}>
+                        <div style={s.barTrack}>
+                          <div style={{ ...s.barFill, width: `${Math.round(sk.count / maxSkillCount * 100)}%`, background: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#94a3b8' }} />
+                        </div>
                       </div>
+                      <span style={s.countLabel}>{sk.count} jobs</span>
                     </div>
-                    <span style={s.countLabel}>{sk.count} jobs</span>
-                  </div>
-                ))}
+                  ))
+                ) : (
+                  <p style={s.emptyNote}>Not enough data yet to rank skills in demand.</p>
+                )}
               </div>
             </div>
 
@@ -162,19 +166,23 @@ export default function TrendsPage() {
               <div className="fade-up" style={s.card}>
                 <h2 style={s.cardTitle}>Job Categories</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-                  {data.topCategories.map(cat => (
-                    <div key={cat.category} style={s.catRow}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{cat.category}</div>
-                        <div style={{ fontSize: 11, color: TREND_COLORS[cat.trend], fontWeight: 600, marginTop: 2 }}>
-                          {cat.trend === 'rising' ? 'Rising' : cat.trend === 'declining' ? 'Declining' : 'Stable'}
+                  {data.topCategories.length ? (
+                    data.topCategories.map(cat => (
+                      <div key={cat.category} style={s.catRow}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{cat.category}</div>
+                          <div style={{ fontSize: 11, color: TREND_COLORS[cat.trend], fontWeight: 600, marginTop: 2 }}>
+                            {cat.trend === 'rising' ? 'Rising' : cat.trend === 'declining' ? 'Declining' : 'Stable'}
+                          </div>
                         </div>
+                        <span style={{ ...s.countBadge, background: cat.trend === 'rising' ? '#f0fdf4' : '#f9fafb', color: cat.trend === 'rising' ? '#15803d' : '#374151', border: `1px solid ${cat.trend === 'rising' ? '#bbf7d0' : '#e5e7eb'}` }}>
+                          {cat.count}
+                        </span>
                       </div>
-                      <span style={{ ...s.countBadge, background: cat.trend === 'rising' ? '#f0fdf4' : '#f9fafb', color: cat.trend === 'rising' ? '#15803d' : '#374151', border: `1px solid ${cat.trend === 'rising' ? '#bbf7d0' : '#e5e7eb'}` }}>
-                        {cat.count}
-                      </span>
-                    </div>
-                  ))}
+                    ))
+                  ) : (
+                    <p style={s.emptyNote}>Not enough data yet to identify job categories.</p>
+                  )}
                 </div>
               </div>
 
@@ -201,11 +209,15 @@ export default function TrendsPage() {
             <div className="fade-up" style={s.card}>
               <h2 style={s.cardTitle}>AI Market Insights</h2>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(300px,100%),1fr))', gap: 10, marginTop: 4 }}>
-                {data.aiInsights.map((insight, i) => (
-                  <div key={i} style={s.insightCard}>
-                    <p style={{ fontSize: 13, color: '#374151', lineHeight: 1.65, margin: 0 }}>{insight}</p>
-                  </div>
-                ))}
+                {data.aiInsights.length ? (
+                  data.aiInsights.map((insight, i) => (
+                    <div key={i} style={s.insightCard}>
+                      <p style={{ fontSize: 13, color: '#374151', lineHeight: 1.65, margin: 0 }}>{insight}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p style={s.emptyNote}>Not enough data yet to generate reliable AI market insights.</p>
+                )}
               </div>
             </div>
 
@@ -216,22 +228,26 @@ export default function TrendsPage() {
                 Prioritised by market demand and earning potential — based on current Upwork job data.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {data.recommendedSkillsToLearn.map((sk, i) => {
-                  const uc = URGENCY[sk.urgency] ?? URGENCY.medium;
-                  return (
-                    <div key={i} style={{ ...s.learnCard, borderLeft: `3px solid ${uc.border}`, background: uc.bg }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 14, color: '#111827', marginBottom: 4 }}>{sk.skill}</div>
-                          <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.55 }}>{sk.reason}</div>
+                {data.recommendedSkillsToLearn.length ? (
+                  data.recommendedSkillsToLearn.map((sk, i) => {
+                    const uc = URGENCY[sk.urgency] ?? URGENCY.medium;
+                    return (
+                      <div key={i} style={{ ...s.learnCard, borderLeft: `3px solid ${uc.border}`, background: uc.bg }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: 14, color: '#111827', marginBottom: 4 }}>{sk.skill}</div>
+                            <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.55 }}>{sk.reason}</div>
+                          </div>
+                          <span style={{ ...s.urgencyTag, background: uc.border, color: '#fff', whiteSpace: 'nowrap' }}>
+                            {uc.label}
+                          </span>
                         </div>
-                        <span style={{ ...s.urgencyTag, background: uc.border, color: '#fff', whiteSpace: 'nowrap' }}>
-                          {uc.label}
-                        </span>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                ) : (
+                  <p style={s.emptyNote}>More market data is needed to identify reliable emerging skills.</p>
+                )}
               </div>
             </div>
 
@@ -277,5 +293,6 @@ const s: Record<string, React.CSSProperties> = {
   insightCard: { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 14px' },
   learnCard: { borderRadius: 8, padding: '14px 16px' },
   urgencyTag: { fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4 },
+  emptyNote: { fontSize: 13, color: '#6b7280', lineHeight: 1.65, margin: '6px 0' },
   footer: { textAlign: 'center', marginTop: 48, paddingTop: 16, borderTop: '1px solid #e5e7eb', color: '#9ca3af', fontSize: 12 },
 };
