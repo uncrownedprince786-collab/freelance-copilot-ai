@@ -3,36 +3,15 @@ import { JobProvider } from "./JobProvider";
 import { ApifyUpworkProvider } from "./ApifyUpworkProvider";
 import { SerpApiGoogleJobsProvider } from "./SerpApiGoogleJobsProvider";
 import { FreelancerProvider } from "./FreelancerProvider";
-import { IndeedProvider } from "./IndeedProvider";
-import { LinkedInProvider } from "./LinkedInProvider";
-import { GoogleJobsProvider } from "./GoogleJobsProvider";
 import { logCronRun } from "../lib/cronLogger";
 import { prisma } from "../lib/db";
-
-/** Complementary (non-upwork) providers are always fetched alongside the primary sources. */
-const COMPLEMENTARY_INDEX_START = 3;
 
 export class JobPipeline {
   private providers: JobProvider[] = [
     new ApifyUpworkProvider(),
     new SerpApiGoogleJobsProvider(),
-    new FreelancerProvider(),
-    new IndeedProvider(),
-    new LinkedInProvider(),
-    new GoogleJobsProvider(),
+    new FreelancerProvider()
   ];
-
-  /** Return the provider that backs a given source tab, or null. */
-  providerForSource(source: string): JobProvider | null {
-    const map: Record<string, JobProvider> = {
-      upwork: this.providers[0],
-      freelancer: this.providers[2],
-      indeed: this.providers[3],
-      linkedin: this.providers[4],
-      google: this.providers[5],
-    };
-    return map[source.toLowerCase()] ?? null;
-  }
 
   async execute(): Promise<Job[]> {
     console.log('[JobPipeline] Step 1: Cleaning store - Purging jobs older than 7 days...');
@@ -64,25 +43,6 @@ export class JobPipeline {
     // Always fetch Freelancer jobs as complementary source
     const freelancerJobs = await this.providers[2].fetchJobs();
     fetchedJobs.push(...freelancerJobs);
-
-    // Complementary sources (Indeed, LinkedIn, Google Jobs) — always fetched.
-    // These are appended after the primary Upwork/Freelancer flow so existing
-    // behaviour for Upwork and Freelancer is untouched.
-    const complementaryJobs: Job[] = [];
-    const complementaryCounts: Record<string, number> = {};
-    for (let i = COMPLEMENTARY_INDEX_START; i < this.providers.length; i++) {
-      const prov = this.providers[i];
-      try {
-        const kjs = await prov.fetchJobs();
-        complementaryJobs.push(...kjs);
-        complementaryCounts[prov.name] = kjs.length;
-        console.log(`[JobPipeline] ${prov.name}: ${kjs.length} complementary jobs`);
-      } catch (err) {
-        console.warn(`[JobPipeline] ${prov.name} failed during sync:`, err);
-      }
-    }
-    fetchedJobs.push(...complementaryJobs);
-    const compSummary = Object.entries(complementaryCounts).map(([n, c]) => `${n} (${c})`).join(', ');
 
     // Step 3: Local 7-Day Filter & Hard Filters
     console.log('[JobPipeline] Step 3: Applying 7-Day Age Filter & Hard Filters...');
@@ -130,96 +90,10 @@ export class JobPipeline {
       status: 'SUCCESS',
       jobsFetched: fetchedJobs.length,
       newJobsAdded: brandNewJobs.length,
-      sourceSummary: `Apify (${apifyJobs.length}), Freelancer (${freelancerJobs.length})${compSummary ? `, ${compSummary}` : ''}`
+      sourceSummary: `Apify (${apifyJobs.length}), Freelancer (${freelancerJobs.length})`
     });
 
     return finalCollection;
-  }
-
-  /**
-   * On-demand smart search. Runs the same providers as the scheduled sync but
-   * scoped to a single query, applies the same hard filters, deduplicates
-   * against the existing store, and returns freshly-scored matching jobs.
-   * Results are NOT persisted (manual searches must not pollute the feed).
-   *
-   * When `source` is provided, only the provider backing that source is queried
-   * (source isolation for manual search). Otherwise all providers run.
-   */
-  async search(searchQuery: string, maxJobs = 20, source?: string): Promise<Job[]> {
-    const existingStore = await this.loadExistingStore();
-    const existingKeys = new Set<string>();
-    existingStore.forEach((j) => {
-      if (j.id) existingKeys.add(j.id);
-      if (j.url) existingKeys.add(j.url);
-    });
-
-    const fetchedJobs: Job[] = [];
-
-    // Source-scoped search: only the targeted provider(s).
-    if (source) {
-      const scoped = this.providersForSource(searchQuery, source);
-      for (const prov of scoped) {
-        try {
-          const kjs = await prov.fetchJobs(searchQuery);
-          fetchedJobs.push(...kjs);
-        } catch (err) {
-          console.warn(`[JobPipeline] search ${prov.name} failed:`, err);
-        }
-      }
-    } else {
-      const apifyJobs = await this.providers[0].fetchJobs(searchQuery);
-      if (apifyJobs.length > 0) {
-        fetchedJobs.push(...apifyJobs);
-      } else {
-        const serpJobs = await this.providers[1].fetchJobs();
-        fetchedJobs.push(...serpJobs);
-      }
-      const freelancerJobs = await this.providers[2].fetchJobs(searchQuery);
-      fetchedJobs.push(...freelancerJobs);
-
-      // Complementary sources (Indeed, LinkedIn, Google Jobs).
-      for (let i = COMPLEMENTARY_INDEX_START; i < this.providers.length; i++) {
-        try {
-          const kjs = await this.providers[i].fetchJobs(searchQuery);
-          fetchedJobs.push(...kjs);
-        } catch (err) {
-          console.warn(`[JobPipeline] search complementary (${this.providers[i].name}) failed:`, err);
-        }
-      }
-    }
-
-    const valid = fetchedJobs.filter((job) => this.applyHardFilters(job));
-    const seen = new Set<string>();
-    const matches: Job[] = [];
-
-    for (const job of valid) {
-      if (job.id.includes('/') || job.id.includes('http')) {
-        job.id = (job.source || 'job') + '-' + job.id.split('/').pop()?.replace(/[^a-zA-Z0-9_-]/g, '');
-      }
-      const key1 = job.id;
-      const key2 = job.url;
-      if (existingKeys.has(key1) || existingKeys.has(key2)) continue;
-      if (seen.has(key1) || (key2 && seen.has(key2))) continue;
-      seen.add(key1);
-      if (key2) seen.add(key2);
-
-      const scored = this.calculateScore(job);
-      if ((scored.score ?? 0) >= 50) matches.push(scored);
-    }
-
-    matches.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    console.log(`[JobPipeline] search "${searchQuery}" [source=${source || 'all'}] found ${matches.length} matching jobs`);
-    return matches.slice(0, maxJobs);
-  }
-
-  /** Providers to query when scoping a manual search to a single source. */
-  private providersForSource(searchQuery: string, source: string): JobProvider[] {
-    const normalized = source.toLowerCase();
-    if (normalized === 'upwork') {
-      return [this.providers[0]]; // Apify Upwork (keeps existing Upwork behaviour)
-    }
-    const mapped = this.providerForSource(normalized);
-    return mapped ? [mapped] : [];
   }
 
   private async loadExistingStore(): Promise<Job[]> {

@@ -6,10 +6,10 @@ export class FreelancerProvider implements JobProvider {
   name = "Freelancer";
   private collector = new FreelancerCollector();
 
-  async fetchJobs(searchQuery?: string): Promise<Job[]> {
+  async fetchJobs(): Promise<Job[]> {
     try {
       console.log('[FreelancerProvider] Fetching Freelancer opportunities...');
-      const rawJobs = await this.collector.fetch(searchQuery && searchQuery.trim() ? [searchQuery.trim()] : undefined);
+      const rawJobs = await this.collector.fetch();
 
       return rawJobs.map(raw => {
         const clientCountry = raw.country || raw.location || 'Remote';

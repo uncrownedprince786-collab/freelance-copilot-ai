@@ -5,16 +5,14 @@ export class ApifyUpworkProvider implements JobProvider {
   name = "ApifyUpwork";
   private token = process.env.APIFY_TOKEN;
 
-  async fetchJobs(searchQuery?: string): Promise<Job[]> {
+  async fetchJobs(): Promise<Job[]> {
     if (!this.token) {
       console.warn('[ApifyUpworkProvider] APIFY_TOKEN is missing in environment.');
       return [];
     }
 
     const endpoint = `https://api.apify.com/v2/actors/blackfalcondata~upwork-scraper/run-sync-get-dataset-items?token=${this.token}`;
-    // Manual smart searches fetch only the requested query; the scheduled sync
-    // uses the curated default list.
-    const queries = searchQuery && searchQuery.trim() ? [searchQuery.trim()] : [
+    const queries = [
       "client growth manager",
       "telehealth growth manager",
       "marketing strategy",

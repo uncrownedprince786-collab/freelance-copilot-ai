@@ -20,13 +20,12 @@ export class FreelancerCollector extends BaseCollector {
     "web development"
   ];
 
-  async fetch(searchKeywords?: string[]): Promise<RawOpportunity[]> {
+  async fetch(): Promise<RawOpportunity[]> {
     console.log('Fetching Freelancer opportunities...\n');
 
-    const keywords = searchKeywords && searchKeywords.length > 0 ? searchKeywords : this.keywords;
     const allJobs: RawOpportunity[] = [];
 
-    for (const keyword of keywords) {
+    for (const keyword of this.keywords) {
       try {
         const jobs = await this.searchFreelancer(keyword);
         if (jobs.length > 0) {

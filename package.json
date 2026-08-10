@@ -7,7 +7,6 @@
         "build": "prisma generate && next build",
         "start": "next start",
         "lint": "eslint",
-        "test": "node --import tsx --test \"tests/*.test.ts\"",
         "check-quota": "tsx scripts/check-quota.ts",
         "sync": "tsx scripts/sync.ts"
     },
