@@ -1,9 +1,17 @@
 import { NextResponse } from 'next/server';
 import { ADMIN_COOKIE, ADMIN_SESSION_MS, createAdminToken } from '@/lib/adminAuth';
+import { createRateLimiter } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
+const isLoginRateLimited = createRateLimiter(5, 60_000);
+
 export async function POST(request: Request) {
+  const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+  if (isLoginRateLimited(ip)) {
+    return NextResponse.json({ error: 'Too many attempts. Try again in a minute.' }, { status: 429 });
+  }
+
   let body: unknown;
   try {
     body = await request.json();

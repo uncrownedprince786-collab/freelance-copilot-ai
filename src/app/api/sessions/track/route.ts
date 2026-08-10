@@ -13,14 +13,18 @@ interface SessionEvent {
 export async function POST(req: NextRequest) {
   try {
     const body: SessionEvent = await req.json();
-    if (!body.guestId) return NextResponse.json({ ok: false, error: 'Missing guestId' }, { status: 400 });
+    if (typeof body?.guestId !== 'string' || body.guestId.trim().length === 0 || body.guestId.length > 100) {
+      return NextResponse.json({ ok: false, error: 'Missing or invalid guestId' }, { status: 400 });
+    }
 
+    const role = body.role === 'admin' ? 'admin' : 'guest';
     const existing = await prisma.userSession.findUnique({
       where: { guestId: body.guestId }
     });
 
     let events: SessionEvent[] = existing?.events ? JSON.parse(existing.events) : [];
-    events.push(body);
+    events.push({ ...body, role });
+    if (events.length > 500) events = events.slice(-500);
 
     const now = new Date(body.timestamp || Date.now());
 
@@ -28,16 +32,16 @@ export async function POST(req: NextRequest) {
       await prisma.userSession.upsert({
         where: { guestId: body.guestId },
         update: {
-          role: body.role,
+          role,
           lastSeen: now,
           events: JSON.stringify(events),
         },
         create: {
           guestId: body.guestId,
-          role: body.role,
+          role,
           startTime: now,
           lastSeen: now,
-          events: JSON.stringify([body]),
+          events: JSON.stringify([{ ...body, role }]),
         },
       });
     } else if (body.event === 'session_end') {
@@ -63,9 +67,9 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ ok: true });
-  } catch (err: any) {
+  } catch (err) {
     console.error('Session track DB error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
@@ -90,7 +94,8 @@ export async function GET() {
     }));
 
     return NextResponse.json({ sessions });
-  } catch (err: any) {
-    return NextResponse.json({ sessions: [], error: err.message });
+  } catch (err) {
+    console.error('Session fetch error:', err);
+    return NextResponse.json({ sessions: [], error: 'Internal server error' });
   }
 }

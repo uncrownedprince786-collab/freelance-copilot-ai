@@ -29,7 +29,8 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ success: true, jobId, applied: isApplied, persisted: true });
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  } catch (error) {
+    console.error('[jobs/applied] Error:', error);
+    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
 }

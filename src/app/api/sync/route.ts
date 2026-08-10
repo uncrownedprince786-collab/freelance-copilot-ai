@@ -33,9 +33,9 @@ async function runSync(req: NextRequest) {
       newJobs: jobs.length,
       jobs: jobs
     });
-  } catch (err: any) {
+  } catch (err) {
     console.error('API sync error:', err);
-    return NextResponse.json({ error: 'Sync failed: ' + err.message }, { status: 500 });
+    return NextResponse.json({ error: 'Sync failed' }, { status: 500 });
   }
 }
 

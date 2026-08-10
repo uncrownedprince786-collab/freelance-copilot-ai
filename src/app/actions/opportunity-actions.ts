@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { runAllCollectors } from "@/collectors/run";
 import { analyzeOpportunity } from "@/services/ai/analyzer";
+import { isAdminRequest } from "@/lib/adminAuth";
 
 // Input validation schemas using Zod
 const GetOpportunitiesSchema = z.object({
@@ -160,6 +161,9 @@ export async function getOpportunityById(id: string) {
 
 // Server Action to mark status as APPLIED or SKIPPED
 export async function updateTrackingStatusAction(opportunityId: string, status: "APPLIED" | "SKIPPED" | "NEW") {
+  if (!(await isAdminRequest())) {
+    return { success: false, error: "Unauthorized" };
+  }
   try {
     const validatedId = IdSchema.parse(opportunityId);
     const validatedStatus = TrackingStatusSchema.parse(status);
@@ -193,6 +197,9 @@ export async function updateTrackingStatusAction(opportunityId: string, status: 
 }
 
 export async function syncOpportunitiesAction() {
+  if (!(await isAdminRequest())) {
+    return { success: false, error: "Unauthorized" };
+  }
   try {
     const result = await runAllCollectors();
     revalidatePath("/");
@@ -212,6 +219,9 @@ export async function syncOpportunitiesAction() {
 }
 
 export async function analyzeOpportunityAction(opportunityId: string) {
+  if (!(await isAdminRequest())) {
+    return { success: false, error: "Unauthorized" };
+  }
   try {
     const validatedId = IdSchema.parse(opportunityId);
     const result = await analyzeOpportunity(validatedId);
