@@ -45,6 +45,7 @@ export default async function OpportunityPage({ params }: PageProps) {
       </header>
 
       {/* Main Details client wrapper */}
+      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
       <OpportunityDetails opportunity={opportunity as any} />
     </main>
   );

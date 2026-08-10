@@ -137,7 +137,7 @@ export default function CronLogsPage() {
         {totalCachedJobs > 0 && (
           <div style={st.infoBox}>
             <strong>{totalCachedJobs} unique jobs</strong> in dashboard cache.
-            &nbsp;"Total Scraped" = raw count from that run. Dashboard total = deduplicated accumulation across all runs.
+            &nbsp;&quot;Total Scraped&quot; = raw count from that run. Dashboard total = deduplicated accumulation across all runs.
           </div>
         )}
 
@@ -154,7 +154,7 @@ export default function CronLogsPage() {
           <div style={st.emptyBox}>
             <p style={{ fontWeight: 700, fontSize: 15, color: '#111827', margin: '0 0 6px' }}>No runs recorded in the last 24 hours</p>
             <p style={{ color: '#6b7280', fontSize: 13, margin: 0 }}>
-              Use "Run Sync Now" above to trigger a manual sync, or wait for the scheduled cron.
+              Use &quot;Run Sync Now&quot; above to trigger a manual sync, or wait for the scheduled cron.
             </p>
           </div>
         ) : (

@@ -87,6 +87,7 @@ export class SerpApiGoogleJobsProvider implements JobProvider {
 
           results.push(jobObj);
         }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         console.warn(`[SerpApiGoogleJobsProvider] Failed: ${err.message}`);
       }

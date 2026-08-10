@@ -30,8 +30,8 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
     }
   };
 
-  const handleGuestLogin = () => {
-    loginAsGuest();
+  const handleGuestLogin = async () => {
+    await loginAsGuest();
     onSuccess();
   };
 

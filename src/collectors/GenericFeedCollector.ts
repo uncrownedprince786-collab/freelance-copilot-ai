@@ -41,6 +41,7 @@ export class GenericFeedCollector extends BaseCollector {
       });
 
       return opportunities;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       console.warn(`[Collector: GenericFeed] Could not fetch RSS feed: ${error?.message || error}`);
       return [];

@@ -33,6 +33,7 @@ interface Job {
   interviewingCount?: number;
   hiresCount?: number;
   isNew?: boolean;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   client?: Record<string, any>;
 }
 

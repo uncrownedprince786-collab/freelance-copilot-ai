@@ -3,9 +3,12 @@ import crypto from 'crypto';
 
 export const ADMIN_COOKIE = 'lh_admin_session';
 export const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000;
+export const GUEST_COOKIE = 'lh_guest_session';
+export const GUEST_SESSION_MS = 24 * 60 * 60 * 1000;
 
-interface AdminTokenPayload {
-  role: 'admin';
+interface SessionTokenPayload {
+  role: 'admin' | 'guest';
+  guestId?: string;
   exp: number;
 }
 
@@ -24,33 +27,46 @@ function safeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aBuf, bBuf);
 }
 
-export function createAdminToken(): string | null {
+function createToken(role: 'admin' | 'guest', guestId?: string): string | null {
   const key = signingKey();
   if (!key) return null;
+  const exp = Date.now() + (role === 'admin' ? ADMIN_SESSION_MS : GUEST_SESSION_MS);
   const payload = Buffer.from(
-    JSON.stringify({ role: 'admin', exp: Date.now() + ADMIN_SESSION_MS } satisfies AdminTokenPayload),
+    JSON.stringify({ role, ...(guestId ? { guestId } : {}), exp } satisfies SessionTokenPayload),
   ).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
 
-export function verifyAdminToken(token: string): boolean {
+function verifyToken(token: string): SessionTokenPayload | null {
   const key = signingKey();
-  if (!key) return false;
+  if (!key) return null;
 
   const parts = token.split('.');
-  if (parts.length !== 2) return false;
+  if (parts.length !== 2) return null;
 
   const [payload, sig] = parts;
-  if (!safeEqual(sign(payload), sig)) return false;
+  if (!safeEqual(sign(payload), sig)) return null;
 
   try {
-    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as AdminTokenPayload;
-    if (decoded.role !== 'admin') return false;
-    if (Date.now() > decoded.exp) return false;
-    return true;
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as SessionTokenPayload;
+    if (decoded.role !== 'admin' && decoded.role !== 'guest') return null;
+    if (Date.now() > decoded.exp) return null;
+    return decoded;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function createAdminToken(): string | null {
+  return createToken('admin');
+}
+
+export function createGuestToken(guestId: string): string | null {
+  return createToken('guest', guestId);
+}
+
+export function verifyAdminToken(token: string): boolean {
+  return verifyToken(token)?.role === 'admin';
 }
 
 export async function isAdminRequest(): Promise<boolean> {
@@ -58,6 +74,19 @@ export async function isAdminRequest(): Promise<boolean> {
     const store = await cookies();
     const token = store.get(ADMIN_COOKIE)?.value;
     return token ? verifyAdminToken(token) : false;
+  } catch {
+    return false;
+  }
+}
+
+// Any valid session: a signed admin cookie or a signed guest cookie.
+export async function isAuthenticatedRequest(): Promise<boolean> {
+  try {
+    const store = await cookies();
+    const admin = store.get(ADMIN_COOKIE)?.value;
+    if (admin && verifyAdminToken(admin)) return true;
+    const guest = store.get(GUEST_COOKIE)?.value;
+    return guest ? verifyToken(guest)?.role === 'guest' : false;
   } catch {
     return false;
   }

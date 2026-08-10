@@ -20,6 +20,7 @@ export interface JobAnalysis {
 interface AnalysisOptions {
   platform?: string;
   budget?: string;
+  clientName?: string;
 }
 
 export class MultiAI {
@@ -74,7 +75,7 @@ export class MultiAI {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const prompt = this.buildPrompt(title, description, options);
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(prompt, { timeout: 15000 });
     const text = result.response.text();
     return this.parseProviderResponse(text, title, description, options);
   }
@@ -83,7 +84,7 @@ export class MultiAI {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return null;
 
-    const client = new OpenAI({ apiKey });
+    const client = new OpenAI({ apiKey, timeout: 15000 });
     const prompt = this.buildPrompt(title, description, options);
     const response = await client.responses.create({
       model: 'gpt-4.1-mini',
@@ -107,7 +108,8 @@ export class MultiAI {
       body: JSON.stringify({
         model: 'grok-2-1212',
         messages: [{ role: 'user', content: this.buildPrompt(title, description, options) }]
-      })
+      }),
+      signal: AbortSignal.timeout(15000)
     });
 
     const payload = await response.json();
@@ -128,7 +130,8 @@ export class MultiAI {
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [{ role: 'user', content: this.buildPrompt(title, description, options) }]
-      })
+      }),
+      signal: AbortSignal.timeout(15000)
     });
 
     const payload = await response.json();
@@ -264,8 +267,8 @@ Return JSON with these exact keys:
       reasons.push('Opportunity looks viable based on the scope and structure of the request');
     }
 
-    const bidAmount = this.estimateBidAmount(title, description, score, projectType);
-    const questions = this.buildQuestions(projectType, title, description);
+    const bidAmount = this.estimateBidAmount(title, description, score);
+    const questions = this.buildQuestions(projectType);
 
     return {
       summary: this.buildSummary(title, projectType, score, options.platform),
@@ -274,7 +277,7 @@ Return JSON with these exact keys:
       reasons: reasons.slice(0, 4),
       bidAmount,
       questions,
-      proposal: this.generateProposal(title, description, options.clientName, projectType),
+      proposal: this.generateProposal(title, description, options.clientName),
       originalBudget: this.extractBudgetText(description, options),
       originalTimeline: this.extractTimeline(description),
       clientDetails: this.extractClientDetails(title, description),
@@ -295,7 +298,7 @@ Return JSON with these exact keys:
     return `Fallback review for "${title}" on ${platformName}: ${score >= 70 ? 'Strong signals for a worthwhile opportunity' : score >= 45 ? 'A moderate opportunity that needs a closer look' : 'High caution recommended before bidding'}`;
   }
 
-  private buildQuestions(projectType: string, title: string, description: string): string[] {
+  private buildQuestions(projectType: string): string[] {
     if (projectType === 'growth') {
       return [
         'What is the current funnel and which acquisition channel is underperforming?',

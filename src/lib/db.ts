@@ -3,7 +3,7 @@ import { createRequire } from "module";
 import path from "path";
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var __prisma: PrismaClient | undefined;
 }
 
@@ -43,21 +43,21 @@ function createPrismaClient(): PrismaClient {
   }
 
   if (/^postgres(?:ql)?:\/\//i.test(connectionUrl)) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     const { PrismaPg } = require("@prisma/adapter-pg");
     const adapter = new PrismaPg({ connectionString: connectionUrl });
     return new PrismaClient({ adapter });
   }
 
   let dbPath = connectionUrl.startsWith("file:")
-    ? path.resolve(process.cwd(), connectionUrl.slice(5))
-    : path.resolve(process.cwd(), connectionUrl);
+    ? path.resolve(/* turbopackIgnore: true */ process.cwd(), connectionUrl.slice(5))
+    : path.resolve(/* turbopackIgnore: true */ process.cwd(), connectionUrl);
 
   if (dbPath.includes(process.cwd())) {
     dbPath = getStoragePath("dev.db");
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   const { PrismaBetterSqlite3 } = require("@prisma/adapter-better-sqlite3");
 
   const adapter = new PrismaBetterSqlite3({ url: dbPath });

@@ -24,11 +24,13 @@ export async function logCronRun(entry: Omit<CronLogEntry, 'id' | 'timestamp'>):
     return {
       id: created.id,
       timestamp: created.timestamp.toISOString(),
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       status: created.status as any,
       jobsFetched: created.jobsFetched,
       newJobsAdded: created.newJobsAdded,
       sourceSummary: created.sourceSummary,
     };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     console.error('[cronLogger] Error writing log to DB:', err.message);
     return {
@@ -49,6 +51,7 @@ export async function getTodayCronLogs(): Promise<CronLogEntry[]> {
     return logs.map(l => ({
       id: l.id,
       timestamp: l.timestamp.toISOString(),
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       status: l.status as any,
       jobsFetched: l.jobsFetched,
       newJobsAdded: l.newJobsAdded,

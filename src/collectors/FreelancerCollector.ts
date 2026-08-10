@@ -33,6 +33,7 @@ export class FreelancerCollector extends BaseCollector {
           allJobs.push(...jobs);
         }
         await new Promise(resolve => setTimeout(resolve, 800));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (error: any) {
         console.warn(`Freelancer search failed for ${keyword}: ${error.message}`);
       }
@@ -74,11 +75,14 @@ export class FreelancerCollector extends BaseCollector {
       if (!data?.result?.projects) return [];
 
       const sevenDaysAgo = Date.now() / 1000 - 7 * 24 * 60 * 60;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       const recentProjects = data.result.projects.filter((p: any) => Number(p.submitdate || 0) >= sevenDaysAgo);
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       return recentProjects.map((project: any): RawOpportunity => {
         const rawDesc = project.description || project.preview_description || project.title || 'No description available.';
         const description = this.cleanText(rawDesc);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
         const skills = Array.isArray(project.skills) ? project.skills.map((s: any) => this.cleanText(s.name || s)) : [];
         const budgetRaw = project.budget || {};
         const budget = budgetRaw.minimum && budgetRaw.maximum
@@ -119,6 +123,7 @@ export class FreelancerCollector extends BaseCollector {
           paymentVerified,
         };
       });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       console.warn(`Freelancer fetch error for "${keyword}": ${error.message}`);
       return [];

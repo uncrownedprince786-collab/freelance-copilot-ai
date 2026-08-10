@@ -27,7 +27,7 @@ export class JobPipeline {
     });
 
     console.log('[JobPipeline] Step 2: Fetching new jobs from Orchestrated Providers (Apify -> SerpApi -> Freelancer)...');
-    let fetchedJobs: Job[] = [];
+    const fetchedJobs: Job[] = [];
 
     // Priority 1: Apify Upwork
     const apifyJobs = await this.providers[0].fetchJobs();
@@ -68,7 +68,7 @@ export class JobPipeline {
         const scoredJob = this.calculateScore(job);
         
         // Quality Gate: Only accept jobs with a score >= 50
-        if (scoredJob.score >= 50) {
+        if ((scoredJob.score ?? 0) >= 50) {
           brandNewJobs.push(scoredJob);
         }
       }
@@ -102,6 +102,7 @@ export class JobPipeline {
         orderBy: { createdAt: 'desc' },
       });
       return dbOps.map(op => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
         let budgetVal: any = op.budget;
         try { budgetVal = JSON.parse(op.budget); } catch {}
         return {
@@ -113,9 +114,12 @@ export class JobPipeline {
           budgetType: op.budgetType || '',
           score: op.score,
           platform: op.platform,
+          source: (op.platform || '').toLowerCase() === 'freelancer' ? 'freelancer' : 'upwork',
+          connectsRequired: op.connections ?? null,
           viewed: op.viewed,
           applied: op.applied,
-          postedAt: op.createdAt.toISOString(),
+          postedAt: op.createdAt,
+          fetchedAt: op.createdAt,
           country: op.country || '',
           clientName: op.clientName || '',
           clientSpend: op.clientSpend || '',
@@ -163,12 +167,12 @@ export class JobPipeline {
             experienceLevel: job.experienceLevel || '',
             duration: job.duration || '',
             skills: skillsStr,
-            proposalCount: job.proposalCount || null,
+            proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
             interviewingCount: job.interviewingCount || 0,
             hiresCount: job.hiresCount || 0,
-            paymentVerified: job.paymentVerified || clientObj.paymentVerified === true,
-            clientRating: job.clientRating || '',
-            jobsPosted: job.jobsPosted || null,
+            paymentVerified: clientObj.paymentVerified === true,
+            clientRating: clientObj.rating ? String(clientObj.rating) : '',
+            jobsPosted: clientObj.jobsPosted ?? null,
             applied: job.applied || false,
             rawPayload: JSON.stringify(clientObj),
           },
@@ -190,16 +194,17 @@ export class JobPipeline {
             experienceLevel: job.experienceLevel || '',
             duration: job.duration || '',
             skills: skillsStr,
-            proposalCount: job.proposalCount || null,
+            proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
             interviewingCount: job.interviewingCount || 0,
             hiresCount: job.hiresCount || 0,
-            paymentVerified: job.paymentVerified || clientObj.paymentVerified === true,
-            clientRating: job.clientRating || '',
-            jobsPosted: job.jobsPosted || null,
+            paymentVerified: clientObj.paymentVerified === true,
+            clientRating: clientObj.rating ? String(clientObj.rating) : '',
+            jobsPosted: clientObj.jobsPosted ?? null,
             applied: job.applied || false,
             rawPayload: JSON.stringify(clientObj),
           },
         });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         console.error('[JobPipeline] DB upsert error:', err.message);
       }

@@ -84,7 +84,7 @@ export class UpworkCollector extends BaseCollector {
           this.searchesUsed = data.searchesUsed || 0;
         }
       }
-    } catch (error) {
+    } catch {
       this.searchesUsed = 0;
     }
   }
@@ -171,6 +171,7 @@ export class UpworkCollector extends BaseCollector {
         
         await new Promise(resolve => setTimeout(resolve, 1500));
         
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (error: any) {
         console.warn(`Search failed: ${error.message}`);
       }

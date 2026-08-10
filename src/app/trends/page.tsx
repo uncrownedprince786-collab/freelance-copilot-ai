@@ -63,6 +63,7 @@ export default function TrendsPage() {
       const res = await fetch('/api/trends');
       if (!res.ok) throw new Error('Failed to fetch trends');
       setData(await res.json());
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       setError(e.message);
     } finally {

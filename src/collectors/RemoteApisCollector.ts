@@ -44,6 +44,7 @@ export class RemoteApisCollector extends BaseCollector {
       const data = await res.json();
       if (!data?.jobs) return [];
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       return data.jobs.map((job: any): RawOpportunity => ({
         title: job.title || "Untitled",
         description: this.cleanHtml(job.description || ""),
@@ -56,6 +57,7 @@ export class RemoteApisCollector extends BaseCollector {
         clientName: job.company_name || undefined,
         status: "OPEN",
       }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       console.warn("[RemoteApisCollector] Remotive failed:", e?.message);
       return [];
@@ -73,8 +75,10 @@ export class RemoteApisCollector extends BaseCollector {
       if (!data?.data) return [];
 
       return data.data
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
         .filter((job: any) => this.isDevJob(job.title, job.description))
         .slice(0, 30)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
         .map((job: any): RawOpportunity => ({
           title: job.title || "Untitled",
           description: this.cleanHtml(job.description || ""),
@@ -87,6 +91,7 @@ export class RemoteApisCollector extends BaseCollector {
           clientName: job.company_name || undefined,
           status: "OPEN",
         }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       console.warn("[RemoteApisCollector] ArbeitNow failed:", e?.message);
       return [];
@@ -105,8 +110,10 @@ export class RemoteApisCollector extends BaseCollector {
       if (!Array.isArray(data)) return [];
 
       return data
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
         .filter((job: any) => job.id && job.position && job.url)
         .slice(0, 30)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
         .map((job: any): RawOpportunity => ({
           title: job.position || "Untitled",
           description: this.cleanHtml(job.description || job.tags?.join(", ") || ""),
@@ -119,6 +126,7 @@ export class RemoteApisCollector extends BaseCollector {
           clientName: job.company || undefined,
           status: "OPEN",
         }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       console.warn("[RemoteApisCollector] RemoteOK failed:", e?.message);
       return [];
@@ -137,8 +145,10 @@ export class RemoteApisCollector extends BaseCollector {
       if (!data?.items) return [];
 
       return data.items
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
         .filter((item: any) => item.link && item.title)
         .slice(0, 20)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
         .map((item: any): RawOpportunity => ({
           title: item.title || "Untitled",
           description: this.cleanHtml(item.content || item.description || ""),
@@ -149,6 +159,7 @@ export class RemoteApisCollector extends BaseCollector {
           company: item.author || "Remote Company",
           status: "OPEN",
         }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       console.warn("[RemoteApisCollector] WWR RSS failed:", e?.message);
       return [];

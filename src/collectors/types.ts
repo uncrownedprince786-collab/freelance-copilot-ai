@@ -22,6 +22,8 @@ export interface RawOpportunity {
   hiresCount?: number | null;
   rating?: number | null;
   totalSpent?: number | null;
+  jobsPosted?: number | null;
+  totalHires?: number | null;
   paymentVerified?: boolean | null;
   lastActivityAt?: Date | string | null;
   openJobs?: number | null;
@@ -30,5 +32,4 @@ export interface RawOpportunity {
 export interface CollectorInterface {
   name: string;
   fetch(): Promise<RawOpportunity[]>;
-  run(): Promise<{ success: boolean; count: number; error?: string }>;
 }

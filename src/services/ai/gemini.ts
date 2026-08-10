@@ -102,13 +102,16 @@ Make sure the proposal:
         model: "gemini-2.5-flash",
       });
 
-      const response = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2, // Low temperature for high consistency
+      const response = await model.generateContent(
+        {
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.2, // Low temperature for high consistency
+          },
         },
-      });
+        { timeout: 15000 },
+      );
 
       const responseText = response.response.text();
       if (!responseText) {
@@ -131,6 +134,7 @@ Make sure the proposal:
 
       return parsed;
     });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     console.error("Gemini AI generation failed or returned bad JSON:", error);
     return getFallbackAnalysis(
@@ -162,7 +166,6 @@ function getFallbackAnalysis(
   if (words > 100) score += 10;
   score = Math.min(score, 85);
 
-  const cleanTitle = title.replace(/[^\w\s-]/g, "");
   const greeting = clientName && clientName !== "Client" && clientName !== "Upwork Client" && clientName !== "Freelancer Client" ? `Hi ${clientName},` : "Hi,";
 
   return {

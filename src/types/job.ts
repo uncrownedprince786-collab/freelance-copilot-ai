@@ -15,6 +15,7 @@ export interface JobClient {
   paymentVerified: boolean | null;
   lastActivityAt: Date | null;
   openJobs: number | null;
+  opportunityReason?: string;
 }
 
 export interface Job {
@@ -40,6 +41,9 @@ export interface Job {
   country?: string;
   clientName?: string;
   clientSpend?: string;
+  clientReviews?: string;
+  connections?: number;
+  budgetType?: string;
   isNew?: boolean;
   viewed?: boolean;
   applied?: boolean;

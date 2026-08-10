@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getRawJobs } from '@/lib/jobsCache';
 
@@ -126,6 +126,7 @@ async function generateWithGemini(prompt: string): Promise<string> {
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.7, maxOutputTokens: 600 },
         }),
+        signal: AbortSignal.timeout(15000),
       }
     );
     const data = await res.json();
@@ -133,7 +134,7 @@ async function generateWithGemini(prompt: string): Promise<string> {
   } catch { return ''; }
 }
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   const cached = await readCache();
   const rawJobsList = await getRawJobs();
   const rawJobCount = rawJobsList.length;
@@ -141,7 +142,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ...cached.trends, cached: true, generatedAt: cached.generatedAt });
   }
 
-  const { skills, categories, budgets, titles, descriptions } = await analyzeJobsLocally();
+  const { skills, categories, budgets, titles } = await analyzeJobsLocally();
 
   // Sort and top-10
   const topSkillsRaw = Object.entries(skills).sort((a, b) => b[1] - a[1]).slice(0, 12);
@@ -185,6 +186,7 @@ Respond with this exact JSON (no markdown, pure JSON):
   ]
 }`;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   let aiData = { marketSummary: '', aiInsights: [] as string[], recommendedSkillsToLearn: [] as any[] };
   const aiRaw = await generateWithGemini(aiPrompt);
   if (aiRaw) {

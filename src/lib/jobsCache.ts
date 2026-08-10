@@ -6,6 +6,7 @@ export interface RawJob {
   title?: string;
   description?: string;
   skills?: string[];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   budget?: any;
   experienceLevel?: string;
   duration?: string;
@@ -16,6 +17,7 @@ export interface RawJob {
   hiresCount?: number;
   postedAt?: string;
   postedDate?: string;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   client?: Record<string, any>;
   source?: string;
   score?: number;
@@ -27,6 +29,7 @@ export interface RawJob {
   viewed?: boolean;
   applied?: boolean;
   isNew?: boolean;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }
 
@@ -36,6 +39,7 @@ export async function getRawJobs(): Promise<RawJob[]> {
       orderBy: { createdAt: 'desc' },
     });
     return dbOps.map(op => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       let budgetVal: any = op.budget;
       try { budgetVal = JSON.parse(op.budget); } catch {}
       return {

@@ -74,6 +74,7 @@ export class ApifyUpworkProvider implements JobProvider {
             url: normalizedUrl,
             title: this.cleanText(item.title),
             description,
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
             skills: Array.isArray(item.skills) ? item.skills.map((skill: any) => this.cleanText(String(skill))).filter(Boolean) : [],
             budget: {
               type: item.jobType === 'HOURLY' || item.hourlyBudgetMin ? 'hourly' : 'fixed',
@@ -112,6 +113,7 @@ export class ApifyUpworkProvider implements JobProvider {
 
           results.push(job);
         }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         console.error('[ApifyUpworkProvider] Error fetching:', err.message);
       }

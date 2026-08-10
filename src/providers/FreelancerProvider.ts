@@ -22,7 +22,9 @@ export class FreelancerProvider implements JobProvider {
           title: raw.title,
           description: raw.description || '',
           skills: detailSkills,
-          budget: typeof raw.budget === 'object' ? raw.budget : { type: 'fixed', amount: undefined },
+          budget: typeof raw.budget === 'object' && raw.budget
+            ? { type: raw.budget.type === 'hourly' ? 'hourly' : 'fixed', amount: raw.budget.amount, min: raw.budget.min, max: raw.budget.max }
+            : { type: 'fixed', amount: undefined },
           experienceLevel: raw.experienceLevel || null,
           duration: raw.duration || null,
           connectsRequired: null,
@@ -50,6 +52,7 @@ export class FreelancerProvider implements JobProvider {
           isNew: true,
         };
       });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       console.error('[FreelancerProvider] Error:', err.message);
       return [];

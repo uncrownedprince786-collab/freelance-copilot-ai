@@ -1,23 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getRawJobs, getAppliedSet } from '@/lib/jobsCache';
-import { prisma } from '@/lib/db';
 
 export async function GET() {
   try {
     const rawJobs = await getRawJobs();
     const appliedSet = await getAppliedSet();
 
-    // 40-day auto-cleanup in DB
-    const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
-    try {
-      await prisma.opportunity.deleteMany({
-        where: {
-          createdAt: { lt: fortyDaysAgo },
-          applied: false,
-        },
-      });
-    } catch { /* non-critical */ }
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     const jobs = rawJobs.map((job: any) => {
       const jobId = job.id || job.url;
       const isApplied = Boolean(job.applied) || appliedSet.has(jobId) || appliedSet.has(job.url);

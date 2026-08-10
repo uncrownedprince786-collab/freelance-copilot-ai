@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated, isAdmin, logout, getRole, trackActivity } from '@/lib/auth';
+import { isAuthenticated, isAdmin, logout, trackActivity } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
 
 interface Job {
@@ -67,8 +67,6 @@ function HomeContent() {
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState('');
   const [showIntroPopup, setShowIntroPopup] = useState(true);
   const [newCount, setNewCount] = useState(0);
 
@@ -215,28 +213,17 @@ function HomeContent() {
   useEffect(() => { void fetchJobs(); }, [fetchJobs]);
 
   const handleSync = async () => {
-    setSyncing(true);
-    setSyncMsg('Scanning for fresh opportunities…');
     try {
       const res = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const data = await res.json();
-      if (!res.ok) {
-        setSyncMsg('Manual sync requires admin access.');
-        return;
-      }
+      if (!res.ok) return;
       if (data.newJobs > 0) {
-        setSyncMsg(`Found ${data.newJobs} new jobs!`);
         setNewCount(data.newJobs);
         trackActivity('sync', `${data.newJobs} new jobs`);
         await fetchJobs();
-      } else {
-        setSyncMsg('All caught up — no new jobs since last sync.');
       }
     } catch {
-      setSyncMsg('Sync failed. Check your connection.');
-    } finally {
-      setSyncing(false);
-      setTimeout(() => setSyncMsg(''), 4000);
+      /* ignore */
     }
   };
 
@@ -406,7 +393,7 @@ function HomeContent() {
               onChange={e => { setSearch(e.target.value); setPage(1); }}
               style={styles.searchInput}
             />
-            <select value={sortBy} onChange={e => { setSortBy(e.target.value as any); setPage(1); }} style={styles.select}>
+            <select value={sortBy} onChange={e => { setSortBy(e.target.value as 'score' | 'date' | 'budget'); setPage(1); }} style={styles.select}>
               <option value="date">Sort: Latest first</option>
               <option value="score">Sort: Best score</option>
               <option value="budget">Sort: Highest budget</option>
@@ -450,7 +437,7 @@ function HomeContent() {
             </select>
 
             <span style={styles.filterLabel}>Score:</span>
-            <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value as any); setPage(1); }} style={styles.select}>
+            <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value as 'all' | 'high' | 'medium' | 'low'); setPage(1); }} style={styles.select}>
               <option value="all">Any Score</option>
               <option value="high">70%+ Strong fit</option>
               <option value="medium">50–69% Promising</option>

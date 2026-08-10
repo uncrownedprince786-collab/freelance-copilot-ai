@@ -30,6 +30,7 @@ export async function getOpportunities(rawOptions: z.input<typeof GetOpportuniti
     const skip = (options.page - 1) * options.limit;
 
     // Build Prisma query filters
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {
       // Only show OPEN jobs and exclude applied/skipped
       status: "OPEN",
@@ -80,6 +81,7 @@ export async function getOpportunities(rawOptions: z.input<typeof GetOpportuniti
     }
 
     // Determine sorting criteria
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     const orderBy: any = {};
     if (options.sortBy === "score") {
       orderBy.score = "desc";
@@ -116,6 +118,7 @@ export async function getOpportunities(rawOptions: z.input<typeof GetOpportuniti
         totalPages: Math.ceil(total / options.limit),
       },
     };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     console.error("Failed to retrieve opportunities:", error);
     return {
@@ -150,6 +153,7 @@ export async function getOpportunityById(id: string) {
       success: true,
       data: opportunity,
     };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     console.error(`Failed to load opportunity with ID ${id}:`, error);
     return {
@@ -187,6 +191,7 @@ export async function updateTrackingStatusAction(opportunityId: string, status: 
       success: true,
       data: tracking,
     };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     console.error(`Failed to update tracking status for ${opportunityId}:`, error);
     return {
@@ -208,6 +213,7 @@ export async function syncOpportunitiesAction() {
       importedCount: result.totalImported,
       details: result.stats,
     };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     console.error("Sync action failed:", error);
     return {
@@ -233,6 +239,7 @@ export async function analyzeOpportunityAction(opportunityId: string) {
       success: true,
       data: result,
     };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     console.error(`Analysis failed for opportunity ${opportunityId}:`, error);
     return {
@@ -271,6 +278,7 @@ export async function getDashboardStats() {
       },
     });
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     const platformBreakdown = platformGroups.reduce((acc: any, curr) => {
       acc[curr.platform] = curr._count._all;
       return acc;
@@ -296,6 +304,7 @@ export async function getDashboardStats() {
         countries,
       },
     };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (error: any) {
     console.error("Failed to fetch dashboard stats:", error);
     return {

@@ -57,20 +57,30 @@ export async function login(username: string, pass: string): Promise<boolean> {
   }
 }
 
-export function loginAsGuest(): void {
-  if (typeof window !== 'undefined') {
-    const guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-    sessionStorage.setItem('lh_auth_token', 'lh_guest_session_token');
-    sessionStorage.setItem('lh_auth_expires', (Date.now() + SESSION_DURATION_MS).toString());
-    sessionStorage.setItem('lh_auth_role', 'guest');
-    sessionStorage.setItem('lh_guest_id', guestId);
-    // Notify backend to record guest session start
-    fetch('/api/sessions/track', {
+export async function loginAsGuest(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  sessionStorage.setItem('lh_auth_token', 'lh_guest_session_token');
+  sessionStorage.setItem('lh_auth_expires', (Date.now() + SESSION_DURATION_MS).toString());
+  sessionStorage.setItem('lh_auth_role', 'guest');
+  sessionStorage.setItem('lh_guest_id', guestId);
+  // Request a signed guest session cookie (server-side identity for
+  // session-protected endpoints). Awaited so subsequent analyze/view calls
+  // carry a valid session. If this fails, guest browsing still works but
+  // protected routes return 401.
+  try {
+    await fetch('/api/auth/guest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event: 'session_start', guestId, role: 'guest', timestamp: new Date().toISOString() }),
-    }).catch(() => {});
-  }
+      body: JSON.stringify({ guestId }),
+    });
+  } catch { /* non-critical */ }
+  // Notify backend to record guest session start
+  fetch('/api/sessions/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'session_start', guestId, role: 'guest', timestamp: new Date().toISOString() }),
+  }).catch(() => {});
 }
 
 export function trackActivity(event: string, detail?: string): void {

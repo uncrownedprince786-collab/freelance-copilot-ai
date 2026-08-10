@@ -20,7 +20,7 @@ export interface CollectionStats {
 /** Simple heuristic scoring (mirrored from BaseCollector) */
 function calculateBaseScore(item: RawOpportunity): number {
   let score = 50;
-  if (item.budget && item.budget !== "Undetermined") {
+  if (typeof item.budget === "string" && item.budget && item.budget !== "Undetermined") {
     const budgetNum = parseInt(item.budget.replace(/[^0-9]/g, ""), 10);
     if (!isNaN(budgetNum)) {
       if (budgetNum > 2000) score += 20;
@@ -56,6 +56,7 @@ export async function runAllCollectors(): Promise<{
 
   fetchResults.forEach((result, idx) => {
     const collector = collectors[idx];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mode = (collector as any).modeUsed;
     if (result.status === "fulfilled") {
       const raw = result.value as RawOpportunity[];
@@ -85,6 +86,7 @@ export async function runAllCollectors(): Promise<{
     const key = op.url;
     const source = op.platform || "unknown";
     if (!jobMap.has(key)) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       jobMap.set(key, { ...op, sources: [source] } as any);
     } else {
       const existing = jobMap.get(key)!;
@@ -105,6 +107,7 @@ export async function runAllCollectors(): Promise<{
         const key = op.url;
         const source = op.platform || "unknown";
         if (!jobMap.has(key)) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
           jobMap.set(key, { ...op, sources: [source] } as any);
         } else {
           const existing = jobMap.get(key)!;
@@ -122,13 +125,24 @@ export async function runAllCollectors(): Promise<{
   for (const item of uniqueOps) {
     if (!item.url) continue;
     try {
-      const cleanedBudget = item.budget?.trim() || "Undetermined";
+      const cleanedBudget = typeof item.budget === "string" ? (item.budget.trim() || "Undetermined") : "Undetermined";
       const baseScore = calculateBaseScore(item);
       // Normalize the posted date - different collectors use different field names
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
       const postedAt = (item.postedAt || item.postedDate) ? new Date((item.postedAt || item.postedDate) as any) : new Date();
       await prisma.opportunity.upsert({
         where: { url: item.url },
-        update: {},
+        update: {
+          title: item.title?.trim() || "Untitled Job",
+          description: item.description?.trim() || "",
+          budget: cleanedBudget,
+          platform: item.platform,
+          country: item.country,
+          clientName: item.clientName,
+          clientSpend: item.clientSpend,
+          clientReviews: item.clientReviews,
+          connections: item.connections,
+        },
         create: {
           title: item.title?.trim() || "Untitled Job",
           description: item.description?.trim() || "",
@@ -160,12 +174,23 @@ export async function runAllCollectors(): Promise<{
       for (const item of extra) {
         if (!item.url) continue;
         try {
-          const cleanedBudget = item.budget?.trim() || "Undetermined";
+          const cleanedBudget = typeof item.budget === "string" ? (item.budget.trim() || "Undetermined") : "Undetermined";
           const baseScore = calculateBaseScore(item);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
           const postedAt2 = (item.postedAt || item.postedDate) ? new Date((item.postedAt || item.postedDate) as any) : new Date();
           await prisma.opportunity.upsert({
             where: { url: item.url },
-            update: {},
+            update: {
+              title: item.title?.trim() || "Untitled Job",
+              description: item.description?.trim() || "",
+              budget: cleanedBudget,
+              platform: item.platform,
+              country: item.country,
+              clientName: item.clientName,
+              clientSpend: item.clientSpend,
+              clientReviews: item.clientReviews,
+              connections: item.connections,
+            },
             create: {
               title: item.title?.trim() || "Untitled Job",
               description: item.description?.trim() || "",

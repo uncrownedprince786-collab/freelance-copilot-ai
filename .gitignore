@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -43,3 +44,17 @@ next-env.d.ts
 /src/generated/prisma
 
 .vercel
+
+# runtime artifacts (never commit)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+applied-jobs.json
+viewed-jobs.json
+upwork-jobs.json
+sync-results.json
+.jobs-cache.json
+.cron-logs.json
+.upwork-quota.json

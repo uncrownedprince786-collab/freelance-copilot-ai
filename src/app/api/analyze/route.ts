@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { MultiAI } from '../../../services/ai/MultiAI';
+import { isAuthenticatedRequest } from '@/lib/adminAuth';
 
 // Simple in-memory rate limiter — max 30 req / minute per IP
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -31,6 +32,12 @@ export async function POST(request: NextRequest) {
       { error: 'Too many requests. Please wait a minute.' },
       { status: 429, headers: secureHeaders }
     );
+  }
+
+  // Require a valid session (admin cookie or guest cookie) to prevent
+  // unauthenticated callers from burning AI credits.
+  if (!(await isAuthenticatedRequest())) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: secureHeaders });
   }
 
   // Input validation
