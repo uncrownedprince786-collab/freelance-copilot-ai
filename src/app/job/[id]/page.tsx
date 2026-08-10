@@ -50,6 +50,7 @@ interface Analysis {
   technicalBlockers?: string[];
   blockerSolutions?: string[];
   suggestedEta?: string;
+  cached?: boolean;
 }
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -147,6 +148,19 @@ export default function JobDetailPage() {
           platform: jobData.platform ?? 'Unknown',
           budget: jobData.budget ?? 'Negotiable',
           clientName: jobData.clientName ?? '',
+          opportunityId: jobData.id,
+          skills: jobData.skills ?? [],
+          paymentVerified: jobData.paymentVerified ?? false,
+          jobsPosted: jobData.jobsPosted ?? null,
+          proposalCount: jobData.proposalCount ?? null,
+          interviewingCount: jobData.interviewingCount ?? null,
+          experienceLevel: jobData.experienceLevel ?? '',
+          duration: jobData.duration ?? '',
+          connectsRequired: jobData.connections ?? null,
+          budgetType: jobData.budgetType ?? '',
+          rating: jobData.client?.rating ?? null,
+          totalSpent: jobData.client?.totalSpent ?? null,
+          totalHires: jobData.client?.totalHires ?? null,
         }),
       });
       if (!res.ok) throw new Error('Analysis failed');
@@ -446,7 +460,14 @@ export default function JobDetailPage() {
             <>
               {/* AI Score / Risk / ETA */}
               <div style={s.card}>
-                <div style={s.sectionHead}>AI Assessment</div>
+                <div style={{ ...s.sectionHead, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  AI Assessment
+                  {analysis.cached && (
+                    <span style={{ ...s.badge, background: '#dbeafe', color: '#1e40af', padding: '2px 8px', fontSize: 10, fontWeight: 700 }}>
+                      Cached (24h)
+                    </span>
+                  )}
+                </div>
                 <div style={s.verdictGrid}>
                   <div style={s.verdictCell}>
                     <div style={s.vLabel}>Score</div>

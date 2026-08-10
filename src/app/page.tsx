@@ -24,6 +24,8 @@ interface Job {
   clientSpend?: string;
   clientReviews?: string;
   connections?: number;
+  category?: string;
+  opportunityReason?: string;
 }
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -40,6 +42,13 @@ function getScoreColor(score: number) {
   if (score >= 50) return '#f59e0b';
   return '#ef4444';
 }
+
+const CATEGORY_COLORS: Record<string, string> = {
+  High: '#10b981',
+  Good: '#3b82f6',
+  Review: '#f59e0b',
+  Skip: '#ef4444',
+};
 
 function timeAgo(dateStr: string) {
   const now = Date.now();
@@ -83,6 +92,13 @@ function HomeContent() {
       setAdminMode(isAdmin());
     }
   }, []);
+
+  // Session heartbeat — keeps the session marked active & records presence.
+  useEffect(() => {
+    if (!authed) return;
+    const idle = setInterval(() => trackActivity('heartbeat'), 90_000);
+    return () => clearInterval(idle);
+  }, [authed]);
 
 
   const closeIntroPopup = () => {
@@ -214,7 +230,7 @@ function HomeContent() {
 
   const handleSync = async () => {
     try {
-      const res = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      const res = await fetch('/api/sync?force=true', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const data = await res.json();
       if (!res.ok) return;
       if (data.newJobs > 0) {
@@ -472,6 +488,11 @@ function HomeContent() {
                     <span style={{ ...styles.badge, background: PLATFORM_COLORS[job.platform] || '#6c5ce7' }}>
                       {job.platform}
                     </span>
+                    {job.category && (
+                      <span style={{ ...styles.badge, background: CATEGORY_COLORS[job.category] || '#6c5ce7' }}>
+                        {job.category} Lead
+                      </span>
+                    )}
                     {job.isNew && <span style={{ ...styles.badge, background: '#22c55e' }}>New</span>}
                     {job.score >= 70 && <span style={{ ...styles.badge, background: '#f59e0b' }}>Hot</span>}
                     {job.applied && <span style={{ ...styles.badge, background: '#3b82f6' }}>Applied</span>}

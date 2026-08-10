@@ -1,7 +1,6 @@
 import { Job } from "../types/job";
 import { JobProvider } from "./JobProvider";
 import { ApifyUpworkProvider } from "./ApifyUpworkProvider";
-import { SerpApiGoogleJobsProvider } from "./SerpApiGoogleJobsProvider";
 import { FreelancerProvider } from "./FreelancerProvider";
 import { logCronRun } from "../lib/cronLogger";
 import { prisma } from "../lib/db";
@@ -9,8 +8,7 @@ import { prisma } from "../lib/db";
 export class JobPipeline {
   private providers: JobProvider[] = [
     new ApifyUpworkProvider(),
-    new SerpApiGoogleJobsProvider(),
-    new FreelancerProvider()
+    new FreelancerProvider(),
   ];
 
   async execute(): Promise<Job[]> {
@@ -26,22 +24,17 @@ export class JobPipeline {
       if (j.url) existingKeys.add(j.url);
     });
 
-    console.log('[JobPipeline] Step 2: Fetching new jobs from Orchestrated Providers (Apify -> SerpApi -> Freelancer)...');
+    console.log('[JobPipeline] Step 2: Fetching jobs from Upwork (Apify) and Freelancer...');
     const fetchedJobs: Job[] = [];
 
-    // Priority 1: Apify Upwork
+    // Apify Upwork
     const apifyJobs = await this.providers[0].fetchJobs();
-    if (apifyJobs.length > 0) {
-      console.log(`[JobPipeline] Acquired ${apifyJobs.length} primary jobs from Apify.`);
-      fetchedJobs.push(...apifyJobs);
-    } else {
-      console.log(`[JobPipeline] Apify returned 0 jobs. Running Fallback 1 (SerpApi)...`);
-      const serpJobs = await this.providers[1].fetchJobs();
-      fetchedJobs.push(...serpJobs);
-    }
+    console.log(`[JobPipeline] Apify (Upwork): ${apifyJobs.length} jobs.`);
+    fetchedJobs.push(...apifyJobs);
 
-    // Always fetch Freelancer jobs as complementary source
-    const freelancerJobs = await this.providers[2].fetchJobs();
+    // Freelancer (complementary source)
+    const freelancerJobs = await this.providers[1].fetchJobs();
+    console.log(`[JobPipeline] Freelancer: ${freelancerJobs.length} jobs.`);
     fetchedJobs.push(...freelancerJobs);
 
     // Step 3: Local 7-Day Filter & Hard Filters

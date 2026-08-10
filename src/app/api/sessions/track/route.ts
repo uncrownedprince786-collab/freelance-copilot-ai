@@ -8,6 +8,11 @@ interface SessionEvent {
   event: string;
   detail?: string;
   timestamp: string;
+  country?: string;
+}
+
+function getVisitorCountry(req: NextRequest): string {
+  return req.headers.get('x-vercel-ip-country') || req.headers.get('cf-ipcountry') || '';
 }
 
 export async function POST(req: NextRequest) {
@@ -18,12 +23,13 @@ export async function POST(req: NextRequest) {
     }
 
     const role = body.role === 'admin' ? 'admin' : 'guest';
+    const country = getVisitorCountry(req);
     const existing = await prisma.userSession.findUnique({
       where: { guestId: body.guestId }
     });
 
     let events: SessionEvent[] = existing?.events ? JSON.parse(existing.events) : [];
-    events.push({ ...body, role });
+    events.push({ ...body, role, country });
     if (events.length > 500) events = events.slice(-500);
 
     const now = new Date(body.timestamp || Date.now());
@@ -41,7 +47,7 @@ export async function POST(req: NextRequest) {
           role,
           startTime: now,
           lastSeen: now,
-          events: JSON.stringify([{ ...body, role }]),
+          events: JSON.stringify([{ ...body, role, country }]),
         },
       });
     } else if (body.event === 'session_end') {
@@ -83,15 +89,31 @@ export async function GET() {
       take: 100,
     });
 
-    const sessions = records.map(r => ({
-      guestId: r.guestId,
-      role: r.role as 'admin' | 'guest',
-      startTime: r.startTime.toISOString(),
-      endTime: r.endTime ? r.endTime.toISOString() : undefined,
-      durationMs: r.durationMs ?? undefined,
-      events: r.events ? JSON.parse(r.events) : [],
-      lastSeen: r.lastSeen.toISOString(),
-    }));
+    const now = Date.now();
+    const sessions = records.map(r => {
+      const evs: SessionEvent[] = r.events ? JSON.parse(r.events) : [];
+      const lastSeenTime = r.lastSeen.getTime();
+      const ended = r.endTime;
+      let status: string;
+      if (ended) {
+        status = 'Offline';
+      } else {
+        const idleMs = now - lastSeenTime;
+        status = idleMs <= 90_000 ? 'Active' : idleMs <= 15 * 60_000 ? 'Idle' : 'Offline';
+      }
+      const location = evs.find(e => e.country)?.country || '';
+      return {
+        guestId: r.guestId,
+        role: r.role as 'admin' | 'guest',
+        startTime: r.startTime.toISOString(),
+        endTime: ended ? ended.toISOString() : undefined,
+        durationMs: r.durationMs ?? undefined,
+        events: evs,
+        lastSeen: r.lastSeen.toISOString(),
+        status,
+        location,
+      };
+    });
 
     return NextResponse.json({ sessions });
   } catch (err) {

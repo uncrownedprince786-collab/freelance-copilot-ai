@@ -1,13 +1,11 @@
 // src/collectors/run.ts
 import { UpworkCollector } from "./UpworkCollector";
 import { FreelancerCollector } from "./FreelancerCollector";
-import { GenericFeedCollector } from "./GenericFeedCollector";
-import { RemoteApisCollector } from "./RemoteApisCollector";
 import { prisma } from "@/lib/db";
 import { RawOpportunity } from "./types";
 
-// Minimum jobs we aim to import per run
-const MIN_JOBS = 25;
+// In-scope CLI collection sources: Upwork + Freelancer only. Generic/public
+// remote feeds were intentionally removed to keep collection focused.
 
 export interface CollectionStats {
   platform: string;
@@ -44,8 +42,6 @@ export async function runAllCollectors(): Promise<{
   const collectors = [
     new UpworkCollector(),
     new FreelancerCollector(),
-    new GenericFeedCollector(),
-    new RemoteApisCollector(),
   ];
 
   // Parallel fetch of raw opportunities
@@ -166,58 +162,7 @@ export async function runAllCollectors(): Promise<{
     }
   }
 
-  // If still below minimum, attempt an extra RemoteApis run
-  if (totalImported < MIN_JOBS) {
-    console.warn(`Total imported (${totalImported}) < MIN_JOBS (${MIN_JOBS}); running extra RemoteApis collector.`);
-    try {
-      const extra = await new RemoteApisCollector().fetch();
-      for (const item of extra) {
-        if (!item.url) continue;
-        try {
-          const cleanedBudget = typeof item.budget === "string" ? (item.budget.trim() || "Undetermined") : "Undetermined";
-          const baseScore = calculateBaseScore(item);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const postedAt2 = (item.postedAt || item.postedDate) ? new Date((item.postedAt || item.postedDate) as any) : new Date();
-          await prisma.opportunity.upsert({
-            where: { url: item.url },
-            update: {
-              title: item.title?.trim() || "Untitled Job",
-              description: item.description?.trim() || "",
-              budget: cleanedBudget,
-              platform: item.platform,
-              country: item.country,
-              clientName: item.clientName,
-              clientSpend: item.clientSpend,
-              clientReviews: item.clientReviews,
-              connections: item.connections,
-            },
-            create: {
-              title: item.title?.trim() || "Untitled Job",
-              description: item.description?.trim() || "",
-              budget: cleanedBudget,
-              platform: item.platform,
-              url: item.url,
-              score: baseScore,
-              risk: "Medium",
-              createdAt: postedAt2,
-              status: item.status || "OPEN",
-              country: item.country,
-              clientName: item.clientName,
-              clientSpend: item.clientSpend,
-              clientReviews: item.clientReviews,
-              connections: item.connections,
-            },
-          });
-          totalImported++;
-        } catch (dbError) {
-          console.error(`Error upserting extra ${item.url}:`, dbError);
-        }
-      }
-    } catch (e) {
-      console.error("Extra RemoteApis run failed:", e);
-    }
-  }
-
+  // In-scope sources are Upwork + Freelancer only; no extra public-feed fallback.
   console.log(`Full collection run complete. Total imported: ${totalImported}.`);
   return {
     success: stats.some((s) => s.success),

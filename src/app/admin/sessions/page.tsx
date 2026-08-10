@@ -19,6 +19,8 @@ interface Session {
   durationMs?: number;
   events: SessionEvent[];
   lastSeen: string;
+  status?: string;
+  location?: string;
 }
 
 function formatDuration(ms?: number) {
@@ -42,6 +44,15 @@ function timeAgo(iso: string) {
   return 'Just now';
 }
 
+function statusBg(status?: string) {
+  switch (status) {
+    case 'Active': return '#dcfce7';
+    case 'Idle': return '#fef9c3';
+    case 'Offline': return '#fee2e2';
+    default: return '#f1f5f9';
+  }
+}
+
 export default function AdminSessionsPage() {
   const router = useRouter();
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -55,6 +66,9 @@ export default function AdminSessionsPage() {
       return;
     }
     fetchSessions();
+    // Auto-refresh so admin sees live Active/Idle/Offline status.
+    const interval = setInterval(fetchSessions, 30_000);
+    return () => clearInterval(interval);
   }, [router]);
 
   const fetchSessions = async () => {
@@ -162,6 +176,14 @@ export default function AdminSessionsPage() {
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{formatDuration(s.durationMs)}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 12, color: '#64748b' }}>Status</div>
+                      <div style={{ ...st.statusPill, background: statusBg(s.status) }}>{s.status || '—'}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 12, color: '#64748b' }}>Location</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{s.location || '—'}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: 12, color: '#64748b' }}>Actions</div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: '#2563eb' }}>{s.events.length}</div>
                     </div>
@@ -223,4 +245,5 @@ const st: Record<string, React.CSSProperties> = {
   eventTime: { fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', minWidth: 80 },
   eventTag: { fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999 },
   eventDetail: { fontSize: 12, color: '#475569', flex: 1 },
+  statusPill: { fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 999, color: '#0f172a' },
 };

@@ -59,6 +59,14 @@ export async function GET() {
 
       // --- Member since (from lastActivityAt or fetchedAt as fallback — not available in this data)
       const memberSince = clientObj.memberSince || '';
+      // --- Lead category & opportunity reason (derived from pipeline score + client signals)
+      const category =
+        job.score >= 70 ? 'High'
+        : job.score >= 50 ? 'Good'
+        : job.score >= 30 ? 'Review'
+        : 'Skip';
+      const opportunityReason = clientObj.opportunityReason || '';
+
 
       return {
         id: jobId,
@@ -80,8 +88,10 @@ export async function GET() {
         clientRating,
         clientReviews: clientRating ? `${clientRating}★` : '',
         paymentVerified,
-        jobsPosted,
-        memberSince,
+         jobsPosted,
+         memberSince,
+         category,
+         opportunityReason,
         // Job specifics
         connections: job.connectsRequired || job.connections || 0,
         skills: Array.isArray(job.skills) ? job.skills : [],

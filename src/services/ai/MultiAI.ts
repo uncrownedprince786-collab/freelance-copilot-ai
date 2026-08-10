@@ -21,6 +21,22 @@ interface AnalysisOptions {
   platform?: string;
   budget?: string;
   clientName?: string;
+  // Client + market context (used to ground the model and reduce hallucination)
+  skills?: string[];
+  totalSpent?: number | null;
+  jobsPosted?: number | null;
+  totalHires?: number | null;
+  rating?: number | null;
+  budgetMin?: number | null;
+  budgetMax?: number | null;
+  budgetType?: string;
+  proposalCount?: number | null;
+  interviewingCount?: number | null;
+  experienceLevel?: string;
+  duration?: string;
+  connectsRequired?: number | null;
+  paymentVerified?: boolean;
+  opportunityId?: string;
 }
 
 export class MultiAI {
@@ -140,15 +156,43 @@ export class MultiAI {
   }
 
   private buildPrompt(title: string, description: string, options: AnalysisOptions): string {
+    // Ground the model in verifiable client + market signals so the proposal and
+    // bid stay data-driven instead of speculative.
+    const clientMetrics: string[] = [];
+    if (options.rating != null) clientMetrics.push(`${options.rating}/5 stars`);
+    if (options.totalSpent && options.totalSpent > 0) clientMetrics.push(`$${options.totalSpent.toLocaleString()} lifetime spent`);
+    if (options.jobsPosted != null) clientMetrics.push(`${options.jobsPosted} jobs posted`);
+    if (options.totalHires != null) clientMetrics.push(`${options.totalHires} total hires`);
+    if (options.proposalCount != null) clientMetrics.push(`${options.proposalCount} proposals so far`);
+    if (options.interviewingCount != null) clientMetrics.push(`${options.interviewingCount} in interview`);
+    if (options.paymentVerified) clientMetrics.push('payment verified');
+    const metricsLine = clientMetrics.length ? clientMetrics.join('; ') : 'no client metrics available';
+
+    const skillsLine = options.skills && options.skills.length
+      ? options.skills.join(', ')
+      : (options.platform ? '' : '');
+
+    const budgetParts: string[] = [];
+    if (options.budgetType) budgetParts.push(options.budgetType);
+    if (options.budgetMin != null) budgetParts.push(`$${options.budgetMin}`);
+    if (options.budgetMax != null && options.budgetMax !== options.budgetMin) budgetParts.push(`- $${options.budgetMax}`);
+    const budgetLine = budgetParts.length ? budgetParts.join(' ') : (options.budget || 'Undetermined');
+
     return `You are an expert freelance proposal strategist. Analyze this opportunity and return ONLY valid JSON.
 
 Title: ${title}
 Description: ${description.substring(0, 2200)}
 Platform: ${options.platform ?? 'Unknown'}
-Budget: ${options.budget ?? 'Undetermined'}
 
-Write a proposal that sounds confident, human, trustworthy, and persuasive. The client should feel that the freelancer understands the project, can reduce risk, and is a strong fit. Avoid generic filler. Be specific, calm, and professional.
+CLIENT & MARKET SIGNALS (ground truth — weigh these heavily):
+- Client metrics: ${metricsLine}.
+- Required skills: ${skillsLine || 'none listed'}.
+- Stated budget: ${budgetLine}.
+- Experience level: ${options.experienceLevel || 'Not specified'}.
+- Contract duration: ${options.duration || 'Not specified'}.
+- Connects to bid: ${options.connectsRequired != null ? options.connectsRequired : 'N/A'}.
 
+Write a proposal that sounds confident, human, trustworthy, and persuasive. The client should feel that the freelancer understands the project, can reduce risk, and is a strong fit. Reference the client's specific situation and budget reality. Avoid generic filler and boilerplate.\n\n
 Return JSON with these exact keys:
 {
   "summary": "A short, clear summary of why the project is attractive and what matters most",
@@ -163,7 +207,7 @@ Return JSON with these exact keys:
   "technicalBlockers": ["technical blocker 1", "technical blocker 2"],
   "blockerSolutions": ["how to address blocker 1", "how to address blocker 2"],
   "suggestedEta": "A realistic ETA estimate in days or weeks",
-  "proposal": "A polished 1-paragraph proposal tailored to this project, written as if from a top freelancer speaking directly to the client"
+  "proposal": "A polished 1-2 paragraph proposal tailored to this project, written as if from a top freelancer speaking directly to the client"
 }`;
   }
 
