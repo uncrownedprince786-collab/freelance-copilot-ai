@@ -52,6 +52,34 @@ export class MultiAI {
     return this.analyze(title, description);
   }
 
+  /**
+   * Ask the configured AI providers for raw text (used by non-job analyzers).
+   * Tries each configured provider in order and returns the first non-empty
+   * response, or null when no provider is configured / all providers fail.
+   */
+  async queryProviders(prompt: string): Promise<{ provider: string; text: string } | null> {
+    const providerOrder = [
+      { name: 'Gemini', runner: () => this.callGeminiRaw(prompt) },
+      { name: 'OpenAI', runner: () => this.callOpenAIRaw(prompt) },
+      { name: 'Grok', runner: () => this.callGrokRaw(prompt) },
+      { name: 'DeepSeek', runner: () => this.callDeepSeekRaw(prompt) },
+    ];
+
+    for (const provider of providerOrder) {
+      if (this.isConfigured(provider.name)) {
+        try {
+          const text = await provider.runner();
+          if (text && text.trim()) {
+            return { provider: provider.name, text };
+          }
+        } catch (error) {
+          console.warn(`[AI] ${provider.name} failed:`, error);
+        }
+      }
+    }
+    return null;
+  }
+
   private isConfigured(provider: string): boolean {
     switch (provider) {
       case 'Gemini':
@@ -68,34 +96,54 @@ export class MultiAI {
   }
 
   private async callGemini(title: string, description: string, options: AnalysisOptions): Promise<JobAnalysis | null> {
+    const text = await this.callGeminiRaw(this.buildPrompt(title, description, options));
+    if (!text) return null;
+    return this.parseProviderResponse(text, title, description, options);
+  }
+
+  private async callOpenAI(title: string, description: string, options: AnalysisOptions): Promise<JobAnalysis | null> {
+    const text = await this.callOpenAIRaw(this.buildPrompt(title, description, options));
+    if (!text) return null;
+    return this.parseProviderResponse(text, title, description, options);
+  }
+
+  private async callGrok(title: string, description: string, options: AnalysisOptions): Promise<JobAnalysis | null> {
+    const text = await this.callGrokRaw(this.buildPrompt(title, description, options));
+    if (!text) return null;
+    return this.parseProviderResponse(text, title, description, options);
+  }
+
+  private async callDeepSeek(title: string, description: string, options: AnalysisOptions): Promise<JobAnalysis | null> {
+    const text = await this.callDeepSeekRaw(this.buildPrompt(title, description, options));
+    if (!text) return null;
+    return this.parseProviderResponse(text, title, description, options);
+  }
+
+  private async callGeminiRaw(prompt: string): Promise<string | null> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return null;
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    const prompt = this.buildPrompt(title, description, options);
 
     const result = await model.generateContent(prompt, { timeout: 15000 });
-    const text = result.response.text();
-    return this.parseProviderResponse(text, title, description, options);
+    return result.response.text();
   }
 
-  private async callOpenAI(title: string, description: string, options: AnalysisOptions): Promise<JobAnalysis | null> {
+  private async callOpenAIRaw(prompt: string): Promise<string | null> {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return null;
 
     const client = new OpenAI({ apiKey, timeout: 15000 });
-    const prompt = this.buildPrompt(title, description, options);
     const response = await client.responses.create({
       model: 'gpt-4.1-mini',
       input: [{ role: 'user', content: prompt }]
     });
 
-    const text = typeof response === 'string' ? response : (response.output_text ?? '');
-    return this.parseProviderResponse(text, title, description, options);
+    return typeof response === 'string' ? response : (response.output_text ?? '');
   }
 
-  private async callGrok(title: string, description: string, options: AnalysisOptions): Promise<JobAnalysis | null> {
+  private async callGrokRaw(prompt: string): Promise<string | null> {
     const apiKey = process.env.GROK_API_KEY;
     if (!apiKey) return null;
 
@@ -107,17 +155,16 @@ export class MultiAI {
       },
       body: JSON.stringify({
         model: 'grok-2-1212',
-        messages: [{ role: 'user', content: this.buildPrompt(title, description, options) }]
+        messages: [{ role: 'user', content: prompt }]
       }),
       signal: AbortSignal.timeout(15000)
     });
 
     const payload = await response.json();
-    const text = payload.choices?.[0]?.message?.content ?? '';
-    return this.parseProviderResponse(text, title, description, options);
+    return payload.choices?.[0]?.message?.content ?? '';
   }
 
-  private async callDeepSeek(title: string, description: string, options: AnalysisOptions): Promise<JobAnalysis | null> {
+  private async callDeepSeekRaw(prompt: string): Promise<string | null> {
     const apiKey = process.env.DEEPSEEK_API_KEY;
     if (!apiKey) return null;
 
@@ -129,14 +176,13 @@ export class MultiAI {
       },
       body: JSON.stringify({
         model: 'deepseek-chat',
-        messages: [{ role: 'user', content: this.buildPrompt(title, description, options) }]
+        messages: [{ role: 'user', content: prompt }]
       }),
       signal: AbortSignal.timeout(15000)
     });
 
     const payload = await response.json();
-    const text = payload.choices?.[0]?.message?.content ?? '';
-    return this.parseProviderResponse(text, title, description, options);
+    return payload.choices?.[0]?.message?.content ?? '';
   }
 
   private buildPrompt(title: string, description: string, options: AnalysisOptions): string {

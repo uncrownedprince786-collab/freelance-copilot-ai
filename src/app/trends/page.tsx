@@ -10,6 +10,16 @@ interface SkillTrend {
   avgBudget: string;
 }
 
+interface SkillTrendDelta {
+  skill: string;
+  previousPct: number;
+  currentPct: number;
+  change: number;
+  pctChange: number;
+  direction: 'up' | 'down' | 'stable';
+  confidence: 'High' | 'Moderate' | 'Low';
+}
+
 interface CategoryTrend {
   category: string;
   count: number;
@@ -28,6 +38,12 @@ interface RecommendedSkill {
   urgency: 'high' | 'medium' | 'low';
 }
 
+interface MarketShift {
+  Growing: string[];
+  Stable: string[];
+  Declining: string[];
+}
+
 interface TrendsData {
   topSkills: SkillTrend[];
   topCategories: CategoryTrend[];
@@ -38,6 +54,9 @@ interface TrendsData {
   totalJobsAnalyzed: number;
   cached: boolean;
   generatedAt: string;
+  skillTrendDeltas?: SkillTrendDelta[];
+  marketShifts?: MarketShift;
+  historyDepth?: number;
 }
 
 const URGENCY: Record<string, { border: string; label: string; labelColor: string; bg: string }> = {
@@ -69,9 +88,7 @@ export default function TrendsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const maxSkillCount = data?.topSkills?.[0]?.count || 1;
+   };
 
   return (
     <div style={s.page}>
@@ -133,27 +150,66 @@ export default function TrendsPage() {
               <p style={s.bodyText}>{data.marketSummary}</p>
             </div>
 
-            {/* Top Skills */}
-            <div className="fade-up" style={s.card}>
-              <h2 style={s.cardTitle}>Top Skills in Demand</h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
-                {data.topSkills.map((sk, i) => (
-                  <div key={sk.skill} style={s.skillRow}>
-                    <span style={s.rank}>#{i + 1}</span>
-                    <span style={s.skillName}>{sk.skill}</span>
-                    <span style={{ ...s.trendTag, color: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#6b7280', background: i < 3 ? '#f0fdf4' : i < 7 ? '#eff6ff' : '#f9fafb' }}>
-                      {sk.growth}
-                    </span>
-                    <div style={{ flex: 1, margin: '0 12px' }}>
-                      <div style={s.barTrack}>
-                        <div style={{ ...s.barFill, width: `${Math.round(sk.count / maxSkillCount * 100)}%`, background: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#94a3b8' }} />
-                      </div>
-                    </div>
-                    <span style={s.countLabel}>{sk.count} jobs</span>
+             {/* Top Skills */}
+             <div className="fade-up" style={s.card}>
+               <h2 style={s.cardTitle}>Top Skills in Demand</h2>
+               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
+                 {data.topSkills.map((sk, i) => {
+                   const delta = (data.skillTrendDeltas || []).find(d => d.skill.toLowerCase() === sk.skill.toLowerCase());
+                   const demandPct = Math.round((sk.count / (data.totalJobsAnalyzed || 1)) * 100);
+                   const hasDelta = delta && delta.previousPct !== undefined;
+                   const dirColor = delta?.direction === 'up' ? '#16a34a' : delta?.direction === 'down' ? '#dc2626' : '#6b7280';
+                   return (
+                     <div key={sk.skill} style={s.skillRow}>
+                       <span style={s.rank}>#{i + 1}</span>
+                       <span style={s.skillName}>{sk.skill}</span>
+                       <span style={{ ...s.trendTag, color: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#6b7280', background: i < 3 ? '#f0fdf4' : i < 7 ? '#eff6ff' : '#f9fafb' }}>
+                         {sk.growth}
+                       </span>
+                       <div style={{ flex: 1, margin: '0 12px' }}>
+                         <div style={s.barTrack}>
+                           <div style={{ ...s.barFill, width: `${Math.round(sk.count / (data.topSkills[0]?.count || 1) * 100)}%`, background: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#94a3b8' }} />
+                         </div>
+                       </div>
+                       <div style={{ minWidth: 120, textAlign: 'right' }}>
+                         <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>{demandPct}% demand</div>
+                         {hasDelta && (
+                           <div style={{ fontSize: 11, color: dirColor, fontWeight: 600 }}>
+                             {delta!.direction === 'up' ? '↑' : delta!.direction === 'down' ? '↓' : '→'} {Math.abs(delta!.change)}% vs prev
+                           </div>
+                         )}
+                       </div>
+                       <span style={s.countLabel}>{sk.count} jobs</span>
+                     </div>
+                   );
+                 })}
+               </div>
+             </div>
+
+             {/* Market Shifts (historical vs current comparison) */}
+            {data.marketShifts && (data.marketShifts.Growing.length || data.marketShifts.Declining.length || data.marketShifts.Stable.length) && (
+              <div className="fade-up" style={s.card}>
+                <h2 style={s.cardTitle}>Market Shifts</h2>
+                <p style={{ fontSize: 12, color: '#6b7280', margin: '4px 0 12px' }}>
+                  Historical vs current snapshot{data.historyDepth ? ` (history depth: ${data.historyDepth})` : ''}.
+                  Confidence is High/Moderate where sample sizes are sufficient.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(200px,100%),1fr))', gap: 12 }}>
+                  <div>
+                    <h3 style={s.shiftTitle}>Growing</h3>
+                    {data.marketShifts.Growing.length ? data.marketShifts.Growing.map(sk => <span key={sk} style={s.shiftChip}>↑ {sk}</span>) : <span style={s.shiftEmpty}>None</span>}
                   </div>
-                ))}
+                  <div>
+                    <h3 style={s.shiftTitle}>Stable</h3>
+                    {data.marketShifts.Stable.length ? data.marketShifts.Stable.slice(0, 8).map(sk => <span key={sk} style={{ ...s.shiftChip, background: '#f9fafb', color: '#6b7280', border: '1px solid #e5e7eb' }}>→ {sk}</span>) : <span style={s.shiftEmpty}>None</span>}
+                  </div>
+                  <div>
+                    <h3 style={s.shiftTitle}>Declining</h3>
+                    {data.marketShifts.Declining.length ? data.marketShifts.Declining.map(sk => <span key={sk} style={{ ...s.shiftChip, background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }}>↓ {sk}</span>) : <span style={s.shiftEmpty}>None</span>}
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Categories + Budget */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(320px,100%),1fr))', gap: 20 }}>
@@ -277,5 +333,8 @@ const s: Record<string, React.CSSProperties> = {
   insightCard: { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 14px' },
   learnCard: { borderRadius: 8, padding: '14px 16px' },
   urgencyTag: { fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4 },
+  shiftTitle: { fontSize: 13, fontWeight: 700, color: '#374151', margin: '0 0 8px' },
+  shiftChip: { display: 'inline-block', fontSize: 12, fontWeight: 600, padding: '4px 8px', borderRadius: 6, margin: '2px 4px 2px 0', background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0' },
+  shiftEmpty: { fontSize: 12, color: '#9ca3af', fontStyle: 'italic' },
   footer: { textAlign: 'center', marginTop: 48, paddingTop: 16, borderTop: '1px solid #e5e7eb', color: '#9ca3af', fontSize: 12 },
 };

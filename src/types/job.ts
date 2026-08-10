@@ -33,7 +33,7 @@ export interface Job {
   hiresCount: number | null;
   postedAt: Date;
   client: JobClient;
-  source: "upwork" | "freelancer" | "google";
+  source: "upwork" | "freelancer" | "google" | "indeed" | "linkedin";
   score: number | null;
   fetchedAt: Date;
   // UI legacy compatibility fields
