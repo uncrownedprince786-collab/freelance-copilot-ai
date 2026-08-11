@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getRawJobs } from '@/lib/jobsCache';
 import { computeMarketIntelligence, MarketIntelligence } from '@/lib/marketIntelligence';
+import { getHistoricalTrends, HistoricalTrends } from '@/lib/marketFacts';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,7 @@ export interface MarketTrends {
   marketSummary: string;
   totalJobsAnalyzed: number;
   intelligence: MarketIntelligence;
+  history: HistoricalTrends | null;
 }
 
 async function readCache(): Promise<TrendsCache | null> {
@@ -161,6 +163,9 @@ export async function GET() {
   // Market Intelligence — every figure derived from the actual listings.
   const intelligence = computeMarketIntelligence(rawJobsList);
 
+  // 21-day history from persisted aggregates (survives the 7-day retention).
+  const history = await getHistoricalTrends();
+
   const { skills, categories, budgets, titles } = await analyzeJobsLocally();
 
   // Sort and top-10
@@ -256,6 +261,7 @@ Respond with this exact JSON (no markdown, pure JSON):
     ),
     totalJobsAnalyzed: titles.length,
     intelligence,
+    history,
   };
 
   // Cache

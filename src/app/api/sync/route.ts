@@ -4,6 +4,7 @@ import { JobPipeline } from '../../../providers/JobPipeline';
 import { prisma } from '@/lib/db';
 import { isAdminRequest } from '@/lib/adminAuth';
 import { getSyncCooldownMs } from '@/lib/syncSchedule';
+import { pruneMarketFacts } from '@/lib/marketFacts';
 
 const LOCK_KEY = 'sync_lock';
 const LOCK_TTL_MS = 15 * 60 * 1000; // 15 minutes; release-on-finally plus TTL safety net
@@ -93,6 +94,7 @@ async function runSync(req: NextRequest) {
     try {
       // Lightweight housekeeping runs on every cron tick.
       const sessionsCleaned = await cleanupStaleSessions();
+      void pruneMarketFacts();
 
       // Cooldown: avoid hammering Upwork/Freelancer. The interval adapts to
       // real posting activity (peak hours ≈ 20 min, otherwise ≈ 4 h).

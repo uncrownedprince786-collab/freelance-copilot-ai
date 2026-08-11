@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { formatTime12 } from '@/lib/format';
-import { JobsPerDayChart, CompetitionVolumeChart, BudgetTrendChart, SplitBars } from '@/components/charts';
+import { JobsPerDayChart, CompetitionVolumeChart, BudgetTrendChart, SplitBars, HistoryChart } from '@/components/charts';
 
 interface CategoryTrend {
   category: string;
@@ -42,6 +42,17 @@ interface MarketIntelligenceData {
   retentionNote: string;
 }
 
+interface HistoryData {
+  available: boolean;
+  days: { date: string; label: string; count: number; avgProposals: number | null }[];
+  avgProposalsOverall: number | null;
+  peakHours: { hour: number; count: number }[];
+  topSkills: { skill: string; count: number }[];
+  platformSplit: { platform: string; count: number }[];
+  weekdaySplit: { day: string; count: number }[];
+  note: string;
+}
+
 interface TrendsData {
   topSkills: { skill: string; count: number; growth: string; avgBudget: string }[];
   topCategories: CategoryTrend[];
@@ -51,6 +62,7 @@ interface TrendsData {
   marketSummary: string;
   totalJobsAnalyzed: number;
   intelligence: MarketIntelligenceData;
+  history: HistoryData | null;
   cached: boolean;
   generatedAt: string;
 }
@@ -129,6 +141,10 @@ export default function TrendsPage() {
   const maxHour = Math.max(...(intel?.peakPostingHours ?? []).map(h => h.count), 1);
   const topHourHours = new Set((intel?.topMonitorHours ?? []).map(h => h.hour));
   const maxSkill = intel?.mostActiveSkills?.[0]?.count || 1;
+
+  const history = data?.history && data.history.available ? data.history : null;
+  const historyChart = useMemo(() => (history?.days ?? []).map(d => ({ label: d.label, count: d.count, avgProposals: d.avgProposals })), [history]);
+  const historyTotal = historyChart.reduce((a, b) => a + b.count, 0);
 
   return (
     <div style={s.page} className="lh-page">
@@ -236,6 +252,64 @@ export default function TrendsPage() {
                 {range === '30' && <span className="lh-muted" style={s.legendNote}>{intel.retentionNote}</span>}
               </div>
             </div>
+
+            {/* ── 21-day history (persisted aggregates) ── */}
+            {history && (
+              <div className="fade-up lh-surface" style={s.card}>
+                <div style={s.cardHead}>
+                  <div>
+                    <h2 style={s.cardTitle}>21-Day History</h2>
+                    <p className="lh-muted" style={s.cardSub}>Daily volume and average proposals across the full monitoring window. Aggregates persist even after individual listings expire.</p>
+                  </div>
+                  <span style={{ ...s.dirChip, color: '#15803d', background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+                    {historyTotal} listings · 21 days
+                  </span>
+                </div>
+                <div style={s.chartWrap}>
+                  <HistoryChart data={historyChart} />
+                </div>
+                <div style={s.legend}>
+                  <span style={s.legendItem}><span style={{ ...s.legendDot, background: '#14a800' }} />Listings per day</span>
+                  <span style={s.legendItem}><span style={{ ...s.legendDot, background: '#f59e0b' }} />Avg proposals / listing</span>
+                  {history.avgProposalsOverall != null && (
+                    <span className="lh-muted" style={s.legendNote}>Window avg: {history.avgProposalsOverall} proposals/listing</span>
+                  )}
+                </div>
+
+                {/* Interpretation chips */}
+                <div style={s.histInsightRow}>
+                  {history.weekdaySplit.length > 0 && (
+                    <div style={s.histInsight} className="lh-surface">
+                      <div className="lh-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#9ca3af', marginBottom: 6 }}>Busiest days</div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {history.weekdaySplit.slice(0, 3).map(d => (
+                          <span key={d.day} style={s.hourChip} className="lh-field">{d.day} · {d.count}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {history.topSkills.length > 0 && (
+                    <div style={s.histInsight} className="lh-surface">
+                      <div className="lh-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#9ca3af', marginBottom: 6 }}>Top skills (window)</div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {history.topSkills.slice(0, 4).map(sk => (
+                          <span key={sk.skill} style={s.hourChip} className="lh-field">{sk.skill} · {sk.count}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {history.peakHours.length > 0 && (
+                    <div style={s.histInsight} className="lh-surface">
+                      <div className="lh-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#9ca3af', marginBottom: 6 }}>Top posting hour</div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={s.hourChip} className="lh-field">{history.peakHours[0].hour % 12 === 0 ? 12 : history.peakHours[0].hour % 12}{history.peakHours[0].hour < 12 ? ' AM' : ' PM'} UTC · {history.peakHours[0].count} listings</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <p className="lh-muted" style={{ fontSize: 12.5, color: '#6b7280', lineHeight: 1.6, marginTop: 12 }}>{history.note}</p>
+              </div>
+            )}
 
             {/* ── Competition vs volume ── */}
             <div className="fade-up lh-surface" style={s.card}>
@@ -585,6 +659,8 @@ const s: Record<string, React.CSSProperties> = {
   histLabels: { display: 'flex', marginTop: 4 },
   monitorRow: { display: 'flex', alignItems: 'center', gap: 10, background: '#fafafa', border: '1px solid #eef1f5', borderRadius: 8, padding: '9px 12px' },
   hourChip: { fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999, background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb' },
+  histInsightRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(220px,100%),1fr))', gap: 10, marginTop: 14 },
+  histInsight: { background: '#fafafa', border: '1px solid #eef1f5', borderRadius: 8, padding: '10px 12px' },
 
   footer: { textAlign: 'center', marginTop: 48, paddingTop: 16, borderTop: '1px solid #e5e7eb', color: '#9ca3af', fontSize: 12 },
 };

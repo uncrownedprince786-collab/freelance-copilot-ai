@@ -220,8 +220,7 @@ export function BudgetTrendChart({ data, height = 150 }: { data: { label: string
 }
 
 /** Simple horizontal distribution bars (e.g. fixed vs hourly split). */
-export function SplitBars({ items, total }: { items: { label: string; value: number; pct: number; color: string }[]; total: number }) {
-  return (
+export function SplitBars({ items, total }: { items: { label: string; value: number; pct: number; color: string }[]; total: number }) {  return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {items.map(it => (
         <div key={it.label}>
@@ -236,5 +235,76 @@ export function SplitBars({ items, total }: { items: { label: string; value: num
       ))}
       <p className="lh-muted" style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>{total} listings total</p>
     </div>
+  );
+}
+
+interface HistPoint {
+  label: string;
+  count: number;
+  avgProposals: number | null;
+}
+
+/** 21-day volume history with an overlay of average proposals (competition). */
+export function HistoryChart({ data, height = 200 }: { data: HistPoint[]; height?: number }) {
+  const W = 800;
+  const H = height;
+  const PAD = { top: 20, right: 46, bottom: 30, left: 40 };
+  const innerW = W - PAD.left - PAD.right;
+  const innerH = H - PAD.top - PAD.bottom;
+  const band = innerW / Math.max(data.length, 1);
+  const barW = Math.max(3, Math.min(band * 0.6, 30));
+  const maxCount = Math.max(...data.map(d => d.count), 1);
+  const maxProps = Math.max(...data.map(d => d.avgProposals ?? 0), 1);
+
+  const yC = (v: number) => PAD.top + innerH - (v / maxCount) * innerH;
+  const yP = (v: number) => PAD.top + innerH - (v / maxProps) * innerH;
+  const ticks = 4;
+
+  const points = data.map((d, i) => ({
+    x: PAD.left + i * band + band / 2,
+    y: d.avgProposals == null ? null : yP(d.avgProposals),
+  }));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="21 day volume and competition history">
+      {Array.from({ length: ticks + 1 }, (_, i) => {
+        const v = (maxCount / ticks) * i;
+        const yy = yC(v);
+        return (
+          <g key={i}>
+            <line x1={PAD.left} x2={W - PAD.right} y1={yy} y2={yy} stroke={GRID} strokeWidth={1} />
+            <text x={PAD.left - 6} y={yy + 4} textAnchor="end" fontSize={10} fill={TEXT}>{fmtK(v)}</text>
+          </g>
+        );
+      })}
+      {[0, maxProps / 2, maxProps].map((v, i) => (
+        <text key={i} x={W - PAD.right + 6} y={yP(v) + 4} fontSize={9.5} fill={TEXT}>{fmtK(v)}</text>
+      ))}
+
+      {data.map((d, i) => {
+        const x = PAD.left + i * band + band / 2 - barW / 2;
+        return (
+          <rect key={d.label} x={x} y={yC(d.count)} width={barW} height={(d.count / maxCount) * innerH} rx={2} fill="rgba(20,168,0,0.32)" stroke={UPWORK} strokeWidth={1} />
+        );
+      })}
+
+      <polyline
+        points={points.filter(p => p.y != null).map(p => `${p.x},${p.y}`).join(' ')}
+        fill="none"
+        stroke={AMBER}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {points.map((p, i) =>
+        p.y != null ? <circle key={i} cx={p.x} cy={p.y} r={3} fill={AMBER} /> : null
+      )}
+
+      {data.map((d, i) => (
+        i % 3 === 0 ? (
+          <text key={d.label} x={PAD.left + i * band + band / 2} y={H - 8} textAnchor="middle" fontSize={9.5} fill={TEXT}>{d.label}</text>
+        ) : null
+      ))}
+    </svg>
   );
 }

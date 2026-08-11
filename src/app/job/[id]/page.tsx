@@ -35,6 +35,10 @@ interface Job {
   interviewingCount?: number;
   hiresCount?: number;
   isNew?: boolean;
+  clientKey?: string | null;
+  repeatClient?: boolean;
+  repeatClientCount?: number;
+  actFast?: boolean;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client?: Record<string, any>;
 }
@@ -52,6 +56,8 @@ interface Analysis {
   technicalBlockers?: string[];
   blockerSolutions?: string[];
   suggestedEta?: string;
+  repeatClient?: boolean;
+  clientJobsCount?: number;
   cached?: boolean;
 }
 
@@ -99,6 +105,7 @@ export default function JobDetailPage() {
   const router = useRouter();
   const [job, setJob] = useState<Job | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [allJobs, setAllJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [proposalDraft, setProposalDraft] = useState('');
@@ -106,6 +113,14 @@ export default function JobDetailPage() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [showAuthModal, setShowAuthModal] = useState(false);
+
+  // Load the full store once so "Other jobs from this client" can be shown.
+  useEffect(() => {
+    fetch('/api/jobs')
+      .then(r => (r.ok ? r.json() : []))
+      .then((jobs: Job[]) => setAllJobs(Array.isArray(jobs) ? jobs : []))
+      .catch(() => { /* non-critical */ });
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -295,6 +310,15 @@ export default function JobDetailPage() {
   const hasCountry = job.country && job.country.toLowerCase() !== 'remote' && job.country.trim() !== '';
   const skills = job.skills || [];
 
+  // Other open listings from the same client — an active buyer signal and a
+  // discovery path to more opportunities worth applying to.
+  const siblingJobs = (() => {
+    if (!job?.clientKey) return [] as Job[];
+    return allJobs
+      .filter(j => j.clientKey && j.clientKey === job.clientKey && j.id !== job.id)
+      .slice(0, 6);
+  })();
+
   /* Real listing signals → "why this ranking" reasoning */
   const compSig = competitionSignal(job.proposalCount);
   const freshSig = freshnessSignal(job.postedAt);
@@ -304,8 +328,10 @@ export default function JobDetailPage() {
   else if (job.client?.totalSpent) clientSignals.push(`$${Number(job.client.totalSpent).toLocaleString()} spent`);
   if (job.jobsPosted != null) clientSignals.push(`${job.jobsPosted} jobs posted`);
   if (job.client?.totalHires) clientSignals.push(`${job.client.totalHires} hires`);
+  if (job.repeatClient) clientSignals.push((job.repeatClientCount ?? 0) > 0 ? `${job.repeatClientCount} other open listing${job.repeatClientCount === 1 ? '' : 's'}` : 'repeat client');
   let quickRead = 'Assessment is based on the listing signals above.';
-  if (isFresh && compSig?.key === 'low') quickRead = 'Strong opportunity — posted recently with low proposal activity.';
+  if (job.repeatClient) quickRead = `Active buyer — this client has ${(job.repeatClientCount ?? 0) > 0 ? `${job.repeatClientCount} other open listing${job.repeatClientCount === 1 ? '' : 's'}` : 'multiple listings'} right now.`;
+  else if (isFresh && compSig?.key === 'low') quickRead = 'Strong opportunity — posted recently with low proposal activity.';
   else if (isFresh && compSig) quickRead = `Fresh listing, but ${job.proposalCount} proposals are already in.`;
   else if (compSig?.key === 'low') quickRead = 'Proposal activity is still low relative to the listing age.';
   else if (job.proposalCount != null) quickRead = `${job.proposalCount} proposals detected on this listing.`;
@@ -483,6 +509,40 @@ export default function JobDetailPage() {
             </div>
           )}
 
+          {/* Other jobs from this client — active-buyer discovery */}
+          {siblingJobs.length > 0 && (
+            <div>
+              <h3 style={s.sectionHead}>
+                {job.repeatClient ? `Other Listings from this Client (${siblingJobs.length})` : 'More from this Client'}
+              </h3>
+              <div style={s.siblingList}>
+                {siblingJobs.map(j => (
+                  <button
+                    key={j.id}
+                    onClick={() => router.push(`/job/${j.id}`)}
+                    style={s.siblingItem}
+                    className="lh-surface"
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="lh-h" style={s.siblingTitle}>{j.title}</div>
+                      <div className="lh-muted" style={s.siblingMeta}>
+                        {j.platform}
+                        {j.budget && j.budget !== 'Negotiable' ? ` · ${j.budget}` : ''}
+                        {j.score ? ` · ${j.score}% match` : ''}
+                        {j.proposalCount != null ? ` · ${j.proposalCount} props` : ''}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              {job.repeatClient && (
+                <p className="lh-muted" style={{ fontSize: 12, color: '#6b7280', marginTop: 8 }}>
+                  Clients with multiple open listings are active buyers — they are responding to proposals right now.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Actions */}
           <div style={s.actions}>
             <button onClick={openListing} style={s.btnPrimary}>View on {job.platform}</button>
@@ -536,6 +596,15 @@ export default function JobDetailPage() {
                   {clientSignals.length ? 'where the platform reports it' : 'no spend / jobs / hire data from this platform'}
                 </div>
               </div>
+              {job.repeatClient && (
+                <div style={s.signalCell} className="lh-surface">
+                  <div className="lh-muted" style={s.vLabel}>Buyer Type</div>
+                  <div className="lh-h" style={{ ...s.signalVal, color: '#6d28d9' }}>Repeat client</div>
+                  <div className="lh-muted" style={s.signalNote}>
+                    {(job.repeatClientCount ?? 0) > 0 ? `${job.repeatClientCount} other open listing${job.repeatClientCount === 1 ? '' : 's'} right now` : 'multiple open listings seen in this window'}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -764,7 +833,14 @@ const s: Record<string, React.CSSProperties> = {
   clientVal: { fontSize: 14, fontWeight: 600, color: '#374151' },
 
   actions: { display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 4 },
-  btnPrimary: { background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  siblingList: { display: 'flex', flexDirection: 'column', gap: 8 },
+  siblingItem: {
+    width: '100%', textAlign: 'left', background: '#f9fafb',
+    border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px',
+    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+  },
+  siblingTitle: { fontSize: 13, fontWeight: 600, color: '#111827', lineHeight: 1.4 },
+  siblingMeta: { fontSize: 11.5, color: '#6b7280', marginTop: 3 },  btnPrimary: { background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   btnSecondary: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: 6, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   btnApplied: { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 

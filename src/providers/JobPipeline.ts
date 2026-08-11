@@ -3,6 +3,7 @@ import { JobProvider } from "./JobProvider";
 import { ApifyUpworkProvider } from "./ApifyUpworkProvider";
 import { FreelancerProvider } from "./FreelancerProvider";
 import { logCronRun } from "../lib/cronLogger";
+import { recordMarketFacts } from "../lib/marketFacts";
 import { prisma } from "../lib/db";
 
 export class JobPipeline {
@@ -74,6 +75,11 @@ export class JobPipeline {
 
     // Save back to database
     await this.saveStore(finalCollection);
+
+    // Persist per-day aggregate facts so market intelligence survives the
+    // 7-day raw listing retention. Non-fatal if the table is not present yet.
+    const facts = await recordMarketFacts(finalCollection);
+    console.log(`[JobPipeline] Recorded ${facts.recorded} market facts${facts.failed ? ' (skipped: table unavailable)' : ''}.`);
 
     // Log execution
     await logCronRun({

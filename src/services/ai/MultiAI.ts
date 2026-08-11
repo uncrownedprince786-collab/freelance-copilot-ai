@@ -37,6 +37,9 @@ interface AnalysisOptions {
   connectsRequired?: number | null;
   paymentVerified?: boolean;
   opportunityId?: string;
+  // Repeat-client signal — an active buyer with multiple open listings.
+  repeatClient?: boolean;
+  clientJobsCount?: number;
 }
 
 export class MultiAI {
@@ -166,6 +169,13 @@ export class MultiAI {
     if (options.proposalCount != null) clientMetrics.push(`${options.proposalCount} proposals so far`);
     if (options.interviewingCount != null) clientMetrics.push(`${options.interviewingCount} in interview`);
     if (options.paymentVerified) clientMetrics.push('payment verified');
+    if (options.repeatClient) {
+      clientMetrics.push(options.clientJobsCount != null && options.clientJobsCount > 0
+        ? `active repeat client — has ${options.clientJobsCount} other open listing(s) from this client`
+        : 'active repeat client — multiple listings from this client');
+    } else if (options.repeatClient === false) {
+      clientMetrics.push('no other open listings seen from this client in the current window');
+    }
     const metricsLine = clientMetrics.length ? clientMetrics.join('; ') : 'no client metrics available';
 
     const skillsLine = options.skills && options.skills.length

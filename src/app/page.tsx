@@ -17,6 +17,8 @@ interface JobsFilters {
   countryFilter: string;
   connectionsFilter: string;
   scoreFilter: 'all' | 'high' | 'medium' | 'low';
+  jobTypeFilter: 'all' | 'fixed' | 'hourly';
+  postedFilter: 'all' | '24h' | '3d' | '7d';
   sortBy: 'score' | 'date' | 'budget';
 }
 
@@ -29,6 +31,8 @@ const DEFAULT_FILTERS: JobsFilters = {
   countryFilter: 'All',
   connectionsFilter: 'all',
   scoreFilter: 'all',
+  jobTypeFilter: 'all',
+  postedFilter: 'all',
   sortBy: 'score',
 };
 
@@ -56,6 +60,7 @@ interface Job {
   url: string;
   platform: string;
   budget: string;
+  budgetType?: string;
   score: number;
   viewed: boolean;
   applied: boolean;
@@ -71,6 +76,11 @@ interface Job {
   proposalCount?: number | null;
   category?: string;
   opportunityReason?: string;
+  skills?: string[];
+  clientKey?: string | null;
+  repeatClient?: boolean;
+  repeatClientCount?: number;
+  actFast?: boolean;
 }
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -150,13 +160,34 @@ function HomeContent() {
   const [countryFilter, setCountryFilter] = useState(() => loadFilters().countryFilter);
   const [connectionsFilter, setConnectionsFilter] = useState(() => loadFilters().connectionsFilter);
   const [scoreFilter, setScoreFilter] = useState<'all' | 'high' | 'medium' | 'low'>(() => loadFilters().scoreFilter);
+  const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'fixed' | 'hourly'>(() => loadFilters().jobTypeFilter);
+  const [postedFilter, setPostedFilter] = useState<'all' | '24h' | '3d' | '7d'>(() => loadFilters().postedFilter);
   const [sortBy, setSortBy] = useState<'score' | 'date' | 'budget'>(() => loadFilters().sortBy);
   const [page, setPage] = useState(1);
 
+  // Smart search state: `search` is the natural-language box; when a query is
+  // parsed into filters we keep the raw text for the active chip and use the
+  // stripped `smartKeyword` for the actual keyword filter.
+  const [smartActive, setSmartActive] = useState(false);
+  const [smartRaw, setSmartRaw] = useState('');
+  const [smartKeyword, setSmartKeyword] = useState('');
+  const [smartMaxBid, setSmartMaxBid] = useState<number | null>(null);
+  const [searchFocus, setSearchFocus] = useState(false);
+
+  // Current time kept in state (refreshed every minute) so "posted within"
+  // filtering stays pure during render.
+  const [nowMs, setNowMs] = useState(0);
+  useEffect(() => {
+    const tick = () => setNowMs(Date.now());
+    tick();
+    const id = setInterval(tick, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   // Persist filter state across navigation/refresh (per-tab sessionStorage).
   useEffect(() => {
-    saveFilters({ search, platformFilter, statusFilter, countryFilter, connectionsFilter, scoreFilter, sortBy });
-  }, [search, platformFilter, statusFilter, countryFilter, connectionsFilter, scoreFilter, sortBy]);
+    saveFilters({ search, platformFilter, statusFilter, countryFilter, connectionsFilter, scoreFilter, jobTypeFilter, postedFilter, sortBy });
+  }, [search, platformFilter, statusFilter, countryFilter, connectionsFilter, scoreFilter, jobTypeFilter, postedFilter, sortBy]);
   const PER_PAGE = 24;
 
   // Derived metadata from jobs
@@ -174,6 +205,34 @@ function HomeContent() {
     hot: jobs.filter(j => j.score >= 70).length,
     applied: jobs.filter(j => j.applied).length,
   }), [jobs]);
+
+  // Opportunity tiers (High / Good / Review) with live counts — the "primary
+  // pills" dimension alongside the status stats above.
+  const oppStats = useMemo(() => ({
+    high: jobs.filter(j => j.score >= 70).length,
+    good: jobs.filter(j => j.score >= 50 && j.score < 70).length,
+    review: jobs.filter(j => j.score < 50).length,
+  }), [jobs]);
+
+  // Smart-search suggestions built from the real data (platforms, countries,
+  // skills) plus a few canned time/type intents.
+  const searchSuggestions = useMemo(() => {
+    const skills = new Set<string>();
+    jobs.forEach(j => (j.skills ?? []).forEach(s => { const low = s.toLowerCase(); if (low.length >= 2) skills.add(low); }));
+    const platforms = new Set(jobs.map(j => j.platform).filter(Boolean));
+    const countries = new Set(jobs.map(j => j.country).filter(Boolean));
+    const base: string[] = ['last 24 hours', 'last 3 days', 'last 7 days', 'hourly', 'fixed', 'high score', 'review'];
+    platforms.forEach(p => base.push(String(p).toLowerCase()));
+    countries.forEach(c => base.push(`${String(c).toLowerCase()} jobs`));
+    base.push(...[...skills].slice(0, 10));
+    return [...new Set(base)].slice(0, 16);
+  }, [jobs]);
+
+  const visibleSuggestions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return searchSuggestions.slice(0, 6);
+    return searchSuggestions.filter(s => s.includes(q)).slice(0, 6);
+  }, [search, searchSuggestions]);
 
   const filteredJobs = useMemo(() => {
     let result = [...jobs];
@@ -200,8 +259,30 @@ function HomeContent() {
     else if (scoreFilter === 'medium') result = result.filter(j => j.score >= 50 && j.score < 70);
     else if (scoreFilter === 'low') result = result.filter(j => j.score < 50);
 
+    // Job type (Fixed Price / Hourly Rate) — from the real budget type.
+    if (jobTypeFilter === 'fixed') result = result.filter(j => (j.budgetType || '').toLowerCase().includes('fixed'));
+    else if (jobTypeFilter === 'hourly') result = result.filter(j => (j.budgetType || '').toLowerCase().includes('hourly'));
+
+    // Posted within — based on the real posting time.
+    if (postedFilter !== 'all') {
+      const hoursMap = { '24h': 24, '3d': 72, '7d': 168 } as const;
+      const cutoff = nowMs - hoursMap[postedFilter] * 3600000;
+      result = result.filter(j => {
+        const t = new Date(j.postedAt || 0).getTime();
+        return Number.isFinite(t) && t >= cutoff;
+      });
+    }
+
+    // Smart-search budget cap ("under $500" style queries).
+    if (smartMaxBid != null) {
+      result = result.filter(j => {
+        const m = j.budget.match(/\$?([\d,]+)/);
+        return !m || parseInt(m[1].replace(',', ''), 10) <= smartMaxBid;
+      });
+    }
+
     // Search
-    const q = search.trim().toLowerCase();
+    const q = (smartActive ? smartKeyword : search).trim().toLowerCase();
     if (q) result = result.filter(j =>
       `${j.title} ${j.description} ${j.platform} ${j.clientName || ''} ${j.country || ''}`.toLowerCase().includes(q)
     );
@@ -234,7 +315,7 @@ function HomeContent() {
     }
 
     return result;
-  }, [jobs, statusFilter, platformFilter, countryFilter, connectionsFilter, scoreFilter, search, sortBy]);
+  }, [jobs, statusFilter, platformFilter, countryFilter, connectionsFilter, scoreFilter, jobTypeFilter, postedFilter, search, smartKeyword, smartActive, smartMaxBid, sortBy, nowMs]);
 
   const totalPages = Math.ceil(filteredJobs.length / PER_PAGE);
   const paginatedJobs = useMemo(() => filteredJobs.slice((page - 1) * PER_PAGE, page * PER_PAGE), [filteredJobs, page]);
@@ -345,6 +426,62 @@ function HomeContent() {
 
   const togglePlatform = (p: string) => {
     setPlatformFilter(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
+    setPage(1);
+  };
+
+  // Smart search: parse a natural-language query into whitelisted filters via
+  // /api/search, apply them, and surface an active chip with the raw text.
+  const applySmartSearch = async (raw: string) => {
+    const q = raw.trim();
+    if (!q) return;
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      if (!res.ok) return;
+      const parsed = await res.json();
+      if (parsed.platform && availablePlatforms.includes(parsed.platform)) setPlatformFilter([parsed.platform]);
+      if (parsed.opportunity === 'high') setScoreFilter('high');
+      else if (parsed.opportunity === 'good') setScoreFilter('medium');
+      else if (parsed.opportunity === 'review') setScoreFilter('low');
+      if (parsed.jobType === 'hourly' || parsed.jobType === 'fixed') setJobTypeFilter(parsed.jobType);
+      if (parsed.posted) setPostedFilter(parsed.posted);
+      if (parsed.country) setCountryFilter(parsed.country);
+      setSmartMaxBid(parsed.maxBid ?? null);
+      setSmartKeyword(parsed.query || '');
+      setSmartActive(true);
+      setSmartRaw(q);
+      setPage(1);
+      setSearchFocus(false);
+    } catch {
+      // Fall back to plain keyword filtering (already live).
+      setSmartKeyword('');
+      setSmartActive(true);
+      setSmartRaw(q);
+      setPage(1);
+      setSearchFocus(false);
+    }
+  };
+
+  const clearSmartSearch = () => {
+    setSmartActive(false);
+    setSmartRaw('');
+    setSmartKeyword('');
+    setSmartMaxBid(null);
+    setSearch('');
+    setScoreFilter('all');
+    setJobTypeFilter('all');
+    setPostedFilter('all');
+    setPage(1);
+  };
+
+  const onSearchChange = (v: string) => {
+    setSearch(v);
+    if (smartActive) {
+      // Editing after a parsed search drops back to live keyword filtering.
+      setSmartActive(false);
+      setSmartKeyword('');
+      setSmartRaw('');
+      setSmartMaxBid(null);
+    }
     setPage(1);
   };
 
@@ -484,21 +621,127 @@ function HomeContent() {
 
         {/* ── FILTERS ── */}
         <div style={styles.filtersBox} className="lh-surface">
-          {/* Search */}
+          {/* Smart search + sort + posted window */}
           <div style={styles.filterRow}>
-            <input
-              type="text"
-              className="lh-field"
-              placeholder="Search by title, client, tech, location..."
-              value={search}
-              onChange={e => { setSearch(e.target.value); setPage(1); }}
-              style={styles.searchInput}
-            />
+            <div style={{ position: 'relative', flex: 1, minWidth: 'min(260px,100%)' }}>
+              <input
+                type="text"
+                className="lh-field"
+                placeholder="Smart search — try “react jobs from the last 3 days” or “flutter por hora”…"
+                value={search}
+                onChange={e => onSearchChange(e.target.value)}
+                onFocus={() => setSearchFocus(true)}
+                onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
+                onKeyDown={e => { if (e.key === 'Enter') void applySmartSearch(search); }}
+                style={styles.searchInput}
+                aria-label="Smart search"
+              />
+              {searchFocus && visibleSuggestions.length > 0 && (
+                <div style={styles.suggestBox} className="lh-surface">
+                  {visibleSuggestions.map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      className="lh-field"
+                      style={styles.suggestItem}
+                      onMouseDown={e => { e.preventDefault(); void applySmartSearch(s); }}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button onClick={() => void applySmartSearch(search)} style={styles.btnPrimary}>
+              Search
+            </button>
             <select value={sortBy} onChange={e => { setSortBy(e.target.value as 'score' | 'date' | 'budget'); setPage(1); }} style={styles.select} className="lh-field">
-              <option value="date">Sort: Latest first</option>
               <option value="score">Sort: Best score</option>
+              <option value="date">Sort: Latest first</option>
               <option value="budget">Sort: Highest budget</option>
             </select>
+            <select value={postedFilter} onChange={e => { setPostedFilter(e.target.value as 'all' | '24h' | '3d' | '7d'); setPage(1); }} style={styles.select} className="lh-field">
+              <option value="all">Posted: Any time</option>
+              <option value="24h">Posted: Last 24 hours</option>
+              <option value="3d">Posted: Last 3 days</option>
+              <option value="7d">Posted: Last 7 days</option>
+            </select>
+          </div>
+
+          {/* Active smart-search chip */}
+          {smartActive && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={styles.smartChip} className="lh-field">
+                Smart search: “{smartRaw}”
+                <button
+                  onClick={clearSmartSearch}
+                  aria-label="Clear smart search"
+                  className="lh-muted"
+                  style={styles.smartChipX}
+                >
+                  ×
+                </button>
+              </span>
+              {smartMaxBid != null && (
+                <span style={styles.smartChip} className="lh-field">Budget ≤ ${smartMaxBid.toLocaleString()}</span>
+              )}
+              <span className="lh-muted" style={{ fontSize: 11.5, color: '#94a3b8' }}>
+                Filters applied from your search — click × to reset.
+              </span>
+            </div>
+          )}
+
+          {/* Opportunity tier pills — the primary filter dimension, with counts */}
+          <div style={styles.filterRow}>
+            <span className="lh-muted" style={styles.filterLabel}>Opportunity:</span>
+            <button
+              onClick={() => { setScoreFilter('all'); setPage(1); }}
+              className={scoreFilter === 'all' ? undefined : 'lh-field'}
+              style={{
+                ...styles.oppPill,
+                background: scoreFilter === 'all' ? '#2563eb' : '#f1f5f9',
+                color: scoreFilter === 'all' ? '#fff' : '#475569',
+                borderColor: scoreFilter === 'all' ? '#2563eb' : '#e2e8f0',
+              }}
+            >
+              All <span style={styles.oppCount}>{stats.total}</span>
+            </button>
+            <button
+              onClick={() => { setScoreFilter(f => f === 'high' ? 'all' : 'high'); setPage(1); }}
+              className={scoreFilter === 'high' ? undefined : 'lh-field'}
+              style={{
+                ...styles.oppPill,
+                background: scoreFilter === 'high' ? '#10b981' : '#f1f5f9',
+                color: scoreFilter === 'high' ? '#fff' : '#475569',
+                borderColor: scoreFilter === 'high' ? '#10b981' : '#e2e8f0',
+              }}
+            >
+              High <span style={styles.oppCount}>{oppStats.high}</span>
+            </button>
+            <button
+              onClick={() => { setScoreFilter(f => f === 'medium' ? 'all' : 'medium'); setPage(1); }}
+              className={scoreFilter === 'medium' ? undefined : 'lh-field'}
+              style={{
+                ...styles.oppPill,
+                background: scoreFilter === 'medium' ? '#3b82f6' : '#f1f5f9',
+                color: scoreFilter === 'medium' ? '#fff' : '#475569',
+                borderColor: scoreFilter === 'medium' ? '#3b82f6' : '#e2e8f0',
+              }}
+            >
+              Good <span style={styles.oppCount}>{oppStats.good}</span>
+            </button>
+            <button
+              onClick={() => { setScoreFilter(f => f === 'low' ? 'all' : 'low'); setPage(1); }}
+              className={scoreFilter === 'low' ? undefined : 'lh-field'}
+              style={{
+                ...styles.oppPill,
+                background: scoreFilter === 'low' ? '#f59e0b' : '#f1f5f9',
+                color: scoreFilter === 'low' ? '#fff' : '#475569',
+                borderColor: scoreFilter === 'low' ? '#f59e0b' : '#e2e8f0',
+              }}
+            >
+              Review <span style={styles.oppCount}>{oppStats.review}</span>
+            </button>
           </div>
 
           {/* Platform toggle pills */}
@@ -523,7 +766,7 @@ function HomeContent() {
             </div>
           </div>
 
-          {/* Row 2: Country, Connections, Score */}
+          {/* Row: Country, Bid Cost, Job Type */}
           <div style={styles.filterRow}>
             <span className="lh-muted" style={styles.filterLabel}>Country:</span>
             <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }} style={styles.select} className="lh-field">
@@ -538,12 +781,11 @@ function HomeContent() {
               <option value="high">High (13+)</option>
             </select>
 
-            <span className="lh-muted" style={styles.filterLabel}>Score:</span>
-            <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value as 'all' | 'high' | 'medium' | 'low'); setPage(1); }} style={styles.select} className="lh-field">
-              <option value="all">Any Score</option>
-              <option value="high">70%+ Strong fit</option>
-              <option value="medium">50–69% Promising</option>
-              <option value="low">Below 50%</option>
+            <span className="lh-muted" style={styles.filterLabel}>Type:</span>
+            <select value={jobTypeFilter} onChange={e => { setJobTypeFilter(e.target.value as 'all' | 'fixed' | 'hourly'); setPage(1); }} style={styles.select} className="lh-field">
+              <option value="all">Any Budget Type</option>
+              <option value="fixed">Fixed Price</option>
+              <option value="hourly">Hourly Rate</option>
             </select>
           </div>
 
@@ -611,6 +853,34 @@ function HomeContent() {
 
                   {/* Description snippet */}
                   <p style={styles.snippet}>{job.description?.substring(0, 130)}…</p>
+
+                  {/* Real listing signals: competition, repeat client, act-fast */}
+                  {(typeof job.proposalCount === 'number' || job.repeatClient || job.actFast) && (
+                    <div style={styles.signalRow}>
+                      {typeof job.proposalCount === 'number' && (
+                        <span
+                          className="lh-signal"
+                          style={{
+                            ...styles.signalChip,
+                            color: job.proposalCount <= 5 ? '#15803d' : job.proposalCount <= 20 ? '#b45309' : '#b91c1c',
+                            borderColor: job.proposalCount <= 5 ? '#bbf7d0' : job.proposalCount <= 20 ? '#fde68a' : '#fecaca',
+                          }}
+                        >
+                          {job.proposalCount} props
+                        </span>
+                      )}
+                      {job.actFast && (
+                        <span className="lh-signal" style={{ ...styles.signalChip, color: '#b45309', borderColor: '#fde68a', fontWeight: 700 }}>
+                          Act fast
+                        </span>
+                      )}
+                      {job.repeatClient && (
+                        <span className="lh-signal" style={{ ...styles.signalChip, color: '#6d28d9', borderColor: '#ddd6fe', fontWeight: 700 }}>
+                          {(job.repeatClientCount ?? 0) > 0 ? `${job.repeatClientCount} more from client` : 'Repeat client'}
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Meta row */}
                   <div style={styles.metaRow}>
@@ -879,6 +1149,43 @@ const styles: Record<string, React.CSSProperties> = {
     borderWidth: '1px', borderStyle: 'solid',
     borderRadius: 999, padding: '6px 14px', fontSize: 12,
     fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s',
+  },
+  oppPill: {
+    borderWidth: '1px', borderStyle: 'solid',
+    borderRadius: 999, padding: '6px 12px', fontSize: 12,
+    fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s',
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+  },
+  oppCount: {
+    background: 'rgba(255,255,255,0.25)',
+    borderRadius: 999, padding: '0 7px', fontSize: 11,
+    fontWeight: 800,
+  },
+  suggestBox: {
+    position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+    zIndex: 50, borderRadius: 12, overflow: 'hidden',
+    boxShadow: '0 10px 24px rgba(15,23,42,0.12)',
+  },
+  suggestItem: {
+    display: 'block', width: '100%', textAlign: 'left', border: 'none',
+    background: 'transparent', padding: '10px 16px', fontSize: 13,
+    cursor: 'pointer', color: '#334155',
+  },
+  smartChip: {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    borderRadius: 999, padding: '4px 12px', fontSize: 12,
+    fontWeight: 600, color: '#1d4ed8', background: '#eff6ff',
+    border: '1px solid #bfdbfe',
+  },
+  smartChipX: {
+    background: 'none', border: 'none', fontSize: 14, lineHeight: 1,
+    cursor: 'pointer', color: '#1d4ed8', padding: 0,
+  },
+  signalRow: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  signalChip: {
+    fontSize: 11, fontWeight: 600, padding: '2px 9px',
+    borderRadius: 999, borderWidth: '1px', borderStyle: 'solid',
+    background: '#fff',
   },
 
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(340px,100%),1fr))', gap: 16 },

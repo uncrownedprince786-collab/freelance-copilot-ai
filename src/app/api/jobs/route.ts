@@ -1,16 +1,34 @@
 import { NextResponse } from 'next/server';
 import { getRawJobs, getAppliedSet } from '@/lib/jobsCache';
+import { clientKeyOf } from '@/lib/marketFacts';
 
 export async function GET() {
   try {
     const rawJobs = await getRawJobs();
     const appliedSet = await getAppliedSet();
 
+    // Repeat-client signal: jobs sharing the same stable client key in the
+    // current store. A client posting multiple listings is an active buyer
+    // worth prioritizing (and one whose other listings are discoverable).
+    const clientCounts = new Map<string, number>();
+    const clientKeys = new Map<string, string | null>();
+    for (const job of rawJobs) {
+      const key = clientKeyOf(job);
+      const jid = job.id || job.url || '';
+      if (jid) clientKeys.set(jid, key);
+      if (key) clientCounts.set(key, (clientCounts.get(key) || 0) + 1);
+    }
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const jobs = rawJobs.map((job: any) => {
       const jobId = job.id || job.url;
       const isApplied = Boolean(job.applied) || appliedSet.has(jobId) || appliedSet.has(job.url);
       const clientObj = job.client || {};
+      const clientKey = clientKeys.get(jobId) || null;
+      const totalForClient = clientKey ? (clientCounts.get(clientKey) || 0) : 0;
+      const postedMs = new Date(job.postedAt || job.postedDate || 0).getTime();
+      const isFresh = Number.isFinite(postedMs) && postedMs > 0 && Date.now() - postedMs < 24 * 60 * 60 * 1000;
+      const actFast = isFresh && (job.proposalCount == null || job.proposalCount <= 5);
 
       // --- Country: only show real countries, never "Remote" or generic
       const rawCountry = job.country || clientObj.country || job.location || '';
@@ -105,6 +123,11 @@ export async function GET() {
          memberSince,
          category,
          opportunityReason,
+        // Repeat-client + act-fast signals
+        clientKey,
+        repeatClient: totalForClient >= 2,
+        repeatClientCount: Math.max(totalForClient - 1, 0),
+        actFast,
         // Job specifics
         connections: job.connectsRequired || job.connections || 0,
         skills: Array.isArray(job.skills) ? job.skills : [],

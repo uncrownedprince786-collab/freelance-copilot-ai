@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { MultiAI } from '../../../services/ai/MultiAI';
 import { prisma } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/adminAuth';
+import { clientKeyOf } from '@/lib/marketFacts';
+import { getRawJobs } from '@/lib/jobsCache';
 
 // In-memory 24h cache (L1) so repeated analyses within a warm instance avoid a
 // DB round-trip. The persistent SystemKv cache (L2) survives serverless cold
@@ -70,6 +72,59 @@ function toNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Safety net: the AI prompt forbids personal-fit claims ("matches your skills",
+// "fits your budget"...). Some fallbacks / provider responses still phrase
+// things that way — scrub them out of what we return so no proposal or summary
+// ever makes a claim about the freelancer's profile.
+const BANNED_PHRASES: [string, string][] = [
+  ['matches your skills', 'aligns with the project'],
+  ['matches my skills', 'aligns with the project'],
+  ['matches my skillset', 'aligns with the project'],
+  ['perfect for you', 'well suited to this project'],
+  ['perfect for your needs', 'well suited to this project'],
+  ['perfect fit', 'a strong fit for this project'],
+  ['fits within your budget', 'respects the stated budget'],
+  ['within your budget', 'within the stated budget'],
+  ['fits your budget', 'respects the stated budget'],
+  ['is perfect for', 'is well suited to'],
+];
+
+function scrubBannedPhrases(text: string): string {
+  if (!text) return text;
+  let out = text;
+  for (const [from, to] of BANNED_PHRASES) out = out.split(from).join(to);
+  return out;
+}
+
+function scrubAnalysis<T extends { proposal?: string; summary?: string; reasons?: string[] }>(analysis: T): T {
+  if (analysis.proposal) analysis.proposal = scrubBannedPhrases(analysis.proposal);
+  if (analysis.summary) analysis.summary = scrubBannedPhrases(analysis.summary);
+  if (Array.isArray(analysis.reasons)) analysis.reasons = analysis.reasons.map(scrubBannedPhrases);
+  return analysis;
+}
+
+/** Repeat-client signal computed server-side from the real store: an active
+ *  buyer with multiple open listings is a better lead than a one-off poster. */
+async function detectRepeatClient(opportunityId: string): Promise<{ repeatClient: boolean; clientJobsCount: number }> {
+  try {
+    const rawJobs = await getRawJobs();
+    const keys = new Map<string, string | null>();
+    const counts = new Map<string, number>();
+    for (const job of rawJobs) {
+      const key = clientKeyOf(job);
+      const jid = job.id || job.url || '';
+      if (jid) keys.set(jid, key);
+      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const key = keys.get(opportunityId) || null;
+    if (!key) return { repeatClient: false, clientJobsCount: 0 };
+    const total = counts.get(key) || 0;
+    return { repeatClient: total >= 2, clientJobsCount: Math.max(total - 1, 0) };
+  } catch {
+    return { repeatClient: false, clientJobsCount: 0 };
+  }
+}
+
 export async function POST(request: NextRequest) {
   // Rate limiting
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
@@ -136,6 +191,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Server-verified repeat-client context (only when we know the listing).
+    const repeat = safeOpportunityId ? await detectRepeatClient(safeOpportunityId) : { repeatClient: false, clientJobsCount: 0 };
+
     const analysis = await new MultiAI().analyze(safeTitle, safeDesc, {
       platform: safePlatform,
       budget: safeBudget,
@@ -154,14 +212,17 @@ export async function POST(request: NextRequest) {
       duration: safeDuration,
       connectsRequired: toNum(connectsRequired),
       paymentVerified: paymentVerified === true,
+      repeatClient: repeat.repeatClient,
+      clientJobsCount: repeat.clientJobsCount,
     });
 
-    const responseData = { ...analysis, cached: false };
+    const cleaned = scrubAnalysis(analysis);
+    const responseData = { ...cleaned, cached: false, repeatClient: repeat.repeatClient, clientJobsCount: repeat.clientJobsCount };
 
     if (safeOpportunityId) {
       const key = cacheKey(safeOpportunityId);
-      memCache.set(key, { data: analysis, ts: Date.now() });
-      void writePersistentCache(key, analysis);
+      memCache.set(key, { data: cleaned, ts: Date.now() });
+      void writePersistentCache(key, cleaned);
     }
 
     return NextResponse.json(responseData, { headers: secureHeaders });

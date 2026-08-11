@@ -160,3 +160,9 @@ html[data-theme='dark'] .lh-field textarea,
 html[data-theme='dark'] textarea.lh-field {
   color-scheme: dark;
 }
+
+/* Signal chips on job cards keep the coloured text/border but swap the white
+   fill for the dark surface so they read correctly in dark mode. */
+html[data-theme='dark'] .lh-signal {
+  background: #0b1220 !important;
+}

@@ -66,7 +66,7 @@ export interface MarketIntelligence {
   retentionNote: string;
 }
 
-const SKILL_KEYWORDS = [
+export const SKILL_KEYWORDS = [
   'react', 'node', 'python', 'django', 'typescript', 'javascript', 'next.js', 'nextjs',
   'vue', 'angular', 'laravel', 'php', 'wordpress', 'shopify', 'woocommerce',
   'flutter', 'react native', 'swift', 'kotlin', 'android', 'ios',

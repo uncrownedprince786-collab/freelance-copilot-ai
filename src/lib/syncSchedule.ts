@@ -6,26 +6,76 @@ import { prisma } from '@/lib/db';
 // APIs off-peak and never hardcode arbitrary "peak hours".
 export const PEAK_INTERVAL_MS = 20 * 60 * 1000;       // ~every 20 min during peak activity
 export const OFF_PEAK_INTERVAL_MS = 4 * 60 * 60 * 1000; // ~every 4 h otherwise
-const ANALYSIS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;   // look at the last 7 days
+const ANALYSIS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;   // live-window lookback (7 days)
+const HISTORICAL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000; // persisted-aggregate lookback (14 days)
 const MIN_SAMPLES = 30;                               // below this, no peak assumption
 
 export type { PrismaClient } from '@prisma/client';
 
-// An hour of the day (UTC) is "peak" when its posting volume in the last 7
-// days is above the per-hour average. createdAt holds the provider posting
-// time (saveStore maps postedAt → createdAt), so this is real source data.
+function utcDayKey(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+/** Posting-time distribution of the live window (raw listings). */
+async function liveHourCounts(): Promise<{ counts: number[]; total: number }> {
+  const since = new Date(Date.now() - ANALYSIS_WINDOW_MS);
+  const rows = await prisma.opportunity.findMany({
+    where: { createdAt: { gte: since } },
+    select: { createdAt: true },
+  });
+  const counts = new Array<number>(24).fill(0);
+  for (const row of rows) counts[new Date(row.createdAt).getUTCHours()]++;
+  return { counts, total: rows.length };
+}
+
+/** Posting-time distribution from persisted MarketFact 'hour' aggregates —
+ *  longer window, still real collected data. Degrades to empty on failure
+ *  (e.g. the table is not deployed yet). */
+async function historicalHourCounts(): Promise<{ counts: number[]; total: number }> {
+  try {
+    const since = new Date();
+    since.setUTCHours(0, 0, 0, 0);
+    since.setUTCDate(since.getUTCDate() - Math.ceil(HISTORICAL_WINDOW_MS / 86400000) + 1);
+    const rows = await prisma.marketFact.findMany({
+      where: { date: { gte: utcDayKey(since) }, dimension: 'hour' },
+      select: { key: true, value: true },
+    });
+    const counts = new Array<number>(24).fill(0);
+    let total = 0;
+    for (const r of rows) {
+      const hour = Number(r.key);
+      if (Number.isInteger(hour) && hour >= 0 && hour < 24) {
+        counts[hour] += r.value;
+        total += r.value;
+      }
+    }
+    return { counts, total };
+  } catch {
+    return { counts: new Array<number>(24).fill(0), total: 0 };
+  }
+}
+
+// An hour of the day (UTC) is "peak" when its posting volume is above the
+// per-hour average. Live listings (7 days) are the primary signal; when at
+// least MIN_SAMPLES of historical data exists it is blended in (14 days) so
+// the cadence stays stable even as individual listings age out of the store.
 export async function getPeakHours(): Promise<Set<number>> {
   try {
-    const since = new Date(Date.now() - ANALYSIS_WINDOW_MS);
-    const rows = await prisma.opportunity.findMany({
-      where: { createdAt: { gte: since } },
-      select: { createdAt: true },
-    });
-    if (rows.length < MIN_SAMPLES) return new Set();
+    const live = await liveHourCounts();
+    const historical = await historicalHourCounts();
 
+    const sampleCount = live.total;
+    if (sampleCount < MIN_SAMPLES) return new Set();
+
+    const useHistory = historical.total >= MIN_SAMPLES;
     const counts = new Array<number>(24).fill(0);
-    for (const row of rows) counts[new Date(row.createdAt).getUTCHours()]++;
-    const average = rows.length / 24;
+    for (let h = 0; h < 24; h++) {
+      // Weight the longer window at half the live window's weight, so recent
+      // activity dominates but quieter week-to-week hours still contribute.
+      counts[h] = live.counts[h] + (useHistory ? historical.counts[h] * 0.5 : 0);
+    }
+    const total = counts.reduce((a, b) => a + b, 0);
+    const average = total / 24;
 
     const peak = new Set<number>();
     for (let h = 0; h < 24; h++) {

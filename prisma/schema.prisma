@@ -110,3 +110,21 @@ model SystemKv {
 
   @@map("system_kv")
 }
+
+// Lightweight historical intelligence. Raw jobs expire per retention rules,
+// but these aggregate facts persist so the system can learn posting volume,
+// platform/skill activity, posting hours, budgets, competition and client
+// frequency over time — without keeping the raw listings.
+model MarketFact {
+  id        String   @id @default(uuid())
+  date      String   // YYYY-MM-DD (UTC posting date)
+  dimension String   // volume | platform | skill | hour | day | budget | engagement | competition | proposals | client
+  key       String   // 'all' | 'Upwork' | 'react' | '7' | 'Mon' | '$500–$2k' | 'hourly' | 'low' | clientKey
+  value     Float
+  updatedAt DateTime @updatedAt
+
+  @@unique([date, dimension, key])
+  @@index([dimension, key])
+  @@index([date])
+  @@map("market_facts")
+}
