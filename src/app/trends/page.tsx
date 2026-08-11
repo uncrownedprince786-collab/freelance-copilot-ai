@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { formatTime12 } from '@/lib/format';
 
 interface SkillTrend {
   skill: string;
@@ -94,6 +96,7 @@ export default function TrendsPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            <ThemeToggle />
             <button onClick={() => router.push('/')} style={s.backBtn} className="lh-field">← Dashboard</button>
           </div>
         </header>
@@ -108,7 +111,7 @@ export default function TrendsPage() {
           {data && (
             <div style={s.metaRow}>
               <span style={s.metaPill} className="lh-field">{data.totalJobsAnalyzed} jobs analysed</span>
-              <span style={s.metaPill} className="lh-field">Updated {new Date(data.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <span style={s.metaPill} className="lh-field">Updated {formatTime12(data.generatedAt)}</span>
               <span style={{ ...s.metaPill, background: '#f0fdf4', color: '#15803d', borderColor: '#bbf7d0' }}>Auto-updates with each sync</span>
             </div>
           )}

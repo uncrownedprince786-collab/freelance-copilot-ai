@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { login, loginAsGuest } from '@/lib/auth';
+import { IconLock, IconUser } from '@/components/icons';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -99,8 +100,9 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
             </div>
           </div>
 
-          <button type="submit" style={styles.submitBtn}>
-            🔐 Login as Admin
+          <button type="submit" style={{ ...styles.submitBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <IconLock size={16} color="#fff" />
+            Login as Admin
           </button>
         </form>
 
@@ -108,8 +110,9 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
           <span className="lh-muted lh-divider-or" style={styles.dividerText}>or</span>
         </div>
 
-        <button onClick={handleGuestLogin} style={styles.guestBtn} className="lh-field">
-          👤 Continue as Guest
+        <button onClick={handleGuestLogin} style={{ ...styles.guestBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} className="lh-field">
+          <IconUser size={16} color="#334155" />
+          Continue as Guest
         </button>
         <p className="lh-muted" style={styles.guestNote}>
           Guests can browse jobs and view AI proposals. No credentials needed.

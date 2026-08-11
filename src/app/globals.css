@@ -42,88 +42,112 @@ select {
 /* ── DARK MODE ─────────────────────────────────────────────────────────
    The app uses inline styles, so dark theming is done with !important
    overrides scoped to the lh-* hooks added to existing page structures.
-   Accent colors (score colors, brand colors, badges) are left untouched. */
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
-  body {
-    background: #0b1220;
-    color: #e2e8f0;
-  }
+   Accent colors (score colors, brand colors, badges) are left untouched.
 
-  /* Page roots */
-  .lh-page {
-    background: #0b1220 !important;
-    color: #e2e8f0 !important;
-  }
+   Dark mode is controlled by <html data-theme="dark">. A small inline
+   script in layout.tsx sets data-theme before first paint from a stored
+   preference (lh_theme) or the system setting, so the toggle works without
+   a flash of the wrong theme. */
+:root {
+  color-scheme: light;
+}
 
-  /* Card/surface backgrounds + borders */
-  .lh-surface,
-  .lh-modal {
-    background: #131c2e !important;
-    border-color: #26334a !important;
-    box-shadow: none !important;
-  }
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
 
-  .lh-topbar {
-    background: #0f172a !important;
-    border-color: #26334a !important;
-  }
+html[data-theme='dark'] body {
+  background: #0b1220;
+  color: #e2e8f0;
+}
 
-  /* Form controls */
-  .lh-field {
-    background: #0b1220 !important;
-    border-color: #26334a !important;
-    color: #e2e8f0 !important;
-  }
-  .lh-field::placeholder {
-    color: #64748b;
-  }
-  .lh-page select option {
-    background: #0b1220;
-    color: #e2e8f0;
-  }
+/* Smooth, non-intrusive crossfade when switching themes */
+body,
+.lh-page,
+.lh-surface,
+.lh-modal,
+.lh-topbar,
+.lh-field {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+}
 
-  /* Active/selected state on toggle pills & pagination — keeps the accent
-     since .lh-field's !important background would otherwise erase it. */
-  .lh-active {
-    background: #2563eb !important;
-    border-color: #2563eb !important;
-    color: #fff !important;
-  }
+/* Page roots */
+html[data-theme='dark'] .lh-page {
+  background: #0b1220 !important;
+  color: #e2e8f0 !important;
+}
 
-  /* Headings (all pages use dark headings) */
-  .lh-page h1,
-  .lh-page h2,
-  .lh-page h3,
-  .lh-page h4 {
-    color: #f1f5f9 !important;
-  }
+/* Card/surface backgrounds + borders */
+html[data-theme='dark'] .lh-surface,
+html[data-theme='dark'] .lh-modal {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+  box-shadow: none !important;
+}
 
-  /* Body paragraphs inside surfaces/modals */
-  .lh-surface p,
-  .lh-modal p {
-    color: #c7d0dc !important;
-  }
+html[data-theme='dark'] .lh-topbar {
+  background: #0f172a !important;
+  border-color: #26334a !important;
+}
 
-  /* Primary text (non-heading) */
-  .lh-h {
-    color: #f1f5f9 !important;
-  }
+/* Form controls */
+html[data-theme='dark'] .lh-field {
+  background: #0b1220 !important;
+  border-color: #26334a !important;
+  color: #e2e8f0 !important;
+}
+html[data-theme='dark'] .lh-field::placeholder {
+  color: #64748b;
+}
+html[data-theme='dark'] .lh-page select option {
+  background: #0b1220;
+  color: #e2e8f0;
+}
 
-  /* Body/secondary text */
-  .lh-body {
-    color: #c7d0dc !important;
-  }
+/* Active/selected state on toggle pills & pagination — keeps the accent
+   since .lh-field's !important background would otherwise erase it. */
+html[data-theme='dark'] .lh-active {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+  color: #fff !important;
+}
 
-  /* Muted text */
-  .lh-muted {
-    color: #8b99ad !important;
-  }
+/* Headings (all pages use dark headings) */
+html[data-theme='dark'] .lh-page h1,
+html[data-theme='dark'] .lh-page h2,
+html[data-theme='dark'] .lh-page h3,
+html[data-theme='dark'] .lh-page h4 {
+  color: #f1f5f9 !important;
+}
 
-  /* Modal "or" divider pill matches the modal surface */
-  .lh-divider-or {
-    background: #131c2e !important;
-  }
+/* Body paragraphs inside surfaces/modals */
+html[data-theme='dark'] .lh-surface p,
+html[data-theme='dark'] .lh-modal p {
+  color: #c7d0dc !important;
+}
+
+/* Primary text (non-heading) */
+html[data-theme='dark'] .lh-h {
+  color: #f1f5f9 !important;
+}
+
+/* Body/secondary text */
+html[data-theme='dark'] .lh-body {
+  color: #c7d0dc !important;
+}
+
+/* Muted text */
+html[data-theme='dark'] .lh-muted {
+  color: #8b99ad !important;
+}
+
+/* Modal "or" divider pill matches the modal surface */
+html[data-theme='dark'] .lh-divider-or {
+  background: #131c2e !important;
+}
+
+/* Textarea & rich-text bodies (job description, proposal) */
+html[data-theme='dark'] .lh-field textarea,
+html[data-theme='dark'] textarea.lh-field {
+  color-scheme: dark;
 }

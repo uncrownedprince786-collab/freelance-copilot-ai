@@ -4,6 +4,9 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated, isAdmin, logout, trackActivity } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { IconTrend, IconShield, IconMapPin } from '@/components/icons';
+import { timeAgo } from '@/lib/format';
 
 const FILTERS_KEY = 'lh_jobs_filters';
 
@@ -17,7 +20,8 @@ interface JobsFilters {
   sortBy: 'score' | 'date' | 'budget';
 }
 
-// Per-tab session defaults. A brand-new session defaults to Upwork only.
+// Per-tab session defaults. A brand-new session defaults to Upwork only and
+// score-first ranking (best opportunities rise to the top).
 const DEFAULT_FILTERS: JobsFilters = {
   search: '',
   platformFilter: ['Upwork'],
@@ -25,7 +29,7 @@ const DEFAULT_FILTERS: JobsFilters = {
   countryFilter: 'All',
   connectionsFilter: 'all',
   scoreFilter: 'all',
-  sortBy: 'date',
+  sortBy: 'score',
 };
 
 function loadFilters(): JobsFilters {
@@ -64,6 +68,7 @@ interface Job {
   clientSpend?: string;
   clientReviews?: string;
   connections?: number;
+  proposalCount?: number | null;
   category?: string;
   opportunityReason?: string;
 }
@@ -90,19 +95,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   Skip: '#ef4444',
 };
 
-function timeAgo(dateStr: string) {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = now - then;
-  const mins = Math.floor(diff / 60000);
-  const hrs = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 2) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${days}d ago`;
-}
-
 export default function Home() {
   return (
     <React.Suspense fallback={<div style={styles.splashLoad}>Loading…</div>}>
@@ -119,6 +111,7 @@ function HomeContent() {
   const [showIntroPopup, setShowIntroPopup] = useState(true);
   const [newCount, setNewCount] = useState(0);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [syncSchedule, setSyncSchedule] = useState('');
 
   const [authed, setAuthed] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
@@ -170,8 +163,8 @@ function HomeContent() {
   const availablePlatforms = useMemo(() => [...new Set(jobs.map(j => j.platform))], [jobs]);
   const availableCountries = useMemo(() => {
     const countries = jobs
-      .map(j => j.country || j.clientName || '')
-      .filter(c => Boolean(c));
+      .map(j => j.country || '')
+      .filter(c => Boolean(c) && c.toLowerCase() !== 'remote');
     return ['All', ...Array.from(new Set(countries)).sort()];
   }, [jobs]);
 
@@ -213,15 +206,23 @@ function HomeContent() {
       `${j.title} ${j.description} ${j.platform} ${j.clientName || ''} ${j.country || ''}`.toLowerCase().includes(q)
     );
 
-    // Sort
-    if (sortBy === 'score') result.sort((a, b) => b.score - a.score);
-    else if (sortBy === 'date') result.sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
-    else if (sortBy === 'budget') {
+    // Sort — score-first ranking uses real secondary signals (posting time,
+    // competition, budget) as tiebreakers so equal scores still surface the
+    // freshest, least-competitive opportunities first.
+    const postedTime = (j: Job) => new Date(j.postedAt || 0).getTime();
+    const budgetNum = (s: string) => { const m = s.match(/\$?([\d,]+)/); return m ? parseInt(m[1].replace(',', '')) : 0; };
+    if (sortBy === 'score') {
       result.sort((a, b) => {
-        const extract = (s: string) => { const m = s.match(/\$?([\d,]+)/); return m ? parseInt(m[1].replace(',', '')) : 0; };
-        return extract(b.budget) - extract(a.budget);
+        if (b.score !== a.score) return b.score - a.score;
+        const tb = postedTime(b) - postedTime(a);
+        if (tb !== 0) return tb;
+        const pa = a.proposalCount ?? Number.MAX_SAFE_INTEGER;
+        const pb = b.proposalCount ?? Number.MAX_SAFE_INTEGER;
+        if (pa !== pb) return pa - pb;
+        return budgetNum(b.budget) - budgetNum(a.budget);
       });
-    }
+    } else if (sortBy === 'date') result.sort((a, b) => postedTime(b) - postedTime(a));
+    else if (sortBy === 'budget') result.sort((a, b) => budgetNum(b.budget) - budgetNum(a.budget));
 
     // Push applied jobs to the very end (bottom) unless user is explicitly on the 'Applied' filter tab
     if (statusFilter !== 'applied') {
@@ -248,16 +249,21 @@ function HomeContent() {
     try {
       const res = await fetch('/api/jobs');
       const data: Job[] = await res.json();
-      // Guests see NO server-persisted applied state — only admin's applied list is preserved
+      // Guests see NO server-persisted viewed/applied state — both are kept
+      // per-tab in sessionStorage so a guest's own history is private to the
+      // browsing session.
       const role = typeof window !== 'undefined' ? sessionStorage.getItem('lh_auth_role') : null;
       const isAdminUser = role === 'admin';
       const guestApplied: Set<string> = new Set(
         JSON.parse(typeof window !== 'undefined' ? (sessionStorage.getItem('guest_applied') || '[]') : '[]')
       );
+      const guestViewed: Set<string> = new Set(
+        JSON.parse(typeof window !== 'undefined' ? (sessionStorage.getItem('guest_viewed') || '[]') : '[]')
+      );
       const cleaned = data.map(j => ({
         ...j,
         applied: isAdminUser ? j.applied : guestApplied.has(j.id),
-        viewed: isAdminUser ? j.viewed : false,
+        viewed: isAdminUser ? j.viewed : guestViewed.has(j.id),
       }));
       setPage(1);
       setJobs(cleaned);
@@ -270,11 +276,15 @@ function HomeContent() {
 
   useEffect(() => { void fetchJobs(); }, [fetchJobs]);
 
-  // Real freshness telemetry — when the last successful sync actually ran.
+  // Real freshness telemetry — when the last successful sync actually ran and
+  // the adaptive cadence derived from real posting activity.
   useEffect(() => {
     fetch('/api/sync/status')
       .then(r => (r.ok ? r.json() : Promise.reject(new Error('bad status'))))
-      .then(d => { if (d?.lastSyncedAt) setLastSyncedAt(d.lastSyncedAt); })
+      .then(d => {
+        if (d?.lastSyncedAt) setLastSyncedAt(d.lastSyncedAt);
+        if (d?.schedule) setSyncSchedule(d.schedule);
+      })
       .catch(() => { /* freshness is non-critical */ });
   }, []);
 
@@ -301,6 +311,18 @@ function HomeContent() {
       setPendingJob(job);
       setShowAuthModal(true);
       return;
+    }
+    // Guests: record the view per-tab so the "Viewed" filter/badge works for
+    // them too. Admins persist views server-side from the job detail page.
+    const role = typeof window !== 'undefined' ? sessionStorage.getItem('lh_auth_role') : null;
+    if (role !== 'admin' && typeof window !== 'undefined') {
+      try {
+        const guestViewed: string[] = JSON.parse(sessionStorage.getItem('guest_viewed') || '[]');
+        if (!guestViewed.includes(job.id)) {
+          guestViewed.push(job.id);
+          sessionStorage.setItem('guest_viewed', JSON.stringify(guestViewed));
+        }
+      } catch {/* ignore */}
     }
     if (typeof window !== 'undefined') sessionStorage.setItem('selectedJob', JSON.stringify(job));
     trackActivity('view_job', job.title);
@@ -381,11 +403,15 @@ function HomeContent() {
             </div>
           </div>
           <div style={styles.headerRight}>
+            <ThemeToggle />
             <button onClick={() => router.push('/about')} style={styles.btnGhost}>
               About
             </button>
             <button onClick={() => router.push('/trends')} style={styles.btnCron}>
-              Market Trends
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <IconTrend size={14} color="#fff" />
+                Market Trends
+              </span>
             </button>
             {adminMode && (
               <>
@@ -393,7 +419,10 @@ function HomeContent() {
                   Cron Logs
                 </button>
                 <button onClick={() => router.push('/admin/sessions')} style={{ ...styles.btnCron, background: '#1e3a8a', color: '#fff', borderColor: '#1e3a8a' }}>
-                  Sessions
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <IconShield size={14} color="#fff" />
+                    Sessions
+                  </span>
                 </button>
               </>
             )}
@@ -415,7 +444,7 @@ function HomeContent() {
         {/* ── FRESHNESS — real sync telemetry ── */}
         {lastSyncedAt && (
           <div className="lh-muted" style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
-            Data last synced {timeAgo(lastSyncedAt)} &middot; automatic syncs every 4 hours
+            Data last synced {timeAgo(lastSyncedAt)} &middot; adaptive sync: {syncSchedule || 'next run shortly'}
           </div>
         )}
 
@@ -568,9 +597,14 @@ function HomeContent() {
                     if (!hasClient && !hasCountry && !hasExtra) return null;
                     return (
                       <p style={styles.clientLine}>
-                        {hasClient ? `Client: ${job.clientName}` : hasCountry ? `📍 ${job.country}` : ''}
+                        {hasClient ? `Client: ${job.clientName}` : hasCountry ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <IconMapPin size={12} color="#64748b" />
+                            {job.country}
+                          </span>
+                        ) : ''}
                         {job.clientSpend ? ` · Spent: ${job.clientSpend}` : ''}
-                        {job.clientReviews ? ` · ⭐ ${job.clientReviews}` : ''}
+                        {job.clientReviews ? ` · ${job.clientReviews}` : ''}
                       </p>
                     );
                   })()}

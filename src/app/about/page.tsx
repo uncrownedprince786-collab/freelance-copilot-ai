@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export const metadata = {
   title: "About Lead Hunter",
@@ -63,7 +64,10 @@ export default function AboutPage() {
       <div style={styles.shell}>
         <header style={styles.header} className="lh-topbar">
           <div className="lh-h" style={styles.brand}>Lead Hunter</div>
-          <Link href="/" style={styles.backBtn} className="lh-field">← Dashboard</Link>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <ThemeToggle />
+            <Link href="/" style={styles.backBtn} className="lh-field">← Dashboard</Link>
+          </div>
         </header>
 
         <h1 style={styles.title}>About Lead Hunter</h1>

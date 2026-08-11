@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { isAuthenticated } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { formatDateTime12, formatTime12, timeAgo } from '@/lib/format';
 
 interface Job {
   id: string;
@@ -67,17 +69,6 @@ function getScoreColor(score: number) {
   return '#ef4444';
 }
 
-function timeAgo(dateStr: string) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  const hrs = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 2) return 'Just now';
-  if (mins < 60) return `${mins} minutes ago`;
-  if (hrs < 24) return `${hrs} hour${hrs > 1 ? 's' : ''} ago`;
-  return `${days} day${days > 1 ? 's' : ''} ago`;
-}
-
 function cleanExpLevel(raw?: string) {
   if (!raw) return '';
   return raw.replace(/level/gi, '').replace(/([A-Z])/g, ' $1').trim();
@@ -105,10 +96,10 @@ export default function JobDetailPage() {
       try {
         const parsed = JSON.parse(stored) as Job;
         if (parsed?.title) {
-          setJob(parsed);
+          setJob(markViewedIfGuest(parsed));
           setLoading(false);
           sessionStorage.removeItem('selectedJob');
-          void fetchAnalysis(parsed);
+          void fetchAnalysis(markViewedIfGuest(parsed));
           return;
         }
       } catch {/* fallback */}
@@ -124,8 +115,8 @@ export default function JobDetailPage() {
       const jobs: Job[] = await res.json();
       const found = jobs.find(j => j.id === params.id);
       if (found) {
-        setJob(found);
-        void fetchAnalysis(found);
+        setJob(markViewedIfGuest(found));
+        void fetchAnalysis(markViewedIfGuest(found));
       } else {
         setError('Job not found.');
       }
@@ -134,6 +125,17 @@ export default function JobDetailPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Guests track views per-tab (sessionStorage); only admins write to the DB.
+  const markViewedIfGuest = (j: Job): Job => {
+    if (typeof window === 'undefined') return j;
+    if ((sessionStorage.getItem('lh_auth_role') || '') === 'admin') return j;
+    try {
+      const guestViewed: string[] = JSON.parse(sessionStorage.getItem('guest_viewed') || '[]');
+      if (guestViewed.includes(j.id)) return { ...j, viewed: true };
+    } catch {/* ignore */}
+    return j;
   };
 
   const fetchAnalysis = async (jobData: Job) => {
@@ -182,14 +184,29 @@ export default function JobDetailPage() {
 
   const openListing = async () => {
     if (!job) return;
-    try {
-      await fetch('/api/jobs/view', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: job.id }),
-      });
-      setJob(prev => prev ? { ...prev, viewed: true } : prev);
-    } catch {/* non-critical */}
+    const role = typeof window !== 'undefined' ? (sessionStorage.getItem('lh_auth_role') || 'guest') : 'guest';
+    if (role === 'admin') {
+      // Admin views persist to the database.
+      try {
+        await fetch('/api/jobs/view', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId: job.id }),
+        });
+      } catch {/* non-critical */}
+    } else {
+      // Guest views persist only for this browsing session.
+      if (typeof window !== 'undefined') {
+        try {
+          const guestViewed: string[] = JSON.parse(sessionStorage.getItem('guest_viewed') || '[]');
+          if (!guestViewed.includes(job.id)) {
+            guestViewed.push(job.id);
+            sessionStorage.setItem('guest_viewed', JSON.stringify(guestViewed));
+          }
+        } catch {/* ignore */}
+      }
+    }
+    setJob(prev => prev ? { ...prev, viewed: true } : prev);
     window.open(job.url, '_blank', 'noopener,noreferrer');
   };
 
@@ -264,8 +281,7 @@ export default function JobDetailPage() {
       <style>{`
         @keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
         @media (max-width: 768px) {
-          .lj-page { height: auto !important; overflow: visible !important; }
-          .lj-layout { grid-template-columns: 1fr !important; overflow: visible !important; }
+          .lj-layout { grid-template-columns: 1fr !important; }
           .lj-left { border-right: none !important; }
         }
       `}</style>
@@ -283,11 +299,15 @@ export default function JobDetailPage() {
           </button>
           <span className="lh-h" style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', cursor: 'pointer' }} onClick={() => router.push('/')}>Lead Hunter</span>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ ...s.badge, background: PLATFORM_COLORS[job.platform] ?? '#6c5ce7' }}>{job.platform}</span>
           {job.isNew && <span style={{ ...s.badge, background: '#22c55e' }}>New</span>}
+          {job.viewed && !job.applied && <span style={{ ...s.badge, background: '#94a3b8' }}>Viewed</span>}
           {job.applied && <span style={{ ...s.badge, background: '#3b82f6' }}>Applied</span>}
-          <span className="lh-muted" style={s.timeAgo}>Posted {timeAgo(job.postedAt)}</span>
+          <span className="lh-muted" style={s.timeAgo} title={job.postedAt ? formatDateTime12(job.postedAt) : undefined}>
+            Posted {timeAgo(job.postedAt)}
+          </span>
+          <ThemeToggle />
         </div>
       </div>
 
@@ -302,7 +322,7 @@ export default function JobDetailPage() {
 
           {/* Posted + Location */}
           <div style={s.metaLine}>
-            <span style={s.metaDot}>Posted {timeAgo(job.postedAt)}</span>
+            <span style={s.metaDot}>Posted {timeAgo(job.postedAt)}{job.postedAt ? ` (${formatTime12(job.postedAt)})` : ''}</span>
             {hasCountry && (
               <>
                 <span style={s.sep}>·</span>
@@ -456,10 +476,10 @@ export default function JobDetailPage() {
 
           {!analyzing && analysis && (
             <>
-              {/* AI Score / Risk / ETA */}
+              {/* Overall Assessment — score / risk / ETA */}
               <div style={s.card} className="lh-surface">
                 <div style={{ ...s.sectionHead, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  AI Assessment
+                  Overall Assessment
                   {analysis.cached && (
                     <span style={{ ...s.badge, background: '#dbeafe', color: '#1e40af', padding: '2px 8px', fontSize: 10, fontWeight: 700 }}>
                       Cached (24h)
@@ -484,10 +504,28 @@ export default function JobDetailPage() {
                 </div>
               </div>
 
+              {/* Competition — real listing signals, not AI-generated */}
+              {(job.proposalCount != null || (job.interviewingCount ?? 0) > 0 || (job.hiresCount ?? 0) > 0) && (
+                <div style={s.card} className="lh-surface">
+                  <div style={s.sectionHead}>Competition</div>
+                  <div style={s.activityRow}>
+                    {job.proposalCount != null && (
+                      <span className="lh-body" style={s.actItem}>Proposals: <strong>{job.proposalCount}</strong></span>
+                    )}
+                    {(job.interviewingCount ?? 0) > 0 && (
+                      <span className="lh-body" style={s.actItem}>Interviewing: <strong>{job.interviewingCount}</strong></span>
+                    )}
+                    {(job.hiresCount ?? 0) > 0 && (
+                      <span className="lh-body" style={s.actItem}>Hires: <strong>{job.hiresCount}</strong></span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Why this assessment — expose the reasoning behind the score */}
               {(analysis.reasons?.length ?? 0) > 0 && (
                 <div style={s.card} className="lh-surface">
-                  <div style={s.sectionHead}>Why this assessment</div>
+                  <div style={s.sectionHead}>What&apos;s Worth Considering</div>
                   <ul style={s.list}>
                     {analysis.reasons.map((r, i) => <li key={i} className="lh-body" style={s.listItem}>{r}</li>)}
                   </ul>
@@ -530,16 +568,22 @@ export default function JobDetailPage() {
                 </div>
               )}
 
-              {/* Proposal */}
+              {/* Budget, bid & proposal */}
               <div style={s.card} className="lh-surface">
-                <div style={s.sectionHead}>Proposal</div>
+                <div style={s.sectionHead}>Budget &amp; Payment</div>
                 <div style={s.bidRow}>
                   <div style={s.bidCell} className="lh-surface">
                     <div className="lh-muted" style={s.vLabel}>Listed Budget</div>
                     <div className="lh-h" style={s.vValue}>{analysis.originalBudget || job.budget || 'Negotiable'}</div>
+                    {(job.budgetType || job.paymentVerified) && (
+                      <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {job.budgetType && <span style={s.chip} className="lh-field">{job.budgetType}</span>}
+                        {job.paymentVerified && <span style={{ ...s.chip, color: '#16a34a' }}>Payment verified</span>}
+                      </div>
+                    )}
                   </div>
                   <div style={s.bidCell} className="lh-surface">
-                    <div className="lh-muted" style={s.vLabel}>Suggested Bid</div>
+                    <div className="lh-muted" style={s.vLabel}>Recommended Bid</div>
                     <input
                       value={bidAmount}
                       onChange={e => setBidAmount(e.target.value)}
@@ -549,6 +593,7 @@ export default function JobDetailPage() {
                     />
                   </div>
                 </div>
+                <div style={s.sectionHead}>Proposal Draft</div>
                 <textarea
                   value={proposalDraft}
                   onChange={e => setProposalDraft(e.target.value)}
@@ -571,10 +616,9 @@ export default function JobDetailPage() {
 /* ── STYLES — Upwork-inspired clean typography ── */
 const s: Record<string, React.CSSProperties> = {
   page: {
-    height: '100vh',
+    minHeight: '100vh',
     display: 'flex',
     flexDirection: 'column',
-    overflow: 'hidden',
     background: '#f7f9fc',
     fontFamily: '"Inter","Segoe UI",system-ui,sans-serif',
     color: '#1f2937',
@@ -593,12 +637,12 @@ const s: Record<string, React.CSSProperties> = {
   backBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: '#374151', fontWeight: 600, padding: '4px 0' },
   badge: { color: '#fff', borderRadius: 4, padding: '3px 8px', fontSize: 11, fontWeight: 600 },
   timeAgo: { fontSize: 12, color: '#9ca3af' },
-  layout: { display: 'grid', gridTemplateColumns: '1fr 1fr', flex: 1, overflow: 'hidden' },
+  // Two-column layout that grows with content — the page itself scrolls.
+  layout: { display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'start' },
 
   /* LEFT */
   leftPanel: {
     padding: '20px 24px',
-    overflowY: 'auto',
     borderRight: '1px solid #e5e7eb',
     background: '#fff',
     display: 'flex',
@@ -629,7 +673,7 @@ const s: Record<string, React.CSSProperties> = {
   divider: { border: 'none', borderTop: '1px solid #f3f4f6', margin: 0 },
 
   sectionHead: { fontSize: 14, fontWeight: 700, color: '#111827', margin: '0 0 10px', letterSpacing: '-0.01em' },
-  descBody: { fontSize: 14, color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap', maxHeight: 300, overflowY: 'auto' },
+  descBody: { fontSize: 14, color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' },
 
   skillsWrap: { display: 'flex', flexWrap: 'wrap', gap: 6 },
   skillChip: {
@@ -656,7 +700,7 @@ const s: Record<string, React.CSSProperties> = {
   btnApplied: { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 
   /* RIGHT */
-  rightPanel: { padding: '16px', overflowY: 'auto', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 12 },
+  rightPanel: { padding: '16px', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 12 },
   card: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '16px' },
 
   verdictGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100px,100%),1fr))', gap: 8, marginTop: 12, textAlign: 'center' },
@@ -670,9 +714,10 @@ const s: Record<string, React.CSSProperties> = {
 
   bidRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(150px,100%),1fr))', gap: 10, marginBottom: 12 },
   bidCell: { background: '#f9fafb', borderRadius: 8, padding: '10px 12px' },
+  chip: { fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, border: '1px solid #e5e7eb', color: '#374151', background: '#fff' },
   bidInput: { width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', fontSize: 14, fontWeight: 700, color: '#111827', background: 'transparent', boxSizing: 'border-box' },
   proposalTA: {
-    width: '100%', minHeight: 180, maxHeight: 380,
+    width: '100%', minHeight: 180,
     border: '1px solid #e5e7eb', borderRadius: 8,
     padding: '10px 12px', fontSize: 13, lineHeight: 1.65,
     color: '#374151', background: '#f9fafb',
@@ -682,7 +727,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   warnBox: { background: '#fefce8', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#92400e' },
 
-  loadingCenter: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' },
+  loadingCenter: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' },
   spinner: { width: 28, height: 28, border: '3px solid #e5e7eb', borderTopColor: '#16a34a', borderRadius: '50%', animation: 'spin 0.8s linear infinite' },
   errorBox: { background: '#fff', border: '1px solid #fecaca', borderRadius: 12, padding: 32, textAlign: 'center', margin: 24 },
 };

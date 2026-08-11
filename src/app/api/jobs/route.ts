@@ -90,7 +90,9 @@ export async function GET() {
         score: job.score ?? (job.score === 0 ? 0 : 70),
         viewed: job.viewed || false,
         applied: isApplied,
-        postedAt: job.postedAt || job.postedDate || new Date().toISOString(),
+        // Provider posting time. Empty string (not "now") when unknown, so the
+        // UI can honestly say "Time unknown" instead of fabricating "Just now".
+        postedAt: job.postedAt || job.postedDate || '',
         // Location
         country: countryVal,
         // Client
@@ -111,9 +113,10 @@ export async function GET() {
         proposalCount: job.proposalCount || null,
         interviewingCount: job.interviewingCount || 0,
         hiresCount: job.hiresCount || 0,
-        // Meta
+        // Meta — "New" badge only for genuinely recent listings (posted within
+        // the last 24 h), never for every row.
         client: clientObj,
-        isNew: true,
+        isNew: new Date(job.postedAt || job.postedDate || 0).getTime() > Date.now() - 24 * 60 * 60 * 1000,
       };
     });
 

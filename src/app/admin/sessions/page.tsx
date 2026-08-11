@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { IconShield, IconUsers, IconLock, IconUser, IconRefresh, IconList } from '@/components/icons';
+import { formatTime12, formatDateTime12 } from '@/lib/format';
 
 interface SessionEvent {
   event: string;
@@ -21,6 +24,20 @@ interface Session {
   lastSeen: string;
   status?: string;
   location?: string;
+}
+
+const EVENT_LABELS: Record<string, string> = {
+  session_start: 'Session started',
+  session_end: 'Session ended',
+  heartbeat: 'Active heartbeat',
+  view_job: 'Viewed job',
+  sync: 'Ran sync',
+  login: 'Logged in',
+  logout: 'Logged out',
+};
+
+function eventLabel(event: string): string {
+  return EVENT_LABELS[event] || (event.charAt(0).toUpperCase() + event.slice(1).replace(/_/g, ' '));
 }
 
 function formatDuration(ms?: number) {
@@ -44,12 +61,15 @@ function timeAgo(iso: string) {
   return 'Just now';
 }
 
-function statusBg(status?: string) {
+// Online/Offline is derived from real activity: a live session (recent
+// heartbeat within the 15-minute session window) is Online, older activity is
+// Offline. Label + color reflect observed telemetry, never guesses.
+function statusInfo(status?: string): { label: string; bg: string; color: string } {
   switch (status) {
-    case 'Active': return '#dcfce7';
-    case 'Idle': return '#fef9c3';
-    case 'Offline': return '#fee2e2';
-    default: return '#f1f5f9';
+    case 'Active': return { label: 'Online', bg: '#dcfce7', color: '#15803d' };
+    case 'Idle': return { label: 'Idle', bg: '#fef9c3', color: '#92400e' };
+    case 'Offline': return { label: 'Offline', bg: '#fee2e2', color: '#b91c1c' };
+    default: return { label: '—', bg: '#f1f5f9', color: '#475569' };
   }
 }
 
@@ -66,7 +86,7 @@ export default function AdminSessionsPage() {
       return;
     }
     fetchSessions();
-    // Auto-refresh so admin sees live Active/Idle/Offline status.
+    // Auto-refresh so admin sees live Online/Offline status.
     const interval = setInterval(fetchSessions, 30_000);
     return () => clearInterval(interval);
   }, [router]);
@@ -84,6 +104,7 @@ export default function AdminSessionsPage() {
   const filtered = sessions.filter(s => roleFilter === 'all' || s.role === roleFilter);
   const adminCount = sessions.filter(s => s.role === 'admin').length;
   const guestCount = sessions.filter(s => s.role === 'guest').length;
+  const onlineCount = sessions.filter(s => s.status === 'Active').length;
   const avgDuration = sessions.filter(s => s.durationMs).reduce((a, s) => a + (s.durationMs ?? 0), 0) / (sessions.filter(s => s.durationMs).length || 1);
 
   return (
@@ -97,13 +118,21 @@ export default function AdminSessionsPage() {
               <p style={st.slogan}>Stop scrolling. Start winning</p>
             </div>
           </div>
-          <button onClick={() => router.push('/')} style={st.backBtn} className="lh-field">← Dashboard</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <ThemeToggle />
+            <button onClick={() => router.push('/')} style={st.backBtn} className="lh-field">← Dashboard</button>
+          </div>
         </header>
 
         {/* Page Title */}
         <div style={{ marginBottom: 24 }}>
-          <h2 style={st.pageTitle}>🛡️ Admin — User Sessions</h2>
-          <p className="lh-body" style={st.pageSubtitle}>Track every visitor, guest & admin — what they did, how long they stayed.</p>
+          <h2 style={st.pageTitle}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <IconShield size={20} color="#1e3a8a" />
+              Admin — User Sessions
+            </span>
+          </h2>
+          <p className="lh-body" style={st.pageSubtitle}>Track every visitor, guest &amp; admin — what they did, how long they stayed.</p>
         </div>
 
         {/* Stats */}
@@ -112,7 +141,8 @@ export default function AdminSessionsPage() {
             { label: 'Total Sessions', val: sessions.length, color: '#2563eb' },
             { label: 'Admin Sessions', val: adminCount, color: '#16a34a' },
             { label: 'Guest Sessions', val: guestCount, color: '#f59e0b' },
-            { label: 'Avg Duration', val: formatDuration(avgDuration), color: '#8b5cf6' },
+            { label: 'Online Now', val: onlineCount, color: '#8b5cf6' },
+            { label: 'Avg Duration', val: formatDuration(avgDuration), color: '#0ea5e9' },
           ].map(s => (
             <div key={s.label} style={st.statCard} className="lh-surface">
               <div style={{ ...st.statVal, color: s.color }}>{s.val}</div>
@@ -123,17 +153,24 @@ export default function AdminSessionsPage() {
 
         {/* Filter */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-          {(['all', 'admin', 'guest'] as const).map(f => (
-            <button key={f} onClick={() => setRoleFilter(f)} className={roleFilter === f ? 'lh-field lh-active' : 'lh-field'} style={{
+          {([
+            { key: 'all' as const, label: 'All', Icon: IconUsers },
+            { key: 'admin' as const, label: 'Admin', Icon: IconLock },
+            { key: 'guest' as const, label: 'Guests', Icon: IconUser },
+          ]).map(f => (
+            <button key={f.key} onClick={() => setRoleFilter(f.key)} className={roleFilter === f.key ? 'lh-field lh-active' : 'lh-field'} style={{
               ...st.filterBtn,
-              background: roleFilter === f ? '#2563eb' : '#fff',
-              color: roleFilter === f ? '#fff' : '#334155',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              background: roleFilter === f.key ? '#2563eb' : '#fff',
+              color: roleFilter === f.key ? '#fff' : '#334155',
             }}>
-              {f === 'all' ? '👥 All' : f === 'admin' ? '🔐 Admin' : '👤 Guests'}
+              <f.Icon size={14} color={roleFilter === f.key ? '#fff' : '#334155'} />
+              {f.label}
             </button>
           ))}
-          <button onClick={fetchSessions} style={{ ...st.filterBtn, marginLeft: 'auto', color: '#2563eb' }}>
-            🔄 Refresh
+          <button onClick={fetchSessions} style={{ ...st.filterBtn, marginLeft: 'auto', color: '#2563eb', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <IconRefresh size={14} color="#2563eb" />
+            Refresh
           </button>
         </div>
 
@@ -147,64 +184,91 @@ export default function AdminSessionsPage() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {filtered.map(s => (
-              <div key={s.guestId} style={st.card} className="lh-surface">
-                <div style={st.cardHeader} onClick={() => setExpandedId(expandedId === s.guestId ? null : s.guestId)}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 20 }}>{s.role === 'admin' ? '🔐' : '👤'}</span>
-                    <div>
-                      <div className="lh-h" style={{ fontWeight: 700, fontSize: 14, color: '#0f172a' }}>
-                        {s.role === 'admin' ? 'Admin' : 'Guest'}
-                        <span style={{ ...st.roleBadge, background: s.role === 'admin' ? '#dcfce7' : '#fef9c3', color: s.role === 'admin' ? '#15803d' : '#92400e' }}>
-                          {s.role.toUpperCase()}
-                        </span>
+            {filtered.map(s => {
+              const status = statusInfo(s.status);
+              return (
+                <div key={s.guestId} style={st.card} className="lh-surface">
+                  <div style={st.cardHeader} onClick={() => setExpandedId(expandedId === s.guestId ? null : s.guestId)}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {s.role === 'admin' ? <IconLock size={20} color="#2563eb" /> : <IconUser size={20} color="#f59e0b" />}
+                      <div>
+                        <div className="lh-h" style={{ fontWeight: 700, fontSize: 14, color: '#0f172a' }}>
+                          {s.role === 'admin' ? 'Admin' : 'Guest'}
+                          <span style={{ ...st.roleBadge, background: s.role === 'admin' ? '#dcfce7' : '#fef9c3', color: s.role === 'admin' ? '#15803d' : '#92400e' }}>
+                            {s.role.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="lh-muted" style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                          ID: {s.guestId.slice(0, 20)}…
+                        </div>
                       </div>
-                      <div className="lh-muted" style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
-                        ID: {s.guestId.slice(0, 20)}…
+                    </div>
+                    <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Started</div>
+                        <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{formatDateTime12(s.startTime)}</div>
                       </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Last Active</div>
+                        <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{timeAgo(s.lastSeen)}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Duration</div>
+                        <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{formatDuration(s.durationMs)}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Status</div>
+                        <div style={{ ...st.statusPill, background: status.bg, color: status.color }}>{status.label}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Actions</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: '#2563eb' }}>{s.events.length}</div>
+                      </div>
+                      <span className="lh-muted" style={{ fontSize: 18, color: '#94a3b8' }}>{expandedId === s.guestId ? '▲' : '▼'}</span>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
-                    <div style={{ textAlign: 'right' }}>
-                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Started</div>
-                      <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{timeAgo(s.startTime)}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Duration</div>
-                      <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{formatDuration(s.durationMs)}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Status</div>
-                      <div style={{ ...st.statusPill, background: statusBg(s.status) }}>{s.status || '—'}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Location</div>
-                      <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{s.location || '—'}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Actions</div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#2563eb' }}>{s.events.length}</div>
-                    </div>
-                    <span className="lh-muted" style={{ fontSize: 18, color: '#94a3b8' }}>{expandedId === s.guestId ? '▲' : '▼'}</span>
-                  </div>
-                </div>
 
-                {expandedId === s.guestId && (
-                  <div style={st.eventLog} className="lh-surface">
-                    <div className="lh-muted" style={st.eventHeader}>📋 Activity Log</div>
-                    {s.events.map((ev, i) => (
-                      <div key={i} style={st.eventRow}>
-                        <span className="lh-muted" style={st.eventTime}>{new Date(ev.timestamp).toLocaleTimeString()}</span>
-                        <span style={{ ...st.eventTag, background: ev.event === 'session_start' ? '#dcfce7' : ev.event === 'session_end' ? '#fee2e2' : '#dbeafe', color: ev.event === 'session_start' ? '#15803d' : ev.event === 'session_end' ? '#b91c1c' : '#1e40af' }}>
-                          {ev.event}
+                  {expandedId === s.guestId && (
+                    <div style={st.eventLog} className="lh-surface">
+                      <div className="lh-muted" style={st.eventHeader}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <IconList size={14} color="#64748b" />
+                          Activity Log
                         </span>
-                        {ev.detail && <span className="lh-body" style={st.eventDetail}>{ev.detail}</span>}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+                      {s.events.length === 0 ? (
+                        <p className="lh-muted" style={{ fontSize: 12, color: '#94a3b8', margin: '6px 0' }}>
+                          No activity recorded for this session.
+                        </p>
+                      ) : (
+                        <table style={st.eventTable}>
+                          <thead>
+                            <tr>
+                              <th style={st.th}>Time</th>
+                              <th style={st.th}>Event</th>
+                              <th style={st.th}>Detail</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {s.events.map((ev, i) => (
+                              <tr key={i}>
+                                <td className="lh-muted" style={st.tdTime}>{formatTime12(ev.timestamp)}</td>
+                                <td style={st.td}>
+                                  <span style={{ ...st.eventTag, background: ev.event === 'session_start' ? '#dcfce7' : ev.event === 'session_end' ? '#fee2e2' : ev.event === 'heartbeat' ? '#e0e7ff' : '#dbeafe', color: ev.event === 'session_start' ? '#15803d' : ev.event === 'session_end' ? '#b91c1c' : '#1e40af' }}>
+                                    {eventLabel(ev.event)}
+                                  </span>
+                                </td>
+                                <td className="lh-body" style={st.tdDetail}>{ev.detail || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -219,8 +283,8 @@ export default function AdminSessionsPage() {
 
 const st: Record<string, React.CSSProperties> = {
   page: { minHeight: '100vh', background: 'linear-gradient(135deg,#f0f4ff 0%,#f8fafc 100%)', padding: '24px 16px', fontFamily: 'Inter,"Segoe UI",sans-serif' },
-  shell: { maxWidth: 960, margin: '0 auto' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28, paddingBottom: 16, borderBottom: '1px solid #e2e8f0' },
+  shell: { maxWidth: 1100, margin: '0 auto' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28, paddingBottom: 16, borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap', gap: 8 },
   brand: { fontSize: 22, fontWeight: 800, color: '#0f172a', margin: 0 },
   slogan: { fontSize: 12, color: '#16a34a', fontWeight: 600, margin: '2px 0 0' },
   backBtn: { background: '#fff', border: '1px solid #dbe2ea', borderRadius: 999, padding: '8px 16px', fontSize: 13, fontWeight: 600, color: '#2563eb', cursor: 'pointer' },
@@ -239,9 +303,11 @@ const st: Record<string, React.CSSProperties> = {
   roleBadge: { fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, marginLeft: 8 },
   eventLog: { borderTop: '1px solid #f1f5f9', padding: '12px 20px', background: '#f8fafc' },
   eventHeader: { fontSize: 12, fontWeight: 700, color: '#64748b', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' },
-  eventRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid #f1f5f9' },
-  eventTime: { fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', minWidth: 80 },
-  eventTag: { fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999 },
-  eventDetail: { fontSize: 12, color: '#475569', flex: 1 },
-  statusPill: { fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 999, color: '#0f172a' },
+  eventTable: { width: '100%', borderCollapse: 'collapse' },
+  th: { textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '6px 8px', borderBottom: '1px solid #e5e7eb' },
+  td: { padding: '6px 8px', borderBottom: '1px solid #f1f5f9', fontSize: 13, color: '#334155' },
+  tdTime: { padding: '6px 8px', borderBottom: '1px solid #f1f5f9', fontSize: 12, fontFamily: 'monospace', whiteSpace: 'nowrap' },
+  tdDetail: { padding: '6px 8px', borderBottom: '1px solid #f1f5f9', fontSize: 12, color: '#475569', flex: 1 },
+  eventTag: { fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap' },
+  statusPill: { fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 999 },
 };

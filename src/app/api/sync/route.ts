@@ -3,15 +3,17 @@ import crypto from 'crypto';
 import { JobPipeline } from '../../../providers/JobPipeline';
 import { prisma } from '@/lib/db';
 import { isAdminRequest } from '@/lib/adminAuth';
+import { getSyncCooldownMs } from '@/lib/syncSchedule';
 
 const LOCK_KEY = 'sync_lock';
 const LOCK_TTL_MS = 15 * 60 * 1000; // 15 minutes; release-on-finally plus TTL safety net
 
-// Cooldown between production sync fetches. The Vercel cron fires once daily
-// (vercel.json: "0 8 * * *") and GitHub Actions fires every 4 hours; the
-// cooldown only guards against rapid manual refreshes from the admin UI.
+// Cooldown between production sync fetches is adaptive: ~20 minutes during
+// real peak posting hours and ~4 hours otherwise (see lib/syncSchedule).
+// The Vercel cron fires once daily (vercel.json: "0 8 * * *") and GitHub
+// Actions fires every 20 minutes; the cooldown decides whether a tick
+// actually fetches from the sources or is skipped.
 const SYNC_TS_KEY = 'last_sync_successful';
-const SYNC_COOLDOWN_MS = 10 * 60 * 1000;
 
 function timingSafeSecretEqual(a: string, b: string): boolean {
   const aHash = crypto.createHash('sha256').update(a).digest();
@@ -92,7 +94,8 @@ async function runSync(req: NextRequest) {
       // Lightweight housekeeping runs on every cron tick.
       const sessionsCleaned = await cleanupStaleSessions();
 
-      // Cooldown: avoid hammering Upwork/Freelancer on rapid manual refreshes.
+      // Cooldown: avoid hammering Upwork/Freelancer. The interval adapts to
+      // real posting activity (peak hours ≈ 20 min, otherwise ≈ 4 h).
       const now = Date.now();
       if (!force) {
         let lastSync = 0;
@@ -101,8 +104,9 @@ async function runSync(req: NextRequest) {
           if (rec?.value) lastSync = JSON.parse(rec.value).at ?? 0;
         } catch { /* ignore corrupt record */ }
 
-        if (lastSync && now - lastSync < SYNC_COOLDOWN_MS) {
-          const nextRunIn = Math.ceil((SYNC_COOLDOWN_MS - (now - lastSync)) / 1000);
+        const cooldownMs = await getSyncCooldownMs();
+        if (lastSync && now - lastSync < cooldownMs) {
+          const nextRunIn = Math.ceil((cooldownMs - (now - lastSync)) / 1000);
           return NextResponse.json({
             success: true,
             skipped: true,

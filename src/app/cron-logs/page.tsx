@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { formatTime12 } from '@/lib/format';
 
 interface CronLogEntry {
   id: string;
@@ -13,14 +15,14 @@ interface CronLogEntry {
   sourceSummary: string;
 }
 
-// Production syncs run every 4 hours via GitHub Actions (.github/workflows/sync.yml);
+// GitHub Actions fires every 20 minutes (.github/workflows/cron-sync.yml);
 // the Vercel cron (vercel.json) additionally fires once daily at 08:00 UTC.
+// The /api/sync endpoint enforces an adaptive cooldown, so this is the raw
+// scheduler cadence, not the actual fetch cadence.
 function nextScheduledRun(): number {
-  const now = new Date();
-  const nextHour = Math.ceil(now.getUTCHours() / 4) * 4;
-  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), nextHour, 0, 0, 0));
-  if (next.getTime() <= now.getTime()) next.setUTCHours(nextHour + 4);
-  return next.getTime();
+  const now = Date.now();
+  const tick = 20 * 60 * 1000;
+  return Math.ceil(now / tick) * tick;
 }
 
 export default function CronLogsPage() {
@@ -38,15 +40,15 @@ export default function CronLogsPage() {
     fetchLogs();
   }, [router]);
 
-  // Countdown to the next scheduled run (every 4 hours via GitHub Actions)
+  // Countdown to the next scheduled trigger (every 20 minutes via GitHub Actions).
+  // Whether a tick actually fetches depends on the adaptive sync cooldown.
   useEffect(() => {
     const tick = () => {
       const diff = nextScheduledRun() - Date.now();
       if (diff <= 0) { setCountdown('Due now'); return; }
-      const h = Math.floor(diff / 3600000);
-      const m = Math.floor((diff % 3600000) / 60000);
+      const m = Math.floor(diff / 60000);
       const s = Math.floor((diff % 60000) / 1000);
-      setCountdown(`${h}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s`);
+      setCountdown(`${m}m ${s.toString().padStart(2, '0')}s`);
     };
     tick();
     timerRef.current = setInterval(tick, 1000);
@@ -87,7 +89,7 @@ export default function CronLogsPage() {
     }
   };
 
-  const formatTime = (isoStr: string) => new Date(isoStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formatTime = (isoStr: string) => formatTime12(isoStr);
   const formatDate = (isoStr: string) => new Date(isoStr).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 
   return (
@@ -103,7 +105,8 @@ export default function CronLogsPage() {
               <div style={st.slogan}>Stop scrolling. Start winning</div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <ThemeToggle />
             <button onClick={runManualSync} disabled={running} style={st.runBtn}>
               {running ? 'Running…' : 'Run Sync Now'}
             </button>
@@ -127,7 +130,7 @@ export default function CronLogsPage() {
           </div>
           <div style={st.statusItem} className="lh-surface">
             <div className="lh-muted" style={st.statusLabel}>Schedule</div>
-            <div className="lh-h" style={st.statusVal}>Every 4 hours</div>
+            <div className="lh-h" style={st.statusVal}>Adaptive (peak ~20 min)</div>
           </div>
         </div>
 
