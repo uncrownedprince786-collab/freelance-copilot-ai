@@ -1,5 +1,8 @@
 # Freelance Copilot AI — Progress Tracker
 
+> This tracker is newly created. Requirement #10 below is the FIRST recorded entry;
+> it is not a continuation of any earlier tracker, and Requirements #1–9 were not tracked here.
+
 ## Requirement #10 — Fix About Us logo rendering
 
 - **Status**: Done
