@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getRawJobs } from '@/lib/jobsCache';
+import { computeMarketIntelligence, MarketIntelligence } from '@/lib/marketIntelligence';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,7 @@ export interface MarketTrends {
   recommendedSkillsToLearn: { skill: string; reason: string; urgency: 'high' | 'medium' | 'low' }[];
   marketSummary: string;
   totalJobsAnalyzed: number;
+  intelligence: MarketIntelligence;
 }
 
 async function readCache(): Promise<TrendsCache | null> {
@@ -152,9 +154,12 @@ export async function GET() {
   const cached = await readCache();
   const rawJobsList = await getRawJobs();
   const rawJobCount = rawJobsList.length;
-  if (cached && cached.trends.totalJobsAnalyzed > 0 && rawJobCount > 0) {
+  if (cached && cached.trends.intelligence && cached.trends.totalJobsAnalyzed > 0 && rawJobCount > 0) {
     return NextResponse.json({ ...cached.trends, cached: true, generatedAt: cached.generatedAt });
   }
+
+  // Market Intelligence — every figure derived from the actual listings.
+  const intelligence = computeMarketIntelligence(rawJobsList);
 
   const { skills, categories, budgets, titles } = await analyzeJobsLocally();
 
@@ -250,6 +255,7 @@ Respond with this exact JSON (no markdown, pure JSON):
         : `Based on ${titles.length} collected jobs, the most requested skills are ${topSkillsRaw.slice(0, 3).map(([s]) => s).join(', ') || 'n/a'}. Demand reflects how often each skill or category appears in current listings.`
     ),
     totalJobsAnalyzed: titles.length,
+    intelligence,
   };
 
   // Cache

@@ -50,10 +50,19 @@ select {
    a flash of the wrong theme. */
 :root {
   color-scheme: light;
+  --lh-chart-text: #6b7280;
+  --lh-chart-text-strong: #374151;
+  --lh-chart-grid: #e5e7eb;
 }
 
 html[data-theme='dark'] {
   color-scheme: dark;
+}
+
+html[data-theme='dark'] {
+  --lh-chart-text: #8b99ad;
+  --lh-chart-text-strong: #e2e8f0;
+  --lh-chart-grid: #26334a;
 }
 
 html[data-theme='dark'] body {

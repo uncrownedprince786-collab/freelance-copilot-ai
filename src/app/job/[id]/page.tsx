@@ -74,6 +74,26 @@ function cleanExpLevel(raw?: string) {
   return raw.replace(/level/gi, '').replace(/([A-Z])/g, ' $1').trim();
 }
 
+// Interpret real proposal counts using the same thresholds the scoring pipeline uses.
+function competitionSignal(p: number | null | undefined): { key: string; label: string; color: string; note: string } | null {
+  if (p == null) return null;
+  if (p <= 5) return { key: 'low', label: 'Low competition', color: '#15803d', note: `${p} proposal${p === 1 ? '' : 's'} detected — relatively low competition.` };
+  if (p <= 20) return { key: 'moderate', label: 'Moderate competition', color: '#b45309', note: `${p} proposals detected — moderate competition.` };
+  return { key: 'high', label: 'High competition', color: '#b91c1c', note: `${p} proposals detected — high competition.` };
+}
+
+// Honest freshness statement from the real posting time.
+function freshnessSignal(postedAt?: string): { value: string; note: string; isFresh: boolean } {
+  if (!postedAt) return { value: 'Time unknown', note: 'The platform did not expose a posting time.', isFresh: false };
+  const ms = new Date(postedAt).getTime();
+  if (!Number.isFinite(ms)) return { value: 'Time unknown', note: 'The platform did not expose a posting time.', isFresh: false };
+  const hours = (Date.now() - ms) / 3600000;
+  const ago = timeAgo(postedAt);
+  if (hours < 24) return { value: ago, note: 'Posted within the last 24 hours — a fresh listing.', isFresh: true };
+  if (hours < 48) return { value: ago, note: 'Still within the freshness window, but already a day old.', isFresh: false };
+  return { value: ago, note: 'Posted more than 2 days ago — competition has had time to build.', isFresh: false };
+}
+
 export default function JobDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -275,6 +295,21 @@ export default function JobDetailPage() {
   const hasCountry = job.country && job.country.toLowerCase() !== 'remote' && job.country.trim() !== '';
   const skills = job.skills || [];
 
+  /* Real listing signals → "why this ranking" reasoning */
+  const compSig = competitionSignal(job.proposalCount);
+  const freshSig = freshnessSignal(job.postedAt);
+  const isFresh = freshSig.isFresh;
+  const clientSignals: string[] = [];
+  if (job.clientSpend) clientSignals.push(`${job.clientSpend} spent`);
+  else if (job.client?.totalSpent) clientSignals.push(`$${Number(job.client.totalSpent).toLocaleString()} spent`);
+  if (job.jobsPosted != null) clientSignals.push(`${job.jobsPosted} jobs posted`);
+  if (job.client?.totalHires) clientSignals.push(`${job.client.totalHires} hires`);
+  let quickRead = 'Assessment is based on the listing signals above.';
+  if (isFresh && compSig?.key === 'low') quickRead = 'Strong opportunity — posted recently with low proposal activity.';
+  else if (isFresh && compSig) quickRead = `Fresh listing, but ${job.proposalCount} proposals are already in.`;
+  else if (compSig?.key === 'low') quickRead = 'Proposal activity is still low relative to the listing age.';
+  else if (job.proposalCount != null) quickRead = `${job.proposalCount} proposals detected on this listing.`;
+
   /* ── RENDER ── */
   return (
     <div style={s.page} className="lj-page lh-page">
@@ -474,6 +509,36 @@ export default function JobDetailPage() {
             <div style={s.warnBox}>{error}</div>
           )}
 
+          {/* Key Signals — the real marketplace signals behind the assessment */}
+          <div style={s.card} className="lh-surface">
+            <div style={s.sectionHead}>Key Signals — Why This Ranking</div>
+            <div style={s.signalGrid}>
+              <div style={s.signalCell} className="lh-surface">
+                <div className="lh-muted" style={s.vLabel}>Freshness</div>
+                <div className="lh-h" style={s.signalVal}>{freshSig.value}</div>
+                <div className="lh-muted" style={s.signalNote}>{freshSig.note}</div>
+              </div>
+              <div style={s.signalCell} className="lh-surface">
+                <div className="lh-muted" style={s.vLabel}>Competition</div>
+                <div className="lh-h" style={s.signalVal}>{job.proposalCount != null ? `${job.proposalCount} proposals` : 'Not provided'}</div>
+                {compSig && <div className="lh-muted" style={{ ...s.signalNote, color: compSig.color, fontWeight: 600 }}>{compSig.label}</div>}
+                {!compSig && <div className="lh-muted" style={s.signalNote}>The platform did not expose a proposal count.</div>}
+              </div>
+              <div style={s.signalCell} className="lh-surface">
+                <div className="lh-muted" style={s.vLabel}>Budget</div>
+                <div className="lh-h" style={s.signalVal}>{job.budget && job.budget !== 'Negotiable' ? job.budget : 'Negotiable'}</div>
+                {job.budgetType && <div className="lh-muted" style={s.signalNote}>{job.budgetType}</div>}
+              </div>
+              <div style={s.signalCell} className="lh-surface">
+                <div className="lh-muted" style={s.vLabel}>Client Activity</div>
+                <div className="lh-h" style={{ ...s.signalVal, fontSize: 13 }}>{clientSignals.length ? clientSignals.join(' · ') : 'Not provided'}</div>
+                <div className="lh-muted" style={s.signalNote}>
+                  {clientSignals.length ? 'where the platform reports it' : 'no spend / jobs / hire data from this platform'}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {!analyzing && analysis && (
             <>
               {/* Overall Assessment — score / risk / ETA */}
@@ -502,6 +567,7 @@ export default function JobDetailPage() {
                     <div className="lh-h" style={s.vValue}>{analysis.suggestedEta ?? 'Flexible'}</div>
                   </div>
                 </div>
+                <p className="lh-body" style={s.quickRead}>{quickRead}</p>
               </div>
 
               {/* Competition — real listing signals, not AI-generated */}
@@ -519,6 +585,9 @@ export default function JobDetailPage() {
                       <span className="lh-body" style={s.actItem}>Hires: <strong>{job.hiresCount}</strong></span>
                     )}
                   </div>
+                  {compSig && (
+                    <p className="lh-body" style={{ margin: '10px 0 0', fontSize: 12.5, lineHeight: 1.55, color: compSig.color, fontWeight: 600 }}>{compSig.note}</p>
+                  )}
                 </div>
               )}
 
@@ -707,6 +776,12 @@ const s: Record<string, React.CSSProperties> = {
   verdictCell: { background: '#f9fafb', borderRadius: 8, padding: '10px 4px' },
   vLabel: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 },
   vValue: { fontSize: 16, fontWeight: 800, color: '#111827' },
+  quickRead: { fontSize: 13, color: '#374151', lineHeight: 1.6, marginTop: 12, fontStyle: 'italic' },
+
+  signalGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(130px,100%),1fr))', gap: 8 },
+  signalCell: { background: '#f9fafb', borderRadius: 8, padding: '10px 12px' },
+  signalVal: { fontSize: 14, fontWeight: 700, color: '#111827', lineHeight: 1.4 },
+  signalNote: { fontSize: 11.5, color: '#6b7280', lineHeight: 1.45, marginTop: 3 },
 
   muted: { fontSize: 13, color: '#6b7280', lineHeight: 1.65, margin: 0 },
   list: { paddingLeft: 16, margin: 0 },
