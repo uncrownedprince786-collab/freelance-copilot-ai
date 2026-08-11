@@ -184,7 +184,6 @@ export default function AgentPanel() {
     setWorkingJobs(storedWorking ?? []);
     if (!welcomeShown) {
       sessionStorage.setItem(WELCOME_KEY, '1');
-      setOpen(true);
     }
     setHydrated(true);
   }, []);
