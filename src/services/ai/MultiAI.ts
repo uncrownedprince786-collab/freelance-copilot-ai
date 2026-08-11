@@ -176,7 +176,11 @@ export class MultiAI {
     if (options.budgetType) budgetParts.push(options.budgetType);
     if (options.budgetMin != null) budgetParts.push(`$${options.budgetMin}`);
     if (options.budgetMax != null && options.budgetMax !== options.budgetMin) budgetParts.push(`- $${options.budgetMax}`);
-    const budgetLine = budgetParts.length ? budgetParts.join(' ') : (options.budget || 'Undetermined');
+    // Prefer the display string (real currency symbol from the listing) when
+    // available; only fall back to numeric fields otherwise.
+    const budgetLine = options.budget
+      ? options.budget
+      : (budgetParts.length ? budgetParts.join(' ') : 'Undetermined');
 
     return `You are an expert freelance proposal strategist. Analyze this opportunity and return ONLY valid JSON.
 
@@ -191,6 +195,13 @@ CLIENT & MARKET SIGNALS (ground truth — weigh these heavily):
 - Experience level: ${options.experienceLevel || 'Not specified'}.
 - Contract duration: ${options.duration || 'Not specified'}.
 - Connects to bid: ${options.connectsRequired != null ? options.connectsRequired : 'N/A'}.
+
+STRICT RULES:
+- You do NOT know the freelancer's skills, experience, budget, or preferences. No user profile exists.
+- NEVER claim a job "matches your skills", "is perfect for you", "fits your budget", "is within your budget", or any similar personal-fit claim. If asked, say such data does not exist.
+- Base the score, risk, summary, bid, and reasons ONLY on the CLIENT & MARKET SIGNALS above and the description text. Do not invent facts, budgets, or metrics that are not listed.
+- Every reason in "reasons" must cite a specific signal from the list above (for example: "Budget is $500-$1,000, indicating a well-funded project" or "Competition is low, with only 3 proposals"). No generic filler.
+- For "bidAmount", recommend a plausible range derived from the stated budget and scope — this is a recommendation, clearly separate from the listed budget.
 
 Write a proposal that sounds confident, human, trustworthy, and persuasive. The client should feel that the freelancer understands the project, can reduce risk, and is a strong fit. Reference the client's specific situation and budget reality. Avoid generic filler and boilerplate.\n\n
 Return JSON with these exact keys:

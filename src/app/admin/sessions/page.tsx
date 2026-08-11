@@ -87,25 +87,23 @@ export default function AdminSessionsPage() {
   const avgDuration = sessions.filter(s => s.durationMs).reduce((a, s) => a + (s.durationMs ?? 0), 0) / (sessions.filter(s => s.durationMs).length || 1);
 
   return (
-    <div style={st.page}>
+    <div style={st.page} className="lh-page">
       <div style={st.shell}>
         {/* Header */}
-        <header style={st.header}>
+        <header style={st.header} className="lh-topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }} onClick={() => router.push('/')}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="Lead Hunter" style={{ height: 42, width: 'auto' }} />
             <div>
               <h1 style={st.brand}>Lead Hunter</h1>
               <p style={st.slogan}>Stop scrolling. Start winning</p>
             </div>
           </div>
-          <button onClick={() => router.push('/')} style={st.backBtn}>← Dashboard</button>
+          <button onClick={() => router.push('/')} style={st.backBtn} className="lh-field">← Dashboard</button>
         </header>
 
         {/* Page Title */}
         <div style={{ marginBottom: 24 }}>
           <h2 style={st.pageTitle}>🛡️ Admin — User Sessions</h2>
-          <p style={st.pageSubtitle}>Track every visitor, guest & admin — what they did, how long they stayed.</p>
+          <p className="lh-body" style={st.pageSubtitle}>Track every visitor, guest & admin — what they did, how long they stayed.</p>
         </div>
 
         {/* Stats */}
@@ -116,9 +114,9 @@ export default function AdminSessionsPage() {
             { label: 'Guest Sessions', val: guestCount, color: '#f59e0b' },
             { label: 'Avg Duration', val: formatDuration(avgDuration), color: '#8b5cf6' },
           ].map(s => (
-            <div key={s.label} style={st.statCard}>
+            <div key={s.label} style={st.statCard} className="lh-surface">
               <div style={{ ...st.statVal, color: s.color }}>{s.val}</div>
-              <div style={st.statLabel}>{s.label}</div>
+              <div className="lh-muted" style={st.statLabel}>{s.label}</div>
             </div>
           ))}
         </div>
@@ -126,7 +124,7 @@ export default function AdminSessionsPage() {
         {/* Filter */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
           {(['all', 'admin', 'guest'] as const).map(f => (
-            <button key={f} onClick={() => setRoleFilter(f)} style={{
+            <button key={f} onClick={() => setRoleFilter(f)} className={roleFilter === f ? 'lh-field lh-active' : 'lh-field'} style={{
               ...st.filterBtn,
               background: roleFilter === f ? '#2563eb' : '#fff',
               color: roleFilter === f ? '#fff' : '#334155',
@@ -141,66 +139,66 @@ export default function AdminSessionsPage() {
 
         {/* Sessions List */}
         {loading ? (
-          <div style={st.center}><div style={st.spinner} /><p style={{ color: '#64748b', marginTop: 12 }}>Loading sessions…</p></div>
+          <div style={st.center}><div style={st.spinner} /><p className="lh-muted" style={{ color: '#64748b', marginTop: 12 }}>Loading sessions…</p></div>
         ) : filtered.length === 0 ? (
-          <div style={st.emptyBox}>
-            <p style={{ fontWeight: 700, fontSize: 16 }}>No sessions recorded yet</p>
-            <p style={{ color: '#64748b', fontSize: 13 }}>Sessions will appear here when users visit the site.</p>
+          <div style={st.emptyBox} className="lh-surface">
+            <p className="lh-h" style={{ fontWeight: 700, fontSize: 16 }}>No sessions recorded yet</p>
+            <p className="lh-muted" style={{ color: '#64748b', fontSize: 13 }}>Sessions will appear here when users visit the site.</p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {filtered.map(s => (
-              <div key={s.guestId} style={st.card}>
+              <div key={s.guestId} style={st.card} className="lh-surface">
                 <div style={st.cardHeader} onClick={() => setExpandedId(expandedId === s.guestId ? null : s.guestId)}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 20 }}>{s.role === 'admin' ? '🔐' : '👤'}</span>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: '#0f172a' }}>
+                      <div className="lh-h" style={{ fontWeight: 700, fontSize: 14, color: '#0f172a' }}>
                         {s.role === 'admin' ? 'Admin' : 'Guest'}
                         <span style={{ ...st.roleBadge, background: s.role === 'admin' ? '#dcfce7' : '#fef9c3', color: s.role === 'admin' ? '#15803d' : '#92400e' }}>
                           {s.role.toUpperCase()}
                         </span>
                       </div>
-                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                      <div className="lh-muted" style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
                         ID: {s.guestId.slice(0, 20)}…
                       </div>
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 12, color: '#64748b' }}>Started</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{timeAgo(s.startTime)}</div>
+                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Started</div>
+                      <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{timeAgo(s.startTime)}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 12, color: '#64748b' }}>Duration</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{formatDuration(s.durationMs)}</div>
+                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Duration</div>
+                      <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{formatDuration(s.durationMs)}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 12, color: '#64748b' }}>Status</div>
+                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Status</div>
                       <div style={{ ...st.statusPill, background: statusBg(s.status) }}>{s.status || '—'}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 12, color: '#64748b' }}>Location</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{s.location || '—'}</div>
+                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Location</div>
+                      <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{s.location || '—'}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 12, color: '#64748b' }}>Actions</div>
+                      <div className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>Actions</div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: '#2563eb' }}>{s.events.length}</div>
                     </div>
-                    <span style={{ fontSize: 18, color: '#94a3b8' }}>{expandedId === s.guestId ? '▲' : '▼'}</span>
+                    <span className="lh-muted" style={{ fontSize: 18, color: '#94a3b8' }}>{expandedId === s.guestId ? '▲' : '▼'}</span>
                   </div>
                 </div>
 
                 {expandedId === s.guestId && (
-                  <div style={st.eventLog}>
-                    <div style={st.eventHeader}>📋 Activity Log</div>
+                  <div style={st.eventLog} className="lh-surface">
+                    <div className="lh-muted" style={st.eventHeader}>📋 Activity Log</div>
                     {s.events.map((ev, i) => (
                       <div key={i} style={st.eventRow}>
-                        <span style={st.eventTime}>{new Date(ev.timestamp).toLocaleTimeString()}</span>
+                        <span className="lh-muted" style={st.eventTime}>{new Date(ev.timestamp).toLocaleTimeString()}</span>
                         <span style={{ ...st.eventTag, background: ev.event === 'session_start' ? '#dcfce7' : ev.event === 'session_end' ? '#fee2e2' : '#dbeafe', color: ev.event === 'session_start' ? '#15803d' : ev.event === 'session_end' ? '#b91c1c' : '#1e40af' }}>
                           {ev.event}
                         </span>
-                        {ev.detail && <span style={st.eventDetail}>{ev.detail}</span>}
+                        {ev.detail && <span className="lh-body" style={st.eventDetail}>{ev.detail}</span>}
                       </div>
                     ))}
                   </div>
@@ -211,7 +209,7 @@ export default function AdminSessionsPage() {
         )}
 
         {/* Footer */}
-        <footer style={{ textAlign: 'center', marginTop: 40, padding: '16px 0', borderTop: '1px solid #e2e8f0', color: '#94a3b8', fontSize: 12 }}>
+        <footer className="lh-muted" style={{ textAlign: 'center', marginTop: 40, padding: '16px 0', borderTop: '1px solid #e2e8f0', color: '#94a3b8', fontSize: 12 }}>
           Developed by Abdul Raheem · geeksxperts@gmail.com · Lead Hunter Admin Panel
         </footer>
       </div>

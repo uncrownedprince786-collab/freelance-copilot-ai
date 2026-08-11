@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Lead Hunter | AI-Powered Freelance Intelligence",
-  description: "Authentic freelance opportunities from Upwork, Freelancer, and more. AI-scored and filtered for quality.",
+  title: "Lead Hunter | Freelance Opportunity Monitor",
+  description: "Live freelance opportunities from Upwork and Freelancer with transparent scoring and real budget figures.",
 };
 
 export default function RootLayout({

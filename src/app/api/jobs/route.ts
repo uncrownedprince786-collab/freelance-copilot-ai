@@ -21,12 +21,23 @@ export async function GET() {
       const genericNames = ['freelancer client', 'upwork client', 'client', ''];
       const clientNameVal = (!rawClientName || genericNames.includes(rawClientName.toLowerCase())) ? '' : rawClientName;
 
-      // --- Budget: handle object vs string
+      // --- Budget: handle object vs string. Use the provider's real currency
+      // symbol when present; default to "$" (Upwork has no currency field).
       let budgetStr = 'Negotiable';
       if (typeof job.budget === 'object' && job.budget) {
-        if (job.budget.amount) budgetStr = `$${job.budget.amount}`;
-        else if (job.budget.min && job.budget.max && job.budget.min !== job.budget.max) budgetStr = `$${job.budget.min}–$${job.budget.max}`;
-        else if (job.budget.min) budgetStr = `$${job.budget.min}`;
+        const sym = job.budget.currency || '$';
+        // Trim float noise from source values ("30.0" → "30") without inventing.
+        const fmt = (n: number) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100));
+        const rate = job.budget.type === 'hourly' ? '/hr' : '';
+        const bMin = Number(job.budget.min);
+        const bMax = Number(job.budget.max);
+        const bAmt = Number(job.budget.amount);
+        const hasMin = Number.isFinite(bMin);
+        const hasMax = Number.isFinite(bMax);
+        const hasAmt = Number.isFinite(bAmt) && bAmt > 0;
+        if (hasAmt) budgetStr = `${sym}${fmt(bAmt)}${rate}`;
+        else if (hasMin && hasMax && bMin !== bMax) budgetStr = `${sym}${fmt(bMin)}–${sym}${fmt(bMax)}${rate}`;
+        else if (hasMin) budgetStr = `${sym}${fmt(bMin)}${rate}`;
         else if (job.budget.type === 'hourly') budgetStr = 'Hourly';
       } else if (typeof job.budget === 'string' && job.budget) {
         budgetStr = job.budget;
@@ -76,7 +87,7 @@ export async function GET() {
         platform: job.platform || (job.source === 'upwork' ? 'Upwork' : job.source === 'freelancer' ? 'Freelancer' : 'Upwork'),
         budget: budgetStr,
         budgetType,
-        score: job.score || 70,
+        score: job.score ?? (job.score === 0 ? 0 : 70),
         viewed: job.viewed || false,
         applied: isApplied,
         postedAt: job.postedAt || job.postedDate || new Date().toISOString(),

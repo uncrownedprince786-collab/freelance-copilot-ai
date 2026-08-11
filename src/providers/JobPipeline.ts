@@ -11,7 +11,7 @@ export class JobPipeline {
     new FreelancerProvider(),
   ];
 
-  async execute(): Promise<Job[]> {
+  async execute(): Promise<{ jobs: Job[]; newJobsAdded: number }> {
     console.log('[JobPipeline] Step 1: Cleaning store - Purging jobs older than 7 days...');
     const existingStore = await this.loadExistingStore();
     const activeStore = this.purgeExpiredJobs(existingStore);
@@ -57,13 +57,10 @@ export class JobPipeline {
         existingKeys.add(key1);
         if (key2) existingKeys.add(key2);
         
-        // Calculate local score
-        const scoredJob = this.calculateScore(job);
-        
-        // Quality Gate: Only accept jobs with a score >= 50
-        if ((scoredJob.score ?? 0) >= 50) {
-          brandNewJobs.push(scoredJob);
-        }
+        // Calculate local score. Every valid new job is stored regardless of
+        // score — lower-scored opportunities must remain available to the user
+        // and the score filter reflects the actual database.
+        brandNewJobs.push(this.calculateScore(job));
       }
     }
 
@@ -86,7 +83,7 @@ export class JobPipeline {
       sourceSummary: `Apify (${apifyJobs.length}), Freelancer (${freelancerJobs.length})`
     });
 
-    return finalCollection;
+    return { jobs: finalCollection, newJobsAdded: brandNewJobs.length };
   }
 
   private async loadExistingStore(): Promise<Job[]> {
@@ -150,7 +147,7 @@ export class JobPipeline {
             description: job.description || '',
             budget: budgetStr,
             platform: job.platform || 'Upwork',
-            score: job.score || 70,
+            score: job.score ?? 70,
             country: job.country || clientObj.country || '',
             clientName: job.clientName || clientObj.name || '',
             clientSpend: job.clientSpend || '',
@@ -176,7 +173,7 @@ export class JobPipeline {
             description: job.description || '',
             budget: budgetStr,
             platform: job.platform || 'Upwork',
-            score: job.score || 70,
+            score: job.score ?? 70,
             createdAt: job.postedAt ? new Date(job.postedAt) : new Date(),
             country: job.country || clientObj.country || '',
             clientName: job.clientName || clientObj.name || '',

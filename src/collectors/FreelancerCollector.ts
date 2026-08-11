@@ -84,43 +84,57 @@ export class FreelancerCollector extends BaseCollector {
         const description = this.cleanText(rawDesc);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const skills = Array.isArray(project.skills) ? project.skills.map((s: any) => this.cleanText(s.name || s)) : [];
+
+        // Budget — use the real source value (min/max + currency) when the API
+        // provides it. Only fall back to "Negotiable" when no budget is returned.
         const budgetRaw = project.budget || {};
-        const budget = budgetRaw.minimum && budgetRaw.maximum
-          ? `$${budgetRaw.minimum} - $${budgetRaw.maximum}`
-          : (budgetRaw.minimum ? `$${budgetRaw.minimum}` : 'Negotiable');
+        const currencyRaw = project.currency || {};
+        const isHourly = project.type === 'hourly';
+        const budgetMin = budgetRaw.minimum != null ? Number(budgetRaw.minimum) : undefined;
+        const budgetMax = budgetRaw.maximum != null ? Number(budgetRaw.maximum) : undefined;
+        const hasBudget = budgetMin != null || budgetMax != null;
+        const budget = hasBudget
+          ? {
+              type: isHourly ? 'hourly' : 'fixed',
+              amount: budgetMin != null && budgetMin === budgetMax ? budgetMin : undefined,
+              min: budgetMin,
+              max: budgetMax,
+              // Prefer the real symbol ("$") over the code ("USD") for display.
+              currency: currencyRaw.sign || currencyRaw.code || undefined,
+            }
+          : { type: 'fixed', amount: undefined };
 
-        const owner = project.owner || {};
-        const country = owner.location?.country?.name || owner.country || undefined;
-        const clientName = owner.username || owner.display_name || 'Freelancer Client';
-        const jobsAwarded = owner.jobs_award_count ?? owner.jobsAwarded ?? undefined;
-        const clientSpend = jobsAwarded !== undefined ? `${jobsAwarded} jobs awarded` : undefined;
-        const rating = owner.rating ?? owner.score ?? undefined;
-        const totalSpent = owner.total_spent ?? owner.totalSpent ?? undefined;
-        const paymentVerified = Boolean(owner.payment_verified ?? owner.paymentVerified ?? false);
+        // Competition — bid_stats.bid_count is the real bids-on-project figure.
+        const proposalCount = project.bid_stats?.bid_count != null
+          ? Number(project.bid_stats.bid_count)
+          : undefined;
 
+        // The active-projects API does not return an owner/user object, so no
+        // client metrics (rating, spend, jobs, verification, country) are
+        // available. Do not fabricate them.
         return {
           title: this.cleanText(project.title || 'Untitled'),
           description,
           url: `https://www.freelancer.com/projects/${project.seo_url || project.id}`,
           platform: 'Freelancer',
           budget,
-          location: country || 'Remote',
+          location: 'Remote',
           postedAt: new Date((project.submitdate || Date.now() / 1000) * 1000),
-          company: clientName,
+          company: 'Freelancer Client',
           status: 'OPEN',
-          country,
-          clientName,
-          clientSpend,
-          connections: 1,
+          country: undefined,
+          clientName: 'Freelancer Client',
+          clientSpend: undefined,
+          connections: 0,
           skills,
-          experienceLevel: project.experience_level || project.experienceLevel || undefined,
-          duration: project.duration || undefined,
-          proposalCount: project.bid_count ?? project.bids ?? undefined,
-          interviewingCount: project.interviewing_count ?? 0,
-          hiresCount: project.hires_count ?? 0,
-          rating,
-          totalSpent,
-          paymentVerified,
+          experienceLevel: undefined,
+          duration: undefined,
+          proposalCount,
+          interviewingCount: 0,
+          hiresCount: 0,
+          rating: undefined,
+          totalSpent: undefined,
+          paymentVerified: undefined,
         };
       });
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

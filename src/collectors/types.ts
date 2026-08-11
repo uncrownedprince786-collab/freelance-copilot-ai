@@ -2,7 +2,7 @@ export interface RawOpportunity {
   title: string;
   description: string;
   url: string;
-  budget: string | { type?: string; amount?: number; min?: number; max?: number };
+  budget: string | { type?: string; amount?: number; min?: number; max?: number; currency?: string };
   platform: string;
   postedAt?: Date | string | null;
   postedDate?: Date | string | null;

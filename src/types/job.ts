@@ -3,6 +3,7 @@ export interface JobBudget {
   amount?: number;
   min?: number;
   max?: number;
+  currency?: string;
 }
 
 export interface JobClient {

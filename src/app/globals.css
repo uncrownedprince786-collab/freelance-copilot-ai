@@ -38,3 +38,92 @@ select {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* ── DARK MODE ─────────────────────────────────────────────────────────
+   The app uses inline styles, so dark theming is done with !important
+   overrides scoped to the lh-* hooks added to existing page structures.
+   Accent colors (score colors, brand colors, badges) are left untouched. */
+@media (prefers-color-scheme: dark) {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background: #0b1220;
+    color: #e2e8f0;
+  }
+
+  /* Page roots */
+  .lh-page {
+    background: #0b1220 !important;
+    color: #e2e8f0 !important;
+  }
+
+  /* Card/surface backgrounds + borders */
+  .lh-surface,
+  .lh-modal {
+    background: #131c2e !important;
+    border-color: #26334a !important;
+    box-shadow: none !important;
+  }
+
+  .lh-topbar {
+    background: #0f172a !important;
+    border-color: #26334a !important;
+  }
+
+  /* Form controls */
+  .lh-field {
+    background: #0b1220 !important;
+    border-color: #26334a !important;
+    color: #e2e8f0 !important;
+  }
+  .lh-field::placeholder {
+    color: #64748b;
+  }
+  .lh-page select option {
+    background: #0b1220;
+    color: #e2e8f0;
+  }
+
+  /* Active/selected state on toggle pills & pagination — keeps the accent
+     since .lh-field's !important background would otherwise erase it. */
+  .lh-active {
+    background: #2563eb !important;
+    border-color: #2563eb !important;
+    color: #fff !important;
+  }
+
+  /* Headings (all pages use dark headings) */
+  .lh-page h1,
+  .lh-page h2,
+  .lh-page h3,
+  .lh-page h4 {
+    color: #f1f5f9 !important;
+  }
+
+  /* Body paragraphs inside surfaces/modals */
+  .lh-surface p,
+  .lh-modal p {
+    color: #c7d0dc !important;
+  }
+
+  /* Primary text (non-heading) */
+  .lh-h {
+    color: #f1f5f9 !important;
+  }
+
+  /* Body/secondary text */
+  .lh-body {
+    color: #c7d0dc !important;
+  }
+
+  /* Muted text */
+  .lh-muted {
+    color: #8b99ad !important;
+  }
+
+  /* Modal "or" divider pill matches the modal surface */
+  .lh-divider-or {
+    background: #131c2e !important;
+  }
+}

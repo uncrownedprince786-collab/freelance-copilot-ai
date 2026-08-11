@@ -23,7 +23,13 @@ export class FreelancerProvider implements JobProvider {
           description: raw.description || '',
           skills: detailSkills,
           budget: typeof raw.budget === 'object' && raw.budget
-            ? { type: raw.budget.type === 'hourly' ? 'hourly' : 'fixed', amount: raw.budget.amount, min: raw.budget.min, max: raw.budget.max }
+            ? {
+                type: raw.budget.type === 'hourly' ? 'hourly' : 'fixed',
+                amount: raw.budget.amount,
+                min: raw.budget.min,
+                max: raw.budget.max,
+                currency: raw.budget.currency,
+              }
             : { type: 'fixed', amount: undefined },
           experienceLevel: raw.experienceLevel || null,
           duration: raw.duration || null,

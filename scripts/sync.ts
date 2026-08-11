@@ -14,7 +14,7 @@ async function runSync() {
   const pipeline = new JobPipeline();
 
   try {
-    const jobs = await pipeline.execute();
+    const { jobs } = await pipeline.execute();
 
     console.log(`\nWriting ${jobs.length} processed jobs to cache...`);
     fs.writeFileSync(cacheFile, JSON.stringify({

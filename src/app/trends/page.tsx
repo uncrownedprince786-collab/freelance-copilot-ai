@@ -13,7 +13,7 @@ interface SkillTrend {
 interface CategoryTrend {
   category: string;
   count: number;
-  trend: 'rising' | 'stable' | 'declining';
+  trend: 'high' | 'moderate' | 'steady';
 }
 
 interface BudgetInsight {
@@ -46,7 +46,9 @@ const URGENCY: Record<string, { border: string; label: string; labelColor: strin
   low:    { border: '#16a34a', label: 'Nice to Have',   labelColor: '#15803d', bg: '#f0fdf4' },
 };
 
-const TREND_COLORS: Record<string, string> = { rising: '#16a34a', stable: '#2563eb', declining: '#dc2626' };
+// Demand level by observed listing frequency (not a temporal trend).
+const TREND_COLORS: Record<string, string> = { high: '#16a34a', moderate: '#2563eb', steady: '#6b7280' };
+const TREND_LABELS: Record<string, string> = { high: 'High demand', moderate: 'Moderate demand', steady: 'Steady demand' };
 
 export default function TrendsPage() {
   const router = useRouter();
@@ -74,7 +76,7 @@ export default function TrendsPage() {
   const maxSkillCount = data?.topSkills?.[0]?.count || 1;
 
   return (
-    <div style={s.page}>
+    <div style={s.page} className="lh-page">
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
@@ -84,31 +86,29 @@ export default function TrendsPage() {
       <div style={s.shell}>
 
         {/* Header */}
-        <header style={s.header}>
+        <header style={s.header} className="lh-topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => router.push('/')}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="Lead Hunter" style={{ height: 38, width: 'auto' }} />
             <div>
-              <div style={s.brand}>Lead Hunter</div>
+              <div className="lh-h" style={s.brand}>Lead Hunter</div>
               <div style={s.slogan}>Stop scrolling. Start winning</div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => router.push('/')} style={s.backBtn}>← Dashboard</button>
+            <button onClick={() => router.push('/')} style={s.backBtn} className="lh-field">← Dashboard</button>
           </div>
         </header>
 
         {/* Page heading */}
         <div style={s.pageHead}>
           <h1 style={s.pageTitle}>Market Trends</h1>
-          <p style={s.pageDesc}>
-            AI-powered analysis of active Upwork jobs — see what skills are in demand, where budgets fall,
-            and which skills to learn to win more contracts. Updates automatically after each sync.
+          <p className="lh-body" style={s.pageDesc}>
+            Analysis of collected freelance listings — see what skills are in demand, where budgets fall,
+            and which skills appear most often. Updates automatically after each sync.
           </p>
           {data && (
             <div style={s.metaRow}>
-              <span style={s.metaPill}>{data.totalJobsAnalyzed} jobs analysed</span>
-              <span style={s.metaPill}>Updated {new Date(data.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <span style={s.metaPill} className="lh-field">{data.totalJobsAnalyzed} jobs analysed</span>
+              <span style={s.metaPill} className="lh-field">Updated {new Date(data.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               <span style={{ ...s.metaPill, background: '#f0fdf4', color: '#15803d', borderColor: '#bbf7d0' }}>Auto-updates with each sync</span>
             </div>
           )}
@@ -117,32 +117,32 @@ export default function TrendsPage() {
         {loading ? (
           <div style={s.center}>
             <div style={s.spinner} />
-            <p style={{ color: '#6b7280', marginTop: 14, fontSize: 14 }}>Analysing job market with AI…</p>
+            <p className="lh-muted" style={{ color: '#6b7280', marginTop: 14, fontSize: 14 }}>Analysing job market with AI…</p>
           </div>
         ) : error ? (
-          <div style={s.errorBox}>
+          <div style={s.errorBox} className="lh-surface">
             <p style={{ color: '#dc2626', fontWeight: 600, margin: '0 0 12px' }}>{error}</p>
-            <button onClick={fetchTrends} style={s.backBtn}>Retry</button>
+            <button onClick={fetchTrends} style={s.backBtn} className="lh-field">Retry</button>
           </div>
         ) : data && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
             {/* Market Summary */}
-            <div className="fade-up" style={s.card}>
+            <div className="fade-up lh-surface" style={s.card}>
               <h2 style={s.cardTitle}>Market Overview</h2>
               <p style={s.bodyText}>{data.marketSummary}</p>
             </div>
 
             {/* Top Skills */}
-            <div className="fade-up" style={s.card}>
+            <div className="fade-up lh-surface" style={s.card}>
               <h2 style={s.cardTitle}>Top Skills in Demand</h2>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
                 {data.topSkills.length ? (
                   data.topSkills.map((sk, i) => (
                     <div key={sk.skill} style={s.skillRow}>
-                      <span style={s.rank}>#{i + 1}</span>
-                      <span style={s.skillName}>{sk.skill}</span>
-                      <span style={{ ...s.trendTag, color: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#6b7280', background: i < 3 ? '#f0fdf4' : i < 7 ? '#eff6ff' : '#f9fafb' }}>
+                      <span className="lh-muted" style={s.rank}>#{i + 1}</span>
+                      <span className="lh-h" style={s.skillName}>{sk.skill}</span>
+                      <span className={i >= 7 ? 'lh-field' : undefined} style={{ ...s.trendTag, color: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#6b7280', background: i < 3 ? '#f0fdf4' : i < 7 ? '#eff6ff' : '#f9fafb' }}>
                         {sk.growth}
                       </span>
                       <div style={{ flex: 1, margin: '0 12px' }}>
@@ -150,11 +150,11 @@ export default function TrendsPage() {
                           <div style={{ ...s.barFill, width: `${Math.round(sk.count / maxSkillCount * 100)}%`, background: i < 3 ? '#16a34a' : i < 7 ? '#2563eb' : '#94a3b8' }} />
                         </div>
                       </div>
-                      <span style={s.countLabel}>{sk.count} jobs</span>
+                      <span className="lh-muted" style={s.countLabel}>{sk.count} jobs</span>
                     </div>
                   ))
                 ) : (
-                  <p style={s.emptyNote}>Not enough data yet to rank skills in demand.</p>
+                  <p className="lh-muted" style={s.emptyNote}>Not enough data yet to rank skills in demand.</p>
                 )}
               </div>
             </div>
@@ -163,38 +163,38 @@ export default function TrendsPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(320px,100%),1fr))', gap: 20 }}>
 
               {/* Categories */}
-              <div className="fade-up" style={s.card}>
+              <div className="fade-up lh-surface" style={s.card}>
                 <h2 style={s.cardTitle}>Job Categories</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
                   {data.topCategories.length ? (
                     data.topCategories.map(cat => (
                       <div key={cat.category} style={s.catRow}>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{cat.category}</div>
+                          <div className="lh-h" style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{cat.category}</div>
                           <div style={{ fontSize: 11, color: TREND_COLORS[cat.trend], fontWeight: 600, marginTop: 2 }}>
-                            {cat.trend === 'rising' ? 'Rising' : cat.trend === 'declining' ? 'Declining' : 'Stable'}
+                            {TREND_LABELS[cat.trend]}
                           </div>
                         </div>
-                        <span style={{ ...s.countBadge, background: cat.trend === 'rising' ? '#f0fdf4' : '#f9fafb', color: cat.trend === 'rising' ? '#15803d' : '#374151', border: `1px solid ${cat.trend === 'rising' ? '#bbf7d0' : '#e5e7eb'}` }}>
+                        <span className={cat.trend === 'high' ? undefined : 'lh-field'} style={{ ...s.countBadge, background: cat.trend === 'high' ? '#f0fdf4' : '#f9fafb', color: cat.trend === 'high' ? '#15803d' : '#374151', border: `1px solid ${cat.trend === 'high' ? '#bbf7d0' : '#e5e7eb'}` }}>
                           {cat.count}
                         </span>
                       </div>
                     ))
                   ) : (
-                    <p style={s.emptyNote}>Not enough data yet to identify job categories.</p>
+                    <p className="lh-muted" style={s.emptyNote}>Not enough data yet to identify job categories.</p>
                   )}
                 </div>
               </div>
 
               {/* Budget Distribution */}
-              <div className="fade-up" style={s.card}>
+              <div className="fade-up lh-surface" style={s.card}>
                 <h2 style={s.cardTitle}>Budget Distribution</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
                   {data.budgetInsights.filter(b => b.count > 0).map(b => (
                     <div key={b.range}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
-                        <span style={{ fontWeight: 600, color: '#374151' }}>{b.range}</span>
-                        <span style={{ color: '#6b7280' }}>{b.count} jobs ({b.pct}%)</span>
+                        <span className="lh-body" style={{ fontWeight: 600, color: '#374151' }}>{b.range}</span>
+                        <span className="lh-muted" style={{ color: '#6b7280' }}>{b.count} jobs ({b.pct}%)</span>
                       </div>
                       <div style={s.barTrack}>
                         <div style={{ ...s.barFill, width: `${b.pct}%`, background: '#2563eb' }} />
@@ -206,25 +206,25 @@ export default function TrendsPage() {
             </div>
 
             {/* AI Insights */}
-            <div className="fade-up" style={s.card}>
+            <div className="fade-up lh-surface" style={s.card}>
               <h2 style={s.cardTitle}>AI Market Insights</h2>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(300px,100%),1fr))', gap: 10, marginTop: 4 }}>
                 {data.aiInsights.length ? (
                   data.aiInsights.map((insight, i) => (
-                    <div key={i} style={s.insightCard}>
-                      <p style={{ fontSize: 13, color: '#374151', lineHeight: 1.65, margin: 0 }}>{insight}</p>
+                    <div key={i} style={s.insightCard} className="lh-surface">
+                      <p className="lh-body" style={{ fontSize: 13, color: '#374151', lineHeight: 1.65, margin: 0 }}>{insight}</p>
                     </div>
                   ))
                 ) : (
-                  <p style={s.emptyNote}>Not enough data yet to generate reliable AI market insights.</p>
+                  <p className="lh-muted" style={s.emptyNote}>Not enough data yet to generate reliable AI market insights.</p>
                 )}
               </div>
             </div>
 
             {/* Skills to Learn */}
-            <div className="fade-up" style={s.card}>
+            <div className="fade-up lh-surface" style={s.card}>
               <h2 style={s.cardTitle}>Skills to Learn Next</h2>
-              <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 14px' }}>
+              <p className="lh-muted" style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 14px' }}>
                 Prioritised by market demand and earning potential — based on current Upwork job data.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -232,11 +232,11 @@ export default function TrendsPage() {
                   data.recommendedSkillsToLearn.map((sk, i) => {
                     const uc = URGENCY[sk.urgency] ?? URGENCY.medium;
                     return (
-                      <div key={i} style={{ ...s.learnCard, borderLeft: `3px solid ${uc.border}`, background: uc.bg }}>
+                      <div key={i} style={{ ...s.learnCard, borderLeft: `3px solid ${uc.border}`, background: uc.bg }} className="lh-surface">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                           <div>
-                            <div style={{ fontWeight: 700, fontSize: 14, color: '#111827', marginBottom: 4 }}>{sk.skill}</div>
-                            <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.55 }}>{sk.reason}</div>
+                            <div className="lh-h" style={{ fontWeight: 700, fontSize: 14, color: '#111827', marginBottom: 4 }}>{sk.skill}</div>
+                            <div className="lh-body" style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.55 }}>{sk.reason}</div>
                           </div>
                           <span style={{ ...s.urgencyTag, background: uc.border, color: '#fff', whiteSpace: 'nowrap' }}>
                             {uc.label}
@@ -246,7 +246,7 @@ export default function TrendsPage() {
                     );
                   })
                 ) : (
-                  <p style={s.emptyNote}>More market data is needed to identify reliable emerging skills.</p>
+                  <p className="lh-muted" style={s.emptyNote}>More market data is needed to identify reliable emerging skills.</p>
                 )}
               </div>
             </div>
@@ -254,7 +254,7 @@ export default function TrendsPage() {
           </div>
         )}
 
-        <footer style={s.footer}>
+        <footer className="lh-muted" style={s.footer}>
           Developed by Abdul Raheem &middot; geeksxperts@gmail.com &middot; Lead Hunter
         </footer>
       </div>

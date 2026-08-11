@@ -7,9 +7,9 @@ import { isAdminRequest } from '@/lib/adminAuth';
 const LOCK_KEY = 'sync_lock';
 const LOCK_TTL_MS = 15 * 60 * 1000; // 15 minutes; release-on-finally plus TTL safety net
 
-// Cooldown between production cron fetches. The cron runs every minute (per
-// vercel.json) but we only need to hit Upwork/Freelancer every ~10 min; the
-// rest of those runs perform lightweight session cleanup + heartbeat work.
+// Cooldown between production sync fetches. The Vercel cron fires once daily
+// (vercel.json: "0 8 * * *") and GitHub Actions fires every 4 hours; the
+// cooldown only guards against rapid manual refreshes from the admin UI.
 const SYNC_TS_KEY = 'last_sync_successful';
 const SYNC_COOLDOWN_MS = 10 * 60 * 1000;
 
@@ -19,9 +19,9 @@ function timingSafeSecretEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aHash, bHash);
 }
 
-// Prevent overlapping sync runs (Vercel cron every minute and GitHub Actions
-// every 4h can coincide). Uses SystemKv with a TTL so a crashed run cannot
-// wedge the pipeline permanently.
+// Prevent overlapping sync runs (GitHub Actions every 4h can coincide with the
+// daily Vercel cron). Uses SystemKv with a TTL so a crashed run cannot wedge
+// the pipeline permanently.
 async function acquireSyncLock(): Promise<boolean> {
   try {
     const now = Date.now();
@@ -92,7 +92,7 @@ async function runSync(req: NextRequest) {
       // Lightweight housekeeping runs on every cron tick.
       const sessionsCleaned = await cleanupStaleSessions();
 
-      // Cooldown: avoid hammering Upwork/Freelancer on every 1-min tick.
+      // Cooldown: avoid hammering Upwork/Freelancer on rapid manual refreshes.
       const now = Date.now();
       if (!force) {
         let lastSync = 0;
@@ -115,8 +115,8 @@ async function runSync(req: NextRequest) {
       }
 
       const pipeline = new JobPipeline();
-      const jobs = await pipeline.execute();
-      const newJobs = jobs.length;
+      const { jobs, newJobsAdded } = await pipeline.execute();
+      const newJobs = newJobsAdded;
 
       // Record successful sync timestamp (for cooldown enforcement).
       await prisma.systemKv.upsert({

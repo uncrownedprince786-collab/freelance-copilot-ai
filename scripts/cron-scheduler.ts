@@ -10,7 +10,7 @@ async function runScheduledSync() {
   console.log(`[CronScheduler] Running scheduled sync at ${new Date().toISOString()}...`);
   try {
     const pipeline = new JobPipeline();
-    const jobs = await pipeline.execute();
+    const { jobs } = await pipeline.execute();
 
     const cacheFile = path.join(process.cwd(), '.jobs-cache.json');
     fs.writeFileSync(cacheFile, JSON.stringify({

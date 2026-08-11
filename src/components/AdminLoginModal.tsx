@@ -37,15 +37,13 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
 
   return (
     <div style={styles.overlay}>
-      <div style={styles.modal}>
+      <div style={styles.modal} className="lh-modal">
         <div style={styles.header}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Lead Hunter Logo" style={{ height: 40, width: 'auto' }} />
-          <h2 style={styles.title}>Lead Hunter Access</h2>
-          <button onClick={onClose} style={styles.closeBtn}>&times;</button>
+          <h2 className="lh-h" style={styles.title}>Lead Hunter Access</h2>
+          <button onClick={onClose} className="lh-muted" style={styles.closeBtn}>&times;</button>
         </div>
 
-        <p style={styles.subtitle}>
+        <p className="lh-body" style={styles.subtitle}>
           Login as Admin for full access, or continue as Guest to browse jobs and proposals.
         </p>
 
@@ -53,7 +51,7 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
           {error && <div style={styles.errorBanner}>{error}</div>}
 
           <div style={styles.inputGroup}>
-            <label style={styles.label}>Username</label>
+            <label className="lh-body" style={styles.label}>Username</label>
             <input
               type="text"
               value={username}
@@ -61,11 +59,12 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
               placeholder="Enter admin username"
               required
               style={styles.input}
+              className="lh-field"
             />
           </div>
 
           <div style={styles.inputGroup}>
-            <label style={styles.label}>Password</label>
+            <label className="lh-body" style={styles.label}>Password</label>
             <div style={styles.passwordWrapper}>
               <input
                 type={showPassword ? 'text' : 'password'}
@@ -74,6 +73,7 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
                 placeholder="Enter password"
                 required
                 style={{ ...styles.input, paddingRight: 44 }}
+                className="lh-field"
               />
               <button
                 type="button"
@@ -105,13 +105,13 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
         </form>
 
         <div style={styles.divider}>
-          <span style={styles.dividerText}>or</span>
+          <span className="lh-muted lh-divider-or" style={styles.dividerText}>or</span>
         </div>
 
-        <button onClick={handleGuestLogin} style={styles.guestBtn}>
+        <button onClick={handleGuestLogin} style={styles.guestBtn} className="lh-field">
           👤 Continue as Guest
         </button>
-        <p style={styles.guestNote}>
+        <p className="lh-muted" style={styles.guestNote}>
           Guests can browse jobs and view AI proposals. No credentials needed.
         </p>
       </div>

@@ -13,7 +13,15 @@ interface CronLogEntry {
   sourceSummary: string;
 }
 
-const CRON_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+// Production syncs run every 4 hours via GitHub Actions (.github/workflows/sync.yml);
+// the Vercel cron (vercel.json) additionally fires once daily at 08:00 UTC.
+function nextScheduledRun(): number {
+  const now = new Date();
+  const nextHour = Math.ceil(now.getUTCHours() / 4) * 4;
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), nextHour, 0, 0, 0));
+  if (next.getTime() <= now.getTime()) next.setUTCHours(nextHour + 4);
+  return next.getTime();
+}
 
 export default function CronLogsPage() {
   const router = useRouter();
@@ -30,13 +38,10 @@ export default function CronLogsPage() {
     fetchLogs();
   }, [router]);
 
-  // Countdown to next scheduled run (every 4h from the last run)
+  // Countdown to the next scheduled run (every 4 hours via GitHub Actions)
   useEffect(() => {
     const tick = () => {
-      if (logs.length === 0) { setCountdown('—'); return; }
-      const lastRun = new Date(logs[0].timestamp).getTime();
-      const nextRun = lastRun + CRON_INTERVAL_MS;
-      const diff = nextRun - Date.now();
+      const diff = nextScheduledRun() - Date.now();
       if (diff <= 0) { setCountdown('Due now'); return; }
       const h = Math.floor(diff / 3600000);
       const m = Math.floor((diff % 3600000) / 60000);
@@ -46,7 +51,7 @@ export default function CronLogsPage() {
     tick();
     timerRef.current = setInterval(tick, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [logs]);
+  }, []);
 
   const fetchLogs = async () => {
     setLoading(true);
@@ -86,17 +91,15 @@ export default function CronLogsPage() {
   const formatDate = (isoStr: string) => new Date(isoStr).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 
   return (
-    <div style={st.page}>
+    <div style={st.page} className="lh-page">
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <div style={st.shell}>
 
         {/* Header */}
-        <header style={st.header}>
+        <header style={st.header} className="lh-topbar">
           <div style={st.brandGroup} onClick={() => router.push('/')}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="Lead Hunter Logo" style={st.logo} />
             <div>
-              <div style={st.brandTitle}>Lead Hunter</div>
+              <div className="lh-h" style={st.brandTitle}>Lead Hunter</div>
               <div style={st.slogan}>Stop scrolling. Start winning</div>
             </div>
           </div>
@@ -104,27 +107,27 @@ export default function CronLogsPage() {
             <button onClick={runManualSync} disabled={running} style={st.runBtn}>
               {running ? 'Running…' : 'Run Sync Now'}
             </button>
-            <button onClick={() => router.push('/')} style={st.backBtn}>← Dashboard</button>
+            <button onClick={() => router.push('/')} style={st.backBtn} className="lh-field">← Dashboard</button>
           </div>
         </header>
 
         {/* Status bar */}
         <div style={st.statusBar}>
-          <div style={st.statusItem}>
-            <div style={st.statusLabel}>Jobs in Cache</div>
-            <div style={st.statusVal}>{totalCachedJobs || '—'}</div>
+          <div style={st.statusItem} className="lh-surface">
+            <div className="lh-muted" style={st.statusLabel}>Jobs in Cache</div>
+            <div className="lh-h" style={st.statusVal}>{totalCachedJobs || '—'}</div>
           </div>
-          <div style={st.statusItem}>
-            <div style={st.statusLabel}>Last Run</div>
-            <div style={st.statusVal}>{logs.length > 0 ? formatTime(logs[0].timestamp) : '—'}</div>
+          <div style={st.statusItem} className="lh-surface">
+            <div className="lh-muted" style={st.statusLabel}>Last Run</div>
+            <div className="lh-h" style={st.statusVal}>{logs.length > 0 ? formatTime(logs[0].timestamp) : '—'}</div>
           </div>
-          <div style={st.statusItem}>
-            <div style={st.statusLabel}>Next Scheduled Run</div>
+          <div style={st.statusItem} className="lh-surface">
+            <div className="lh-muted" style={st.statusLabel}>Next Scheduled Run</div>
             <div style={{ ...st.statusVal, color: '#2563eb', fontFamily: 'monospace' }}>{countdown || '—'}</div>
           </div>
-          <div style={st.statusItem}>
-            <div style={st.statusLabel}>Schedule</div>
-            <div style={st.statusVal}>Every 4 hours</div>
+          <div style={st.statusItem} className="lh-surface">
+            <div className="lh-muted" style={st.statusLabel}>Schedule</div>
+            <div className="lh-h" style={st.statusVal}>Every 4 hours</div>
           </div>
         </div>
 
@@ -144,44 +147,44 @@ export default function CronLogsPage() {
         {/* Page Title */}
         <div style={{ margin: '20px 0 12px' }}>
           <h2 style={st.pageTitle}>Cron Execution Logs</h2>
-          <p style={st.pageSubtitle}>Last 24 hours of automated background runs — timestamp, status, and jobs discovered.</p>
+          <p className="lh-body" style={st.pageSubtitle}>Last 24 hours of automated background runs — timestamp, status, and jobs discovered.</p>
         </div>
 
         {/* Content */}
         {loading ? (
-          <div style={st.center}><div style={st.spinner} /><p style={{ color: '#6b7280', marginTop: 12, fontSize: 14 }}>Loading…</p></div>
+          <div style={st.center}><div style={st.spinner} /><p className="lh-muted" style={{ color: '#6b7280', marginTop: 12, fontSize: 14 }}>Loading…</p></div>
         ) : logs.length === 0 ? (
-          <div style={st.emptyBox}>
-            <p style={{ fontWeight: 700, fontSize: 15, color: '#111827', margin: '0 0 6px' }}>No runs recorded in the last 24 hours</p>
-            <p style={{ color: '#6b7280', fontSize: 13, margin: 0 }}>
+          <div style={st.emptyBox} className="lh-surface">
+            <p className="lh-h" style={{ fontWeight: 700, fontSize: 15, color: '#111827', margin: '0 0 6px' }}>No runs recorded in the last 24 hours</p>
+            <p className="lh-muted" style={{ color: '#6b7280', fontSize: 13, margin: 0 }}>
               Use &quot;Run Sync Now&quot; above to trigger a manual sync, or wait for the scheduled cron.
             </p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {logs.map(log => (
-              <div key={log.id} style={st.logCard}>
+              <div key={log.id} style={st.logCard} className="lh-surface">
                 <div style={st.logCardHeader}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <span style={st.logTime}>{formatTime(log.timestamp)}</span>
-                    <span style={st.logDate}>{formatDate(log.timestamp)}</span>
+                    <span className="lh-h" style={st.logTime}>{formatTime(log.timestamp)}</span>
+                    <span className="lh-muted" style={st.logDate}>{formatDate(log.timestamp)}</span>
                   </div>
                   <span style={{ ...st.statusBadge, background: log.status === 'SUCCESS' ? '#f0fdf4' : '#fef2f2', color: log.status === 'SUCCESS' ? '#15803d' : '#b91c1c', border: `1px solid ${log.status === 'SUCCESS' ? '#bbf7d0' : '#fecaca'}` }}>
                     {log.status}
                   </span>
                 </div>
-                <div style={st.logBody}>
+                <div style={st.logBody} className="lh-surface">
                   <div style={st.metricCell}>
-                    <div style={st.metricLabel}>New Jobs Added</div>
+                    <div className="lh-muted" style={st.metricLabel}>New Jobs Added</div>
                     <div style={{ ...st.metricVal, color: '#16a34a', fontSize: 20, fontWeight: 800 }}>+{log.newJobsAdded}</div>
                   </div>
                   <div style={st.metricCell}>
-                    <div style={st.metricLabel}>Total Scraped</div>
-                    <div style={st.metricVal}>{log.jobsFetched}</div>
+                    <div className="lh-muted" style={st.metricLabel}>Total Scraped</div>
+                    <div className="lh-h" style={st.metricVal}>{log.jobsFetched}</div>
                   </div>
                   <div style={st.metricCell}>
-                    <div style={st.metricLabel}>Platform</div>
-                    <div style={{ ...st.metricVal, fontSize: 13, fontWeight: 600 }}>
+                    <div className="lh-muted" style={st.metricLabel}>Platform</div>
+                    <div className="lh-h" style={{ ...st.metricVal, fontSize: 13, fontWeight: 600 }}>
                       {log.sourceSummary ? log.sourceSummary.replace(/apify/gi, 'Upwork') : 'Upwork'}
                     </div>
                   </div>
@@ -191,7 +194,7 @@ export default function CronLogsPage() {
           </div>
         )}
 
-        <footer style={st.footer}>
+        <footer className="lh-muted" style={st.footer}>
           Lead Hunter &middot; Admin Panel &middot; Developed by Abdul Raheem &middot; geeksxperts@gmail.com
         </footer>
       </div>
@@ -204,7 +207,6 @@ const st: Record<string, React.CSSProperties> = {
   shell: { maxWidth: 900, margin: '0 auto' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid #e5e7eb' },
   brandGroup: { display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' },
-  logo: { height: 40, width: 'auto', objectFit: 'contain' as const },
   brandTitle: { fontSize: 18, fontWeight: 800, color: '#111827', margin: 0 },
   slogan: { fontSize: 11, color: '#16a34a', fontWeight: 600 },
   backBtn: { background: '#fff', border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 14px', fontSize: 13, fontWeight: 600, color: '#374151', cursor: 'pointer' },

@@ -232,10 +232,10 @@ export default function JobDetailPage() {
   /* ── LOADING ── */
   if (loading) {
     return (
-      <div style={s.page}>
+      <div style={s.page} className="lh-page">
         <div style={s.loadingCenter}>
           <div style={s.spinner} />
-          <p style={{ color: '#64748b', marginTop: 12, fontSize: 14 }}>Loading job details…</p>
+          <p className="lh-muted" style={{ color: '#64748b', marginTop: 12, fontSize: 14 }}>Loading job details…</p>
         </div>
       </div>
     );
@@ -243,10 +243,10 @@ export default function JobDetailPage() {
 
   if (error && !job) {
     return (
-      <div style={s.page}>
-        <div style={s.errorBox}>
+      <div style={s.page} className="lh-page">
+        <div style={s.errorBox} className="lh-surface">
           <p style={{ color: '#dc2626', fontWeight: 600, marginBottom: 12 }}>{error}</p>
-          <button onClick={() => router.push('/')} style={s.btnSecondary}>Back to Dashboard</button>
+          <button onClick={() => router.push('/')} style={s.btnSecondary} className="lh-field">Back to Dashboard</button>
         </div>
       </div>
     );
@@ -260,7 +260,7 @@ export default function JobDetailPage() {
 
   /* ── RENDER ── */
   return (
-    <div style={s.page} className="lj-page">
+    <div style={s.page} className="lj-page lh-page">
       <style>{`
         @keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
         @media (max-width: 768px) {
@@ -276,20 +276,18 @@ export default function JobDetailPage() {
       />
 
       {/* ── TOP BAR ── */}
-      <div style={s.topBar}>
+      <div style={s.topBar} className="lh-topbar">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button onClick={() => router.push('/')} style={s.backBtn}>
+          <button onClick={() => router.push('/')} style={s.backBtn} className="lh-field">
             ← Dashboard
           </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Lead Hunter" style={{ height: 30, width: 'auto', cursor: 'pointer' }} onClick={() => router.push('/')} />
-          <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', cursor: 'pointer' }} onClick={() => router.push('/')}>Lead Hunter</span>
+          <span className="lh-h" style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', cursor: 'pointer' }} onClick={() => router.push('/')}>Lead Hunter</span>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span style={{ ...s.badge, background: PLATFORM_COLORS[job.platform] ?? '#6c5ce7' }}>{job.platform}</span>
           {job.isNew && <span style={{ ...s.badge, background: '#22c55e' }}>New</span>}
           {job.applied && <span style={{ ...s.badge, background: '#3b82f6' }}>Applied</span>}
-          <span style={s.timeAgo}>Posted {timeAgo(job.postedAt)}</span>
+          <span className="lh-muted" style={s.timeAgo}>Posted {timeAgo(job.postedAt)}</span>
         </div>
       </div>
 
@@ -297,7 +295,7 @@ export default function JobDetailPage() {
       <div style={s.layout} className="lj-layout">
 
         {/* ──── LEFT PANEL ──── */}
-        <section style={s.leftPanel} className="lj-left">
+        <section style={s.leftPanel} className="lj-left lh-surface">
 
           {/* Title */}
           <h1 style={s.title}>{job.title}</h1>
@@ -316,39 +314,39 @@ export default function JobDetailPage() {
           {/* Job Specs Row — Budget, Experience, Type */}
           <div style={s.specRow}>
             {job.budget && job.budget !== 'Negotiable' && (
-              <div style={s.specBox}>
-                <div style={s.specVal}>{job.budget}</div>
-                <div style={s.specKey}>{job.budgetType || 'Budget'}</div>
+              <div style={s.specBox} className="lh-surface">
+                <div className="lh-h" style={s.specVal}>{job.budget}</div>
+                <div className="lh-muted" style={s.specKey}>{job.budgetType || 'Budget'}</div>
               </div>
             )}
             {expLevel && (
-              <div style={s.specBox}>
-                <div style={s.specVal}>{expLevel}</div>
-                <div style={s.specKey}>Experience Level</div>
+              <div style={s.specBox} className="lh-surface">
+                <div className="lh-h" style={s.specVal}>{expLevel}</div>
+                <div className="lh-muted" style={s.specKey}>Experience Level</div>
               </div>
             )}
             {job.duration && (
-              <div style={s.specBox}>
-                <div style={s.specVal}>{job.duration}</div>
-                <div style={s.specKey}>Duration</div>
+              <div style={s.specBox} className="lh-surface">
+                <div className="lh-h" style={s.specVal}>{job.duration}</div>
+                <div className="lh-muted" style={s.specKey}>Duration</div>
               </div>
             )}
             {(job.connections ?? 0) > 0 && (
-              <div style={s.specBox}>
+              <div style={s.specBox} className="lh-surface">
                 <div style={{ ...s.specVal, color: '#2563eb' }}>{job.connections} Connects</div>
-                <div style={s.specKey}>Required to Bid</div>
+                <div className="lh-muted" style={s.specKey}>Required to Bid</div>
               </div>
             )}
           </div>
 
           {/* Match score */}
           <div style={s.scoreRow}>
-            <span style={{ fontSize: 13, color: '#374151', fontWeight: 600 }}>Match Score</span>
+            <span className="lh-body" style={{ fontSize: 13, color: '#374151', fontWeight: 600 }}>Match Score</span>
             <span style={{ ...s.scorePct, color: getScoreColor(job.score) }}>{job.score}%</span>
             <div style={s.barTrack}>
               <div style={{ ...s.barFill, width: `${job.score}%`, background: getScoreColor(job.score) }} />
             </div>
-            <span style={{ fontSize: 12, color: '#64748b' }}>
+            <span className="lh-muted" style={{ fontSize: 12, color: '#64748b' }}>
               {job.score >= 70 ? 'Strong fit' : job.score >= 50 ? 'Promising' : 'Low match'}
             </span>
           </div>
@@ -358,7 +356,7 @@ export default function JobDetailPage() {
           {/* Description */}
           <div>
             <h3 style={s.sectionHead}>Project Description</h3>
-            <div style={s.descBody}>{job.description || 'No description provided.'}</div>
+            <div className="lh-body" style={s.descBody}>{job.description || 'No description provided.'}</div>
           </div>
 
           {/* Skills */}
@@ -367,7 +365,7 @@ export default function JobDetailPage() {
               <h3 style={s.sectionHead}>Skills & Expertise</h3>
               <div style={s.skillsWrap}>
                 {skills.map((sk, i) => (
-                  <span key={i} style={s.skillChip}>{sk}</span>
+                  <span key={i} style={s.skillChip} className="lh-field">{sk}</span>
                 ))}
               </div>
             </div>
@@ -379,13 +377,13 @@ export default function JobDetailPage() {
               <h3 style={s.sectionHead}>Activity on this Job</h3>
               <div style={s.activityRow}>
                 {job.proposalCount != null && (
-                  <span style={s.actItem}>Proposals: <strong>{job.proposalCount}</strong></span>
+                  <span className="lh-body" style={s.actItem}>Proposals: <strong>{job.proposalCount}</strong></span>
                 )}
                 {(job.interviewingCount ?? 0) > 0 && (
-                  <span style={s.actItem}>Interviewing: <strong>{job.interviewingCount}</strong></span>
+                  <span className="lh-body" style={s.actItem}>Interviewing: <strong>{job.interviewingCount}</strong></span>
                 )}
                 {(job.hiresCount ?? 0) > 0 && (
-                  <span style={s.actItem}>Hires: <strong>{job.hiresCount}</strong></span>
+                  <span className="lh-body" style={s.actItem}>Hires: <strong>{job.hiresCount}</strong></span>
                 )}
               </div>
             </div>
@@ -397,33 +395,33 @@ export default function JobDetailPage() {
               <h3 style={s.sectionHead}>About the Client</h3>
               <div style={s.clientGrid}>
                 {hasCountry && (
-                  <div style={s.clientItem}>
-                    <div style={s.clientLabel}>Location</div>
-                    <div style={s.clientVal}>{job.country}</div>
+                  <div style={s.clientItem} className="lh-surface">
+                    <div className="lh-muted" style={s.clientLabel}>Location</div>
+                    <div className="lh-h" style={s.clientVal}>{job.country}</div>
                   </div>
                 )}
                 {job.clientSpend && (
-                  <div style={s.clientItem}>
-                    <div style={s.clientLabel}>Total Spent</div>
-                    <div style={{ ...s.clientVal, color: '#0f172a', fontWeight: 700 }}>{job.clientSpend}</div>
+                  <div style={s.clientItem} className="lh-surface">
+                    <div className="lh-muted" style={s.clientLabel}>Total Spent</div>
+                    <div className="lh-h" style={{ ...s.clientVal, color: '#0f172a', fontWeight: 700 }}>{job.clientSpend}</div>
                   </div>
                 )}
                 {job.clientRating && (
-                  <div style={s.clientItem}>
-                    <div style={s.clientLabel}>Rating</div>
+                  <div style={s.clientItem} className="lh-surface">
+                    <div className="lh-muted" style={s.clientLabel}>Rating</div>
                     <div style={{ ...s.clientVal, color: '#f59e0b', fontWeight: 700 }}>{job.clientRating} ★</div>
                   </div>
                 )}
                 {job.paymentVerified && (
-                  <div style={s.clientItem}>
-                    <div style={s.clientLabel}>Payment</div>
+                  <div style={s.clientItem} className="lh-surface">
+                    <div className="lh-muted" style={s.clientLabel}>Payment</div>
                     <div style={{ ...s.clientVal, color: '#16a34a' }}>Verified</div>
                   </div>
                 )}
                 {job.jobsPosted != null && (
-                  <div style={s.clientItem}>
-                    <div style={s.clientLabel}>Jobs Posted</div>
-                    <div style={s.clientVal}>{job.jobsPosted}</div>
+                  <div style={s.clientItem} className="lh-surface">
+                    <div className="lh-muted" style={s.clientLabel}>Jobs Posted</div>
+                    <div className="lh-h" style={s.clientVal}>{job.jobsPosted}</div>
                   </div>
                 )}
               </div>
@@ -440,14 +438,14 @@ export default function JobDetailPage() {
         </section>
 
         {/* ──── RIGHT PANEL: AI ANALYSIS ──── */}
-        <aside style={s.rightPanel} className="lj-right">
+        <aside style={s.rightPanel} className="lj-right lh-surface">
 
           {analyzing && (
-            <div style={s.card}>
+            <div style={s.card} className="lh-surface">
               <div style={s.sectionHead}>Generating AI Proposal…</div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px 0', gap: 10 }}>
                 <div style={s.spinner} />
-                <p style={s.muted}>Reading the job, extracting requirements, writing a tailored proposal.</p>
+                <p className="lh-body" style={s.muted}>Reading the job, extracting requirements, writing a tailored proposal.</p>
               </div>
             </div>
           )}
@@ -459,7 +457,7 @@ export default function JobDetailPage() {
           {!analyzing && analysis && (
             <>
               {/* AI Score / Risk / ETA */}
-              <div style={s.card}>
+              <div style={s.card} className="lh-surface">
                 <div style={{ ...s.sectionHead, display: 'flex', alignItems: 'center', gap: 8 }}>
                   AI Assessment
                   {analysis.cached && (
@@ -469,43 +467,53 @@ export default function JobDetailPage() {
                   )}
                 </div>
                 <div style={s.verdictGrid}>
-                  <div style={s.verdictCell}>
-                    <div style={s.vLabel}>Score</div>
+                  <div style={s.verdictCell} className="lh-surface">
+                    <div className="lh-muted" style={s.vLabel}>Score</div>
                     <div style={{ ...s.vValue, color: getScoreColor(analysis.score) }}>{analysis.score}/100</div>
                   </div>
-                  <div style={s.verdictCell}>
-                    <div style={s.vLabel}>Risk Level</div>
+                  <div style={s.verdictCell} className="lh-surface">
+                    <div className="lh-muted" style={s.vLabel}>Risk Level</div>
                     <div style={{ ...s.vValue, color: analysis.risk === 'Low' ? '#16a34a' : analysis.risk === 'High' ? '#dc2626' : '#d97706' }}>
                       {analysis.risk}
                     </div>
                   </div>
-                  <div style={s.verdictCell}>
-                    <div style={s.vLabel}>ETA</div>
-                    <div style={s.vValue}>{analysis.suggestedEta ?? 'Flexible'}</div>
+                  <div style={s.verdictCell} className="lh-surface">
+                    <div className="lh-muted" style={s.vLabel}>ETA</div>
+                    <div className="lh-h" style={s.vValue}>{analysis.suggestedEta ?? 'Flexible'}</div>
                   </div>
                 </div>
               </div>
 
+              {/* Why this assessment — expose the reasoning behind the score */}
+              {(analysis.reasons?.length ?? 0) > 0 && (
+                <div style={s.card} className="lh-surface">
+                  <div style={s.sectionHead}>Why this assessment</div>
+                  <ul style={s.list}>
+                    {analysis.reasons.map((r, i) => <li key={i} className="lh-body" style={s.listItem}>{r}</li>)}
+                  </ul>
+                </div>
+              )}
+
               {/* Summary */}
               {analysis.summary && (
-                <div style={s.card}>
+                <div style={s.card} className="lh-surface">
                   <div style={s.sectionHead}>Opportunity Summary</div>
-                  <p style={s.muted}>{analysis.summary}</p>
+                  <p className="lh-body" style={s.muted}>{analysis.summary}</p>
                 </div>
               )}
 
               {/* Technical blockers */}
               {(analysis.technicalBlockers?.length ?? 0) > 0 && (
-                <div style={s.card}>
+                <div style={s.card} className="lh-surface">
                   <div style={s.sectionHead}>Technical Considerations</div>
                   <ul style={s.list}>
-                    {analysis.technicalBlockers!.map((b, i) => <li key={i} style={s.listItem}>{b}</li>)}
+                    {analysis.technicalBlockers!.map((b, i) => <li key={i} className="lh-body" style={s.listItem}>{b}</li>)}
                   </ul>
                   {(analysis.blockerSolutions?.length ?? 0) > 0 && (
                     <>
                       <div style={{ ...s.sectionHead, marginTop: 12 }}>Suggested Approach</div>
                       <ul style={s.list}>
-                        {analysis.blockerSolutions!.map((b, i) => <li key={i} style={s.listItem}>{b}</li>)}
+                        {analysis.blockerSolutions!.map((b, i) => <li key={i} className="lh-body" style={s.listItem}>{b}</li>)}
                       </ul>
                     </>
                   )}
@@ -514,28 +522,29 @@ export default function JobDetailPage() {
 
               {/* Questions */}
               {(analysis.questions?.length ?? 0) > 0 && (
-                <div style={s.card}>
+                <div style={s.card} className="lh-surface">
                   <div style={s.sectionHead}>Questions to Ask Client</div>
                   <ol style={{ ...s.list, paddingLeft: 18 }}>
-                    {analysis.questions.map((q, i) => <li key={i} style={s.listItem}>{q}</li>)}
+                    {analysis.questions.map((q, i) => <li key={i} className="lh-body" style={s.listItem}>{q}</li>)}
                   </ol>
                 </div>
               )}
 
               {/* Proposal */}
-              <div style={s.card}>
+              <div style={s.card} className="lh-surface">
                 <div style={s.sectionHead}>Proposal</div>
                 <div style={s.bidRow}>
-                  <div style={s.bidCell}>
-                    <div style={s.vLabel}>Listed Budget</div>
-                    <div style={s.vValue}>{analysis.originalBudget || job.budget || 'Negotiable'}</div>
+                  <div style={s.bidCell} className="lh-surface">
+                    <div className="lh-muted" style={s.vLabel}>Listed Budget</div>
+                    <div className="lh-h" style={s.vValue}>{analysis.originalBudget || job.budget || 'Negotiable'}</div>
                   </div>
-                  <div style={s.bidCell}>
-                    <div style={s.vLabel}>Suggested Bid</div>
+                  <div style={s.bidCell} className="lh-surface">
+                    <div className="lh-muted" style={s.vLabel}>Suggested Bid</div>
                     <input
                       value={bidAmount}
                       onChange={e => setBidAmount(e.target.value)}
                       style={s.bidInput}
+                      className="lh-field"
                       aria-label="Bid amount"
                     />
                   </div>
@@ -544,6 +553,7 @@ export default function JobDetailPage() {
                   value={proposalDraft}
                   onChange={e => setProposalDraft(e.target.value)}
                   style={s.proposalTA}
+                  className="lh-field"
                   aria-label="Proposal text"
                 />
                 <button onClick={() => void copyProposal()} style={s.btnPrimary}>

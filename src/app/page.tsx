@@ -118,6 +118,7 @@ function HomeContent() {
   const [loading, setLoading] = useState(true);
   const [showIntroPopup, setShowIntroPopup] = useState(true);
   const [newCount, setNewCount] = useState(0);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   const [authed, setAuthed] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
@@ -146,10 +147,6 @@ function HomeContent() {
     if (typeof window !== 'undefined') {
       sessionStorage.setItem('hideLeadHunterIntroSession', 'true');
     }
-  };
-
-  const openIntroPopup = () => {
-    setShowIntroPopup(true);
   };
 
   // Filters — restored from per-tab sessionStorage; a completely new session
@@ -273,6 +270,14 @@ function HomeContent() {
 
   useEffect(() => { void fetchJobs(); }, [fetchJobs]);
 
+  // Real freshness telemetry — when the last successful sync actually ran.
+  useEffect(() => {
+    fetch('/api/sync/status')
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('bad status'))))
+      .then(d => { if (d?.lastSyncedAt) setLastSyncedAt(d.lastSyncedAt); })
+      .catch(() => { /* freshness is non-critical */ });
+  }, []);
+
   const handleSync = async () => {
     try {
       const res = await fetch('/api/sync?force=true', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
@@ -331,26 +336,25 @@ function HomeContent() {
   }
 
   return (
-    <div style={styles.page}>
+    <div style={styles.page} className="lh-page">
       <div style={styles.shell}>
 
-        {/* ── INTRODUCTORY POPUP ── */}
+        {/* ── WELCOME POPUP (first visit only; separate from About Us) ── */}
         {showIntroPopup && (
           <div style={styles.modalOverlay}>
-            <div style={styles.modalContent}>
+            <div style={styles.modalContent} className="lh-modal">
               <button onClick={closeIntroPopup} style={styles.modalCloseBtn}>&times;</button>
               <div style={styles.modalHeaderGroup}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/logo.png" alt="Lead Hunter Logo" style={{ height: 50, width: 'auto', marginBottom: 8 }} />
                 <h2 style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', margin: '4px 0' }}>Welcome to Lead Hunter</h2>
-                <p style={{ fontSize: 13, color: '#16a34a', fontWeight: 700, margin: 0 }}>Stop scrolling. Start winning</p>
               </div>
               <div style={styles.modalBody}>
                 <p style={{ fontSize: 15, fontWeight: 700, color: '#2563eb', margin: '12px 0 8px', textAlign: 'center' }}>
-                  Only the leads worth chasing.
+                  Freelance job monitoring, made clear.
                 </p>
                 <p style={{ fontSize: 13, color: '#475569', lineHeight: 1.6, textAlign: 'center' }}>
-                  Lead Hunter automatically scans Upwork and Freelancer for high-probability contracts, scores opportunities based on verified client history, and crafts tailored, humanized proposals instantly.
+                  Lead Hunter monitors freelance job listings from Upwork and Freelancer. For each listing it shows the
+                  budget, competition, and other signals available, and scores the job so you can focus on the
+                  opportunities worth your time.
                 </p>
               </div>
               <button onClick={closeIntroPopup} style={styles.modalActionBtn}>
@@ -369,8 +373,6 @@ function HomeContent() {
         {/* ── HEADER ── */}
         <header style={styles.header}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="Lead Hunter Logo" style={{ height: 48, width: 'auto', objectFit: 'contain' }} />
             <div>
               <h1 style={styles.brand}>Lead Hunter</h1>
               <p style={{ fontSize: 13, color: '#16a34a', fontWeight: 700, margin: '2px 0 0' }}>
@@ -379,7 +381,7 @@ function HomeContent() {
             </div>
           </div>
           <div style={styles.headerRight}>
-            <button onClick={openIntroPopup} style={styles.btnGhost}>
+            <button onClick={() => router.push('/about')} style={styles.btnGhost}>
               About
             </button>
             <button onClick={() => router.push('/trends')} style={styles.btnCron}>
@@ -410,6 +412,13 @@ function HomeContent() {
           </div>
         </header>
 
+        {/* ── FRESHNESS — real sync telemetry ── */}
+        {lastSyncedAt && (
+          <div className="lh-muted" style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
+            Data last synced {timeAgo(lastSyncedAt)} &middot; automatic syncs every 4 hours
+          </div>
+        )}
+
         {/* ── NEW JOBS BANNER ── */}
         {newCount > 0 && (
           <div style={styles.banner}>
@@ -428,6 +437,7 @@ function HomeContent() {
           ].map(s => (
             <button
               key={s.key}
+              className="lh-surface"
               onClick={() => { setStatusFilter(f => f === s.key ? 'all' : s.key); setPage(1); }}
               style={{
                 ...styles.statCard,
@@ -437,24 +447,25 @@ function HomeContent() {
                 boxShadow: statusFilter === s.key ? '0 0 0 3px rgba(37,99,235,0.12)' : '0 1px 2px rgba(15,23,42,0.04)',
               }}
             >
-              <div style={styles.statNum}>{s.value}</div>
-              <div style={styles.statLabel}>{s.label}</div>
+              <div className="lh-h" style={styles.statNum}>{s.value}</div>
+              <div className="lh-muted" style={styles.statLabel}>{s.label}</div>
             </button>
           ))}
         </div>
 
         {/* ── FILTERS ── */}
-        <div style={styles.filtersBox}>
+        <div style={styles.filtersBox} className="lh-surface">
           {/* Search */}
           <div style={styles.filterRow}>
             <input
               type="text"
+              className="lh-field"
               placeholder="Search by title, client, tech, location..."
               value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }}
               style={styles.searchInput}
             />
-            <select value={sortBy} onChange={e => { setSortBy(e.target.value as 'score' | 'date' | 'budget'); setPage(1); }} style={styles.select}>
+            <select value={sortBy} onChange={e => { setSortBy(e.target.value as 'score' | 'date' | 'budget'); setPage(1); }} style={styles.select} className="lh-field">
               <option value="date">Sort: Latest first</option>
               <option value="score">Sort: Best score</option>
               <option value="budget">Sort: Highest budget</option>
@@ -463,12 +474,13 @@ function HomeContent() {
 
           {/* Platform toggle pills */}
           <div style={styles.filterRow}>
-            <span style={styles.filterLabel}>Platform:</span>
+            <span className="lh-muted" style={styles.filterLabel}>Platform:</span>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {availablePlatforms.map(p => (
                 <button
                   key={p}
                   onClick={() => togglePlatform(p)}
+                  className={platformFilter.includes(p) ? undefined : 'lh-field'}
                   style={{
                     ...styles.pill,
                     background: platformFilter.includes(p) ? (PLATFORM_COLORS[p] || '#6c5ce7') : '#f1f5f9',
@@ -484,21 +496,21 @@ function HomeContent() {
 
           {/* Row 2: Country, Connections, Score */}
           <div style={styles.filterRow}>
-            <span style={styles.filterLabel}>Country:</span>
-            <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }} style={styles.select}>
+            <span className="lh-muted" style={styles.filterLabel}>Country:</span>
+            <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }} style={styles.select} className="lh-field">
               {availableCountries.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
 
-            <span style={styles.filterLabel}>Bid Cost:</span>
-            <select value={connectionsFilter} onChange={e => { setConnectionsFilter(e.target.value); setPage(1); }} style={styles.select}>
+            <span className="lh-muted" style={styles.filterLabel}>Bid Cost:</span>
+            <select value={connectionsFilter} onChange={e => { setConnectionsFilter(e.target.value); setPage(1); }} style={styles.select} className="lh-field">
               <option value="all">Any Connects</option>
               <option value="low">Low (≤5 connects)</option>
               <option value="med">Medium (6-12)</option>
               <option value="high">High (13+)</option>
             </select>
 
-            <span style={styles.filterLabel}>Score:</span>
-            <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value as 'all' | 'high' | 'medium' | 'low'); setPage(1); }} style={styles.select}>
+            <span className="lh-muted" style={styles.filterLabel}>Score:</span>
+            <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value as 'all' | 'high' | 'medium' | 'low'); setPage(1); }} style={styles.select} className="lh-field">
               <option value="all">Any Score</option>
               <option value="high">70%+ Strong fit</option>
               <option value="medium">50–69% Promising</option>
@@ -506,16 +518,16 @@ function HomeContent() {
             </select>
           </div>
 
-          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
+          <div className="lh-muted" style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
             Showing {Math.min((page - 1) * PER_PAGE + 1, filteredJobs.length)}–{Math.min(page * PER_PAGE, filteredJobs.length)} of {filteredJobs.length} jobs{filteredJobs.length !== jobs.length ? ` (filtered from ${jobs.length})` : ''}
           </div>
         </div>
 
         {/* ── JOB GRID ── */}
         {paginatedJobs.length === 0 ? (
-          <div style={styles.emptyBox}>
-            <p style={{ fontWeight: 700, fontSize: 18, color: '#0f172a' }}>No jobs match your filters</p>
-            <p style={{ color: '#64748b', marginBottom: 16 }}>Try widening the filters or run a fresh sync.</p>
+          <div style={styles.emptyBox} className="lh-surface">
+            <p className="lh-h" style={{ fontWeight: 700, fontSize: 18, color: '#0f172a' }}>No jobs match your filters</p>
+            <p className="lh-body" style={{ color: '#64748b', marginBottom: 16 }}>Try widening the filters or run a fresh sync.</p>
             {adminMode && <button onClick={handleSync} style={styles.btnPrimary}>Sync Now</button>}
           </div>
         ) : (
@@ -527,7 +539,7 @@ function HomeContent() {
                 onClick={() => handleJobClick(job)}
                 style={styles.cardBtn}
               >
-                <article style={styles.card}>
+                <article style={styles.card} className="lh-surface">
                   {/* Card header badges */}
                   <div style={styles.cardTop}>
                     <span style={{ ...styles.badge, background: PLATFORM_COLORS[job.platform] || '#6c5ce7' }}>
@@ -542,7 +554,7 @@ function HomeContent() {
                     {job.score >= 70 && <span style={{ ...styles.badge, background: '#f59e0b' }}>Hot</span>}
                     {job.applied && <span style={{ ...styles.badge, background: '#3b82f6' }}>Applied</span>}
                     {job.viewed && !job.applied && <span style={{ ...styles.badge, background: '#94a3b8' }}>Viewed</span>}
-                    <span style={{ marginLeft: 'auto', fontSize: 11, color: '#94a3b8' }}>{timeAgo(job.postedAt)}</span>
+                    <span className="lh-muted" style={{ marginLeft: 'auto', fontSize: 11, color: '#94a3b8' }}>{timeAgo(job.postedAt)}</span>
                   </div>
 
                   {/* Title */}
@@ -569,19 +581,19 @@ function HomeContent() {
                   {/* Meta row */}
                   <div style={styles.metaRow}>
                     <div>
-                      <div style={styles.metaKey}>Budget</div>
-                      <div style={styles.metaVal}>{job.budget || 'Negotiable'}</div>
+                      <div className="lh-muted" style={styles.metaKey}>Budget</div>
+                      <div className="lh-h" style={styles.metaVal}>{job.budget || 'Negotiable'}</div>
                     </div>
                     {(job.connections ?? 0) > 0 && (
                       <div>
-                        <div style={styles.metaKey}>Bid Cost</div>
+                        <div className="lh-muted" style={styles.metaKey}>Bid Cost</div>
                         <div style={{ ...styles.metaVal, color: '#2563eb', fontWeight: 700 }}>
                           {job.connections} connects
                         </div>
                       </div>
                     )}
                     <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-                      <div style={styles.metaKey}>Match</div>
+                      <div className="lh-muted" style={styles.metaKey}>Match</div>
                       <div style={{ ...styles.metaVal, color: getScoreColor(job.score) }}>{job.score}%</div>
                     </div>
                   </div>
@@ -602,6 +614,7 @@ function HomeContent() {
             <button
               onClick={() => goToPage(Math.max(1, page - 1))}
               disabled={page === 1}
+              className="lh-field"
               style={{ ...styles.pageBtn, opacity: page === 1 ? 0.4 : 1 }}
             >
               ← Prev
@@ -622,6 +635,7 @@ function HomeContent() {
                     <button
                       key={p}
                       onClick={() => goToPage(p as number)}
+                      className={page === p ? 'lh-field lh-active' : 'lh-field'}
                       style={{
                         ...styles.pageBtn,
                         background: page === p ? '#2563eb' : '#fff',
@@ -641,12 +655,13 @@ function HomeContent() {
             <button
               onClick={() => goToPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
+              className="lh-field"
               style={{ ...styles.pageBtn, opacity: page === totalPages ? 0.4 : 1 }}
             >
               Next →
             </button>
 
-            <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 8 }}>
+            <span className="lh-muted" style={{ fontSize: 12, color: '#94a3b8', marginLeft: 8 }}>
               Page {page} of {totalPages}
             </span>
           </div>

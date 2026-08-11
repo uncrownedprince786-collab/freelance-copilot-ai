@@ -13,7 +13,7 @@ interface TrendsCache {
 
 export interface MarketTrends {
   topSkills: { skill: string; count: number; growth: string; avgBudget: string }[];
-  topCategories: { category: string; count: number; trend: 'rising' | 'stable' | 'declining' }[];
+  topCategories: { category: string; count: number; trend: 'high' | 'moderate' | 'steady' }[];
   budgetInsights: { range: string; count: number; pct: number }[];
   aiInsights: string[];
   recommendedSkillsToLearn: { skill: string; reason: string; urgency: 'high' | 'medium' | 'low' }[];
@@ -81,10 +81,24 @@ async function analyzeJobsLocally(): Promise<{ skills: Record<string, number>, c
     titles.push(job.title || '');
     descriptions.push((job.description || '').slice(0, 500));
 
-    // Budget
+    // Budget — collect real listings values. Object budgets may be a single
+    // amount, a min–max range, or an hourly rate; range/hourly entries are kept
+    // as strings so the bucketing below can classify them honestly.
     if (job.budget) {
-      if (typeof job.budget === 'object' && job.budget.amount) budgets.push(`$${job.budget.amount}`);
-      else if (typeof job.budget === 'string') budgets.push(job.budget);
+      if (typeof job.budget === 'object') {
+        const sym = job.budget.currency || '$';
+        if (job.budget.type === 'hourly') {
+          budgets.push('Hourly');
+        } else if (job.budget.amount) {
+          budgets.push(`${sym}${job.budget.amount}`);
+        } else if (job.budget.min && job.budget.max && job.budget.min !== job.budget.max) {
+          budgets.push(`${sym}${job.budget.min}–${sym}${job.budget.max}`);
+        } else if (job.budget.min) {
+          budgets.push(`${sym}${job.budget.min}`);
+        }
+      } else if (typeof job.budget === 'string') {
+        budgets.push(job.budget);
+      }
     }
 
     // Skills from actual skills array first
@@ -148,11 +162,19 @@ export async function GET() {
   const topSkillsRaw = Object.entries(skills).sort((a, b) => b[1] - a[1]).slice(0, 12);
   const topCategoriesRaw = Object.entries(categories).sort((a, b) => b[1] - a[1]).slice(0, 8);
 
-  // Budget distribution
+  // Budget distribution — use the upper bound of a range so the bucket reflects
+  // the real ceiling of the listing, and never bucket an hourly rate as a fixed
+  // project budget.
   const budgetBuckets: Record<string, number> = { '$0–$100': 0, '$100–$500': 0, '$500–$2k': 0, '$2k–$10k': 0, '$10k+': 0, 'Negotiable / Hourly': 0 };
   for (const b of budgets) {
-    const num = parseFloat(b.replace(/[^0-9.]/g, ''));
-    if (isNaN(num) || b.toLowerCase().includes('hourly') || b.toLowerCase().includes('negotiable')) budgetBuckets['Negotiable / Hourly']++;
+    const lower = b.toLowerCase();
+    if (lower.includes('hourly') || lower.includes('negotiable')) {
+      budgetBuckets['Negotiable / Hourly']++;
+      continue;
+    }
+    const numbers = b.match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
+    const num = numbers.length ? Math.max(...numbers) : NaN;
+    if (isNaN(num)) budgetBuckets['Negotiable / Hourly']++;
     else if (num < 100) budgetBuckets['$0–$100']++;
     else if (num < 500) budgetBuckets['$100–$500']++;
     else if (num < 2000) budgetBuckets['$500–$2k']++;
@@ -167,7 +189,7 @@ export async function GET() {
   const topCatList = topCategoriesRaw.map(([c, n]) => `${c} (${n})`).join(', ');
   const sampleTitles = titles.slice(0, 20).join('; ');
 
-  const aiPrompt = `You are a freelance market analyst. Based on these Upwork job trends, provide a JSON response.
+  const aiPrompt = `You are a freelance market analyst. Based on these collected freelance job listings (Upwork + Freelancer), provide a JSON response.
 
 Top skills in demand: ${topSkillsList}
 Top categories: ${topCatList}
@@ -200,27 +222,33 @@ Respond with this exact JSON (no markdown, pure JSON):
     topSkills: topSkillsRaw.map(([skill, count], i) => ({
       skill: skill.charAt(0).toUpperCase() + skill.slice(1),
       count,
-      growth: i < 3 ? '🔥 Hot' : i < 7 ? '📈 Rising' : '→ Stable',
-      avgBudget: budgets.length > 0 ? '$500–$2k' : 'N/A',
+      // Demand-level label reflects observed listing frequency, not a temporal trend.
+      growth: i < 3 ? 'High demand' : i < 7 ? 'Moderate demand' : 'Steady demand',
+      avgBudget: 'N/A', // per-skill budget averages are not computed; do not invent them
     })),
     topCategories: topCategoriesRaw.map(([category, count], i) => ({
       category,
       count,
-      trend: i < 2 ? 'rising' : i < 5 ? 'stable' : 'stable',
+      // Demand tier by observed listing frequency; not a temporal trend.
+      trend: i < 2 ? 'high' : i < 5 ? 'moderate' : 'steady',
     })),
     budgetInsights,
     aiInsights: aiData.aiInsights?.length ? aiData.aiInsights : [
-      'AI/ML and automation skills are the fastest growing demand.',
-      'React + Node.js full-stack remains the most requested combo.',
-      'Mobile development (Flutter, React Native) is surging.',
-      'Content writing and SEO have consistent demand across all budgets.',
+      `Most requested skill observed: ${topSkillsRaw[0]?.[0] ?? 'n/a'} (${topSkillsRaw[0]?.[1] ?? 0} of ${titles.length} jobs).`,
+      `Top category observed: ${topCategoriesRaw[0]?.[0] ?? 'n/a'} (${topCategoriesRaw[0]?.[1] ?? 0} jobs).`,
+      `Budget data is available for ${budgets.length} of ${titles.length} jobs.`,
+      `Most common budget range observed: ${[...budgetInsights].sort((a, b) => b.count - a.count)[0]?.range ?? 'n/a'}.`,
     ],
-    recommendedSkillsToLearn: aiData.recommendedSkillsToLearn?.length ? aiData.recommendedSkillsToLearn : [
-      { skill: 'AI Integration (OpenAI/LangChain)', reason: 'Every client wants AI features added to their products', urgency: 'high' },
-      { skill: 'Next.js + TypeScript', reason: 'Industry standard for modern web apps, massive job pool', urgency: 'high' },
-      { skill: 'Flutter', reason: 'Cross-platform mobile with one codebase — client budgets are higher', urgency: 'medium' },
-    ],
-    marketSummary: aiData.marketSummary || `Based on ${titles.length} active Upwork jobs, the market is strongly favoring AI-integrated solutions, modern web frameworks, and mobile development. Freelancers with AI skills command premium rates.`,
+    recommendedSkillsToLearn: aiData.recommendedSkillsToLearn?.length ? aiData.recommendedSkillsToLearn : topSkillsRaw.slice(0, 4).map(([skill, count], i) => ({
+      skill: skill.charAt(0).toUpperCase() + skill.slice(1),
+      reason: `Listed in ${count} of the ${titles.length} collected jobs.`,
+      urgency: i < 2 ? 'high' : i < 3 ? 'medium' : 'low',
+    })),
+    marketSummary: aiData.marketSummary || (
+      titles.length === 0
+        ? 'No job data available yet. Trends will appear after the next sync.'
+        : `Based on ${titles.length} collected jobs, the most requested skills are ${topSkillsRaw.slice(0, 3).map(([s]) => s).join(', ') || 'n/a'}. Demand reflects how often each skill or category appears in current listings.`
+    ),
     totalJobsAnalyzed: titles.length,
   };
 
