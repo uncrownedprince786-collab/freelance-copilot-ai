@@ -166,3 +166,99 @@ html[data-theme='dark'] textarea.lh-field {
 html[data-theme='dark'] .lh-signal {
   background: #0b1220 !important;
 }
+
+/* ── AI AGENT PANEL ───────────────────────────────────────────────────
+   Floating assistant. The panel chrome is dark-on-dark themed with lh-*
+   overrides; message bubbles use the surface palette so cards inside them
+   render consistently. */
+
+html[data-theme='dark'] .lh-agent-panel {
+  background: #0b1220 !important;
+  border-left-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-agent-msg {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+  color: #e2e8f0 !important;
+}
+
+html[data-theme='dark'] .lh-agent-jobcard {
+  background: #0b1220 !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-agent-suggest {
+  background: rgba(37, 99, 235, 0.16) !important;
+  border-color: #1d4ed8 !important;
+  color: #93c5fd !important;
+}
+
+html[data-theme='dark'] .lh-agent-error {
+  background: rgba(153, 27, 27, 0.18) !important;
+  border-color: #7f1d1d !important;
+  color: #fca5a5 !important;
+}
+
+html[data-theme='dark'] .lh-agent-inputbar {
+  background: #0b1220 !important;
+  border-top-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-agent-input {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+  color: #e2e8f0 !important;
+}
+html[data-theme='dark'] .lh-agent-input::placeholder {
+  color: #64748b;
+}
+
+html[data-theme='dark'] .lh-agent-fab {
+  background: #2563eb !important;
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.45) !important;
+}
+
+/* Typing indicator */
+.lh-typing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.lh-typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2563eb;
+  animation: lhBlink 1.2s infinite ease-in-out;
+}
+.lh-typing i:nth-child(2) { animation-delay: 0.15s; }
+.lh-typing i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes lhBlink {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* Panel slide-in */
+@media (prefers-reduced-motion: no-preference) {
+  .lh-agent-panel {
+    animation: lhSlideIn 0.22s ease-out;
+  }
+  .lh-agent-fab {
+    transition: background 0.2s ease, transform 0.15s ease;
+  }
+  .lh-agent-fab:hover {
+    transform: scale(1.06);
+  }
+}
+@keyframes lhSlideIn {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Backdrop hides the page while the panel is open on small screens only */
+@media (min-width: 641px) {
+  .lh-agent-backdrop {
+    display: none;
+  }
+}

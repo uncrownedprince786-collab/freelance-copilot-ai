@@ -118,7 +118,6 @@ function HomeContent() {
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showIntroPopup, setShowIntroPopup] = useState(true);
   const [newCount, setNewCount] = useState(0);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [syncSchedule, setSyncSchedule] = useState('');
@@ -128,10 +127,6 @@ function HomeContent() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const dismissed = sessionStorage.getItem('hideLeadHunterIntroSession');
-      if (dismissed === 'true') {
-        setShowIntroPopup(false);
-      }
       setAuthed(isAuthenticated());
       setAdminMode(isAdmin());
     }
@@ -143,14 +138,6 @@ function HomeContent() {
     const idle = setInterval(() => trackActivity('heartbeat'), 90_000);
     return () => clearInterval(idle);
   }, [authed]);
-
-
-  const closeIntroPopup = () => {
-    setShowIntroPopup(false);
-    if (typeof window !== 'undefined') {
-      sessionStorage.setItem('hideLeadHunterIntroSession', 'true');
-    }
-  };
 
   // Filters — restored from per-tab sessionStorage; a completely new session
   // defaults to Upwork only (not overwritten by async job fetching).
@@ -497,31 +484,6 @@ function HomeContent() {
   return (
     <div style={styles.page} className="lh-page">
       <div style={styles.shell}>
-
-        {/* ── WELCOME POPUP (first visit only; separate from About Us) ── */}
-        {showIntroPopup && (
-          <div style={styles.modalOverlay}>
-            <div style={styles.modalContent} className="lh-modal">
-              <button onClick={closeIntroPopup} style={styles.modalCloseBtn}>&times;</button>
-              <div style={styles.modalHeaderGroup}>
-                <h2 style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', margin: '4px 0' }}>Welcome to Lead Hunter</h2>
-              </div>
-              <div style={styles.modalBody}>
-                <p style={{ fontSize: 15, fontWeight: 700, color: '#2563eb', margin: '12px 0 8px', textAlign: 'center' }}>
-                  Freelance job monitoring, made clear.
-                </p>
-                <p style={{ fontSize: 13, color: '#475569', lineHeight: 1.6, textAlign: 'center' }}>
-                  Lead Hunter monitors freelance job listings from Upwork and Freelancer. For each listing it shows the
-                  budget, competition, and other signals available, and scores the job so you can focus on the
-                  opportunities worth your time.
-                </p>
-              </div>
-              <button onClick={closeIntroPopup} style={styles.modalActionBtn}>
-                Get Started &rarr;
-              </button>
-            </div>
-          </div>
-        )}
 
         <AdminLoginModal
           isOpen={showAuthModal}
@@ -1069,53 +1031,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     cursor: 'pointer',
     boxShadow: '0 2px 4px rgba(22,163,74,0.2)'
-  },
-  modalOverlay: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: 'rgba(15, 23, 42, 0.65)',
-    backdropFilter: 'blur(4px)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 9999,
-    padding: 16
-  },
-  modalContent: {
-    background: '#fff',
-    borderRadius: 20,
-    padding: '28px 32px',
-    maxWidth: 480,
-    width: '100%',
-    position: 'relative',
-    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-    textAlign: 'center'
-  },
-  modalCloseBtn: {
-    position: 'absolute',
-    top: 14,
-    right: 18,
-    background: 'none',
-    border: 'none',
-    fontSize: 24,
-    color: '#94a3b8',
-    cursor: 'pointer'
-  },
-  modalHeaderGroup: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  modalBody: { margin: '16px 0 24px' },
-  modalActionBtn: {
-    width: '100%',
-    background: '#2563eb',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 999,
-    padding: '12px 24px',
-    fontSize: 15,
-    fontWeight: 700,
-    cursor: 'pointer'
   },
   statsRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12, marginBottom: 20 },
   statCard: {

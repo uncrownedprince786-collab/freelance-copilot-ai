@@ -1,3 +1,4 @@
+import "server-only";
 import { PrismaClient } from "@prisma/client";
 import { createRequire } from "module";
 import path from "path";

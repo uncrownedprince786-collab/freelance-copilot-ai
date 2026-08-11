@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import AgentPanel from "@/components/AgentPanel";
 
 export const metadata: Metadata = {
   title: "Lead Hunter | Freelance Opportunity Monitor",
@@ -20,7 +21,10 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <AgentPanel />
+      </body>
     </html>
   );
 }
