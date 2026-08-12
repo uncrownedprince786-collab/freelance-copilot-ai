@@ -20,7 +20,9 @@ interface FilterState {
   sortBy: SortKey;
   jobTypeFilter: 'all' | 'fixed' | 'hourly';
   opportunityFilter: OpportunityKey;
-  skillsFilter: string[];
+  countryFilter: string;
+  connectionFilter: string;
+  budgetFilter: string;
 }
 
 const DEFAULT_FILTERS: FilterState = {
@@ -28,7 +30,9 @@ const DEFAULT_FILTERS: FilterState = {
   sortBy: 'recommended',
   jobTypeFilter: 'all',
   opportunityFilter: 'all',
-  skillsFilter: [],
+  countryFilter: 'all',
+  connectionFilter: 'all',
+  budgetFilter: 'all',
 };
 
 function loadFilters(): FilterState {
@@ -116,6 +120,48 @@ function budgetNumber(s: string): number {
   return m ? parseInt(m[1].replace(',', ''), 10) : 0;
 }
 
+// A derived, non-hardcoded budget range. Label is also used as the stable key
+// for the selected filter, so it must be unique per bucket.
+interface BudgetBucket {
+  label: string;
+  min: number;
+  max: number;
+  inclusiveMax: boolean;
+}
+
+function fmtMoney(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k';
+  return String(Math.round(n));
+}
+
+// Build budget ranges purely from the numeric budgets actually present in the
+// current scope (quantile edges), so no threshold is hardcoded and no empty
+// bucket is ever produced.
+function buildBudgetBuckets(vals: number[]): BudgetBucket[] {
+  const v = vals.filter(n => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
+  if (v.length === 0) return [];
+  if (v.length === 1) return [{ label: `$${fmtMoney(v[0])}`, min: v[0], max: v[0], inclusiveMax: true }];
+  const q = (p: number) => v[Math.min(v.length - 1, Math.max(0, Math.floor(p * (v.length - 1))))];
+  const edges = [v[0], q(0.25), q(0.5), q(0.75), v[v.length - 1]];
+  const buckets: BudgetBucket[] = [];
+  for (let i = 0; i < edges.length - 1; i++) {
+    const lo = edges[i];
+    const hi = edges[i + 1];
+    const last = i === edges.length - 2;
+    const members = v.filter(n => n >= lo && (last ? n <= hi : n < hi));
+    if (members.length === 0) continue;
+    const mn = members[0];
+    const mx = members[members.length - 1];
+    buckets.push({
+      label: mn === mx ? `$${fmtMoney(mn)}` : `$${fmtMoney(mn)}–$${fmtMoney(mx)}`,
+      min: lo,
+      max: hi,
+      inclusiveMax: last,
+    });
+  }
+  return buckets;
+}
+
 /**
  * Default "Recommended" ranking (also used by the explicit "Lowest proposals"
  * sort). Deterministic priority:
@@ -148,7 +194,13 @@ function recommendedComparator(a: Job, b: Job): number {
  * reflect "all other filters applied". Platform scope is applied separately
  * (the platform selector defines the dataset, it is not a facet).
  */
-function passes(f: FilterState, job: Job, except?: string): boolean {
+function inBudgetBucket(job: Job, b: BudgetBucket | undefined): boolean {
+  if (!b) return false;
+  const n = budgetNumber(job.budget);
+  return b.inclusiveMax ? n >= b.min && n <= b.max : n >= b.min && n < b.max;
+}
+
+function passes(f: FilterState, job: Job, except?: string, budgetBuckets?: BudgetBucket[]): boolean {
   if (except !== 'jobType') {
     if (f.jobTypeFilter !== 'all') {
       const bt = (job.budgetType || '').toLowerCase();
@@ -160,8 +212,17 @@ function passes(f: FilterState, job: Job, except?: string): boolean {
     if (f.opportunityFilter === 'recommended' && !(job.score >= 70)) return false;
     if (f.opportunityFilter === 'actFast' && !job.actFast) return false;
   }
-  if (except !== 'skills') {
-    if (f.skillsFilter.length && !(job.skills || []).some(s => f.skillsFilter.includes(s))) return false;
+  if (except !== 'country') {
+    if (f.countryFilter !== 'all' && job.country !== f.countryFilter) return false;
+  }
+  if (except !== 'connection') {
+    if (f.connectionFilter !== 'all' && (job.connections ?? 0) !== Number(f.connectionFilter)) return false;
+  }
+  if (except !== 'budget') {
+    if (f.budgetFilter !== 'all') {
+      const b = budgetBuckets?.find(x => x.label === f.budgetFilter);
+      if (b && !inBudgetBucket(job, b)) return false;
+    }
   }
   return true;
 }
@@ -205,14 +266,15 @@ function HomeContent() {
   const [sortBy, setSortBy] = useState<SortKey>(() => loadFilters().sortBy || 'recommended');
   const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'fixed' | 'hourly'>(() => loadFilters().jobTypeFilter);
   const [opportunityFilter, setOpportunityFilter] = useState<OpportunityKey>(() => loadFilters().opportunityFilter);
-  const [skillsFilter, setSkillsFilter] = useState<string[]>(() => loadFilters().skillsFilter);
-  const [skillQuery, setSkillQuery] = useState('');
+  const [countryFilter, setCountryFilter] = useState<string>(() => loadFilters().countryFilter || 'all');
+  const [connectionFilter, setConnectionFilter] = useState<string>(() => loadFilters().connectionFilter || 'all');
+  const [budgetFilter, setBudgetFilter] = useState<string>(() => loadFilters().budgetFilter || 'all');
   const [page, setPage] = useState(1);
 
   // Persist filter state across navigation/refresh (per-tab sessionStorage).
   useEffect(() => {
-    saveFilters({ platform, sortBy, jobTypeFilter, opportunityFilter, skillsFilter });
-  }, [platform, sortBy, jobTypeFilter, opportunityFilter, skillsFilter]);
+    saveFilters({ platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter });
+  }, [platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter]);
 
   const PER_PAGE = 24;
 
@@ -226,24 +288,36 @@ function HomeContent() {
     [jobs, platform]
   );
 
-  // Dynamic skills — derived ONLY from real jobs in the current platform scope.
-  const skillOptions = useMemo(() => {
+  // Dynamic Country options — only real countries present in the current scope.
+  const countryOptions = useMemo(() => {
     const m = new Map<string, number>();
-    scopeJobs.forEach(j => (j.skills || []).forEach(s => m.set(s, (m.get(s) || 0) + 1)));
-    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24).map(([s]) => s);
+    scopeJobs.forEach(j => { if (j.country) m.set(j.country, (m.get(j.country) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
   }, [scopeJobs]);
-  const visibleSkillOptions = useMemo(() => {
-    const q = skillQuery.trim().toLowerCase();
-    if (!q) return skillOptions;
-    return skillOptions.filter(s => s.toLowerCase().includes(q));
-  }, [skillOptions, skillQuery]);
+
+  // Dynamic Connection options — distinct connects-cost values present in scope.
+  const connectionOptions = useMemo(() => {
+    const m = new Map<number, number>();
+    scopeJobs.forEach(j => {
+      const c = j.connections ?? 0;
+      if (c > 0) m.set(c, (m.get(c) || 0) + 1);
+    });
+    return [...m.keys()].sort((a, b) => a - b);
+  }, [scopeJobs]);
+
+  // Dynamic Budget ranges — derived from the actual numeric budgets in scope.
+  const budgetBuckets = useMemo(
+    () => buildBudgetBuckets(scopeJobs.map(j => budgetNumber(j.budget))),
+    [scopeJobs]
+  );
+
   const hasFixed = useMemo(() => scopeJobs.some(j => (j.budgetType || '').toLowerCase().includes('fixed')), [scopeJobs]);
   const hasHourly = useMemo(() => scopeJobs.some(j => (j.budgetType || '').toLowerCase().includes('hourly')), [scopeJobs]);
 
   // Bundle the active filters so the pure filter/count helpers can read them.
   const f = useMemo<FilterState>(
-    () => ({ platform, sortBy, jobTypeFilter, opportunityFilter, skillsFilter }),
-    [platform, sortBy, jobTypeFilter, opportunityFilter, skillsFilter]
+    () => ({ platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter }),
+    [platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter]
   );
 
   const stats = useMemo(() => ({
@@ -257,26 +331,29 @@ function HomeContent() {
   // OTHER active filters, so counts stay honest as the user changes anything.
   const facets = useMemo(() => {
     const countExcept = (except: string, pred: (j: Job) => boolean) =>
-      scopeJobs.filter(j => passes(f, j, except) && pred(j)).length;
+      scopeJobs.filter(j => passes(f, j, except, budgetBuckets) && pred(j)).length;
 
     const opportunity = {
       all: countExcept('opportunity', () => true),
       recommended: countExcept('opportunity', j => j.score >= 70),
       actFast: countExcept('opportunity', j => !!j.actFast),
     };
-    const skills: Record<string, number> = {};
-    skillOptions.forEach(s => { skills[s] = countExcept('skills', j => (j.skills || []).includes(s)); });
-
     const jobType = {
       fixed: hasFixed ? countExcept('jobType', j => (j.budgetType || '').toLowerCase().includes('fixed')) : 0,
       hourly: hasHourly ? countExcept('jobType', j => (j.budgetType || '').toLowerCase().includes('hourly')) : 0,
     };
+    const country: Record<string, number> = {};
+    countryOptions.forEach(c => { country[c] = countExcept('country', j => j.country === c); });
+    const connection: Record<string, number> = {};
+    connectionOptions.forEach(c => { connection[String(c)] = countExcept('connection', j => (j.connections ?? 0) === c); });
+    const budget: Record<string, number> = {};
+    budgetBuckets.forEach(b => { budget[b.label] = countExcept('budget', j => inBudgetBucket(j, b)); });
 
-    return { opportunity, skills, jobType };
-  }, [scopeJobs, f, skillOptions, hasFixed, hasHourly]);
+    return { opportunity, jobType, country, connection, budget };
+  }, [scopeJobs, f, countryOptions, connectionOptions, budgetBuckets, hasFixed, hasHourly]);
 
   const filteredJobs = useMemo(() => {
-    const result = scopeJobs.filter(j => passes(f, j));
+    const result = scopeJobs.filter(j => passes(f, j, undefined, budgetBuckets));
 
     if (sortBy === 'recommended' || sortBy === 'competition') {
       // Recommended and Lowest competition both use the canonical comparator:
@@ -294,7 +371,7 @@ function HomeContent() {
       return 0;
     });
     return result;
-  }, [scopeJobs, f, sortBy]);
+  }, [scopeJobs, f, sortBy, budgetBuckets]);
 
   const totalPages = Math.ceil(filteredJobs.length / PER_PAGE);
   const paginatedJobs = useMemo(() => filteredJobs.slice((page - 1) * PER_PAGE, page * PER_PAGE), [filteredJobs, page]);
@@ -403,14 +480,11 @@ function HomeContent() {
   // value leaks across platforms (skills/budget-type are platform-specific).
   const changePlatform = (next: PlatformScope) => {
     setPlatform(next);
-    setSkillsFilter([]);
     setJobTypeFilter('all');
-    setSkillQuery('');
-    setPage(1);
-  };
-
-  const toggleSkill = (s: string) => {
-    setSkillsFilter(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+    setOpportunityFilter('all');
+    setCountryFilter('all');
+    setConnectionFilter('all');
+    setBudgetFilter('all');
     setPage(1);
   };
 
@@ -419,8 +493,9 @@ function HomeContent() {
     setSortBy(DEFAULT_FILTERS.sortBy);
     setJobTypeFilter('all');
     setOpportunityFilter('all');
-    setSkillsFilter([]);
-    setSkillQuery('');
+    setCountryFilter('all');
+    setConnectionFilter('all');
+    setBudgetFilter('all');
     setPage(1);
   };
 
@@ -435,7 +510,8 @@ function HomeContent() {
 
   const anyFilterActive =
     platform !== 'all' || jobTypeFilter !== 'all' || opportunityFilter !== 'all' ||
-    skillsFilter.length > 0 || sortBy !== 'recommended';
+    countryFilter !== 'all' || connectionFilter !== 'all' || budgetFilter !== 'all' ||
+    sortBy !== 'recommended';
 
   return (
     <div style={styles.page} className="lh-page">
@@ -581,45 +657,36 @@ function HomeContent() {
             <FilterPill label="Act Fast" count={facets.opportunity.actFast} active={opportunityFilter === 'actFast'} color="#d97706" onClick={() => { setOpportunityFilter(prev => prev === 'actFast' ? 'all' : 'actFast'); setPage(1); }} />
           </div>
 
-          {/* Row 3 — Skills (dynamic, searchable, multi-select) */}
-          {skillOptions.length > 0 && (
-            <div style={{ ...styles.filterRow, alignItems: 'flex-start' }}>
-              <span className="lh-muted" style={styles.filterLabel}>Skills</span>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flex: 1, alignItems: 'center' }}>
-                {visibleSkillOptions.length > 8 && (
-                  <input
-                    type="text"
-                    className="lh-field"
-                    placeholder="Filter skills…"
-                    value={skillQuery}
-                    onChange={e => setSkillQuery(e.target.value)}
-                    style={{ ...styles.select, minWidth: 140 }}
-                    aria-label="Filter skills"
-                  />
-                )}
-                {visibleSkillOptions.map(s => {
-                  const active = skillsFilter.includes(s);
-                  return (
-                    <button
-                      key={s}
-                      onClick={() => toggleSkill(s)}
-                      className={active ? undefined : 'lh-field'}
-                      style={{
-                        ...styles.skillChip,
-                        background: active ? '#2563eb' : '#f1f5f9',
-                        color: active ? '#fff' : '#475569',
-                        borderColor: active ? '#2563eb' : '#e2e8f0',
-                      }}
-                    >
-                      {s}
-                      <span style={{ ...styles.skillCount, color: active ? 'rgba(255,255,255,0.8)' : '#94a3b8' }}>{facets.skills[s] ?? 0}</span>
-                    </button>
-                  );
-                })}
-                {skillsFilter.length > 0 && (
-                  <button onClick={() => { setSkillsFilter([]); setPage(1); }} className="lh-muted" style={styles.clearChip}>Clear skills</button>
-                )}
-              </div>
+          {/* Row 3 — Country / Client Connection / Budget (dynamic, platform-scoped) */}
+          {(countryOptions.length > 0 || connectionOptions.length > 0 || budgetBuckets.length > 0) && (
+            <div style={styles.filterRow}>
+              {countryOptions.length > 0 && (
+                <FilterSelect
+                  label="Country"
+                  value={countryFilter}
+                  allLabel="All Countries"
+                  options={countryOptions.map(c => ({ value: c, label: `${c} (${facets.country[c] ?? 0})` }))}
+                  onChange={v => { setCountryFilter(v); setPage(1); }}
+                />
+              )}
+              {connectionOptions.length > 0 && (
+                <FilterSelect
+                  label="Client Connection"
+                  value={connectionFilter}
+                  allLabel="All Connections"
+                  options={connectionOptions.map(c => ({ value: String(c), label: `${c} connects (${facets.connection[String(c)] ?? 0})` }))}
+                  onChange={v => { setConnectionFilter(v); setPage(1); }}
+                />
+              )}
+              {budgetBuckets.length > 0 && (
+                <FilterSelect
+                  label="Budget"
+                  value={budgetFilter}
+                  allLabel="All Budgets"
+                  options={budgetBuckets.map(b => ({ value: b.label, label: `${b.label} (${facets.budget[b.label] ?? 0})` }))}
+                  onChange={v => { setBudgetFilter(v); setPage(1); }}
+                />
+              )}
             </div>
           )}
 
@@ -837,6 +904,33 @@ function HomeContent() {
 
       </div>
     </div>
+  );
+}
+
+/* ── Small reusable dropdown filter with a live count ── */
+function FilterSelect({ label, value, allLabel, options, onChange }: {
+  label: string;
+  value: string;
+  allLabel: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <span className="lh-muted" style={styles.filterLabel}>{label}</span>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="lh-field"
+        style={styles.select}
+        aria-label={label}
+      >
+        <option value="all">{allLabel}</option>
+        {options.map(o => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </span>
   );
 }
 
