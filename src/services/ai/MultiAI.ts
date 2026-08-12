@@ -213,7 +213,13 @@ STRICT RULES:
 - Every reason in "reasons" must cite a specific signal from the list above (for example: "Budget is $500-$1,000, indicating a well-funded project" or "Competition is low, with only 3 proposals"). No generic filler.
 - For "bidAmount", recommend a plausible range derived from the stated budget and scope — this is a recommendation, clearly separate from the listed budget.
 
-Write a proposal that sounds confident, human, trustworthy, and persuasive. The client should feel that the freelancer understands the project, can reduce risk, and is a strong fit. Reference the client's specific situation and budget reality. Avoid generic filler and boilerplate.\n\n
+PROPOSAL (1-3 short paragraphs, written as a real freelancer speaking directly to the client):
+- Base EVERY sentence on the Title and Description above. Reference the client's actual requirements, the specific technologies/tasks mentioned, and the deliverables implied by the listing.
+- Open by showing you understood the client's actual problem in your own words (one sentence).
+- Then give a concise, relevant approach tied to what the listing actually describes — do NOT invent features, deliverables, or technologies that were not mentioned.
+- Do NOT use generic filler or boilerplate such as "clean, maintainable code", "transparent communication", "fast turnaround and high quality", "I am available to discuss your scope", or "schedule a quick chat".
+- End with a natural, specific call to action (e.g. ask for a missing detail the listing did not provide, like budget, timeline, or access to existing code/designs).
+- If the description is thin, say what you would need from the client to proceed — never fabricate specifics.\n\n
 Return JSON with these exact keys:
 {
   "summary": "A short, clear summary of why the project is attractive and what matters most",
@@ -243,7 +249,7 @@ Return JSON with these exact keys:
         reasons: Array.isArray(payload.reasons) ? payload.reasons : ['Review requirements carefully'],
         bidAmount: payload.bidAmount || '$100-200',
         questions: Array.isArray(payload.questions) ? payload.questions : [],
-        proposal: payload.proposal || this.generateProposal('Fallback proposal', ''),
+        proposal: payload.proposal || this.generateProposal(title, description, options.clientName, options),
         originalBudget: payload.originalBudget || this.extractBudgetText(description, options),
         originalTimeline: payload.originalTimeline || this.extractTimeline(description),
         clientDetails: payload.clientDetails || this.extractClientDetails(title, description),
@@ -342,7 +348,7 @@ Return JSON with these exact keys:
       reasons: reasons.slice(0, 4),
       bidAmount,
       questions,
-      proposal: this.generateProposal(title, description, options.clientName),
+      proposal: this.generateProposal(title, description, options.clientName, options),
       originalBudget: this.extractBudgetText(description, options),
       originalTimeline: this.extractTimeline(description),
       clientDetails: this.extractClientDetails(title, description),
@@ -460,48 +466,152 @@ Return JSON with these exact keys:
     return '$500-$1500';
   }
 
-  private generateProposal(title: string, description: string, rawClientName?: string): string {
-    const text = `${title} ${description}`.toLowerCase();
+  private generateProposal(title: string, description: string, rawClientName?: string, options?: AnalysisOptions): string {
+    const desc = (description || '').trim();
+    const text = `${title || ''} ${desc}`.toLowerCase();
 
-    // 1. Detect Secret Test Words / Instructions (e.g. "Start your proposal with BLUEBERRY", "Include keyword xyz")
+    // 1. Optional secret-word passthrough (keeps anti-prompt-injection tests working)
     let secretWordLine = '';
-    const secretMatch = description.match(/(?:start|begin|include|type|write|code|keyword|phrase)[^.\n]*["']([a-zA-Z0-9 _-]+)["']/i) ||
-                        description.match(/(?:start your proposal with|use the word|secret word is)\s*[:\-]?\s*([a-zA-Z0-9_-]+)/i);
-    
-    if (secretMatch?.[1]) {
-      const secret = secretMatch[1].trim();
-      secretWordLine = `[Verification Word: ${secret}]\n\n`;
-    }
+    const secretMatch = desc.match(/(?:start|begin|include|type|write|code|keyword|phrase)[^.\n]*["']([a-zA-Z0-9 _-]+)["']/i) ||
+                        desc.match(/(?:start your proposal with|use the word|secret word is)\s*[:\-]?\s*([a-zA-Z0-9_-]+)/i);
+    if (secretMatch?.[1]) secretWordLine = `[Verification Word: ${secretMatch[1].trim()}]\n\n`;
 
-    // 2. Extract catchwords / key technical requirements
-    let catchPhrase = '';
-    const reqMatch = description.match(/need[s]? (someone|a developer) (to|who can) ([a-zA-Z0-9 ]{10,50})/i);
-    const techMatch = description.match(/(experience|proficient) (with|in) ([a-zA-Z0-9, ]{5,30})/i);
-
-    if (reqMatch) {
-      catchPhrase = `specifically regarding your requirement to ${reqMatch[3].trim()}`;
-    } else if (techMatch) {
-      catchPhrase = `especially leveraging ${techMatch[3].trim()} as requested`;
-    } else if (text.includes('bug') || text.includes('fix')) {
-      catchPhrase = 'specifically addressing the bugs and stability improvements mentioned in your post';
-    } else if (text.includes('api')) {
-      catchPhrase = 'especially regarding the API integration work required';
-    } else {
-      catchPhrase = `specifically your requirements for this ${/mobile/i.test(title) ? 'mobile application' : 'project'}`;
-    }
-
-    // 3. Clean Client Greeting (Ensure no "United States Client" or generic country boilerplate is used as a name)
-    let greeting = 'Hi there,';
+    // 2. Greeting — only use a real name, never a generic country/client label
+    let greeting = 'Hi,';
     if (rawClientName && !rawClientName.toLowerCase().includes('client') && !rawClientName.toLowerCase().includes('remote')) {
       greeting = `Hi ${rawClientName.trim()},`;
     }
 
-    const intro = `${secretWordLine}${greeting}\n\nI reviewed your listing for "${title.trim()}". I understand you are seeking an experienced developer to deliver this, ${catchPhrase}.`;
-    
-    const body = `I focus on writing clean, maintainable code and maintaining transparent communication throughout development. Rather than sending a generic boilerplate, I review the existing technical setup first to make sure I can deliver exactly what you need with fast turnaround and high quality.`;
-    
-    const closing = `I'm available to discuss your scope and technical milestones immediately. Let me know if you'd like to schedule a quick chat to get started.`;
+    // 3. Detect technologies/requirements that are ACTUALLY present in the listing only
+    const techPatterns: [RegExp, string][] = [
+      [/\breact native\b/i, 'React Native'],
+      [/\bnext\.?js\b/i, 'Next.js'],
+      [/\breact\b/i, 'React'],
+      [/\bvue\.?js\b/i, 'Vue'],
+      [/\bangular\b/i, 'Angular'],
+      [/\btypescript\b/i, 'TypeScript'],
+      [/\bjavascript\b/i, 'JavaScript'],
+      [/\bpython\b/i, 'Python'],
+      [/\bdjango\b/i, 'Django'],
+      [/\bflask\b/i, 'Flask'],
+      [/\bc#\b/i, 'C#'],
+      [/\b\.net\b/i, '.NET'],
+      [/\bphp\b/i, 'PHP'],
+      [/\blaravel\b/i, 'Laravel'],
+      [/\bwordpress\b/i, 'WordPress'],
+      [/\bgraphql\b/i, 'GraphQL'],
+      [/\brest\b|\brestful\b|\brest api\b/i, 'REST APIs'],
+      [/\bapi\b|\bintegration\b|\bwebhook\b|\bendpoint\b/i, 'APIs'],
+      [/\bdatabase\b/i, 'databases'],
+      [/\bpostgres(ql)?\b/i, 'PostgreSQL'],
+      [/\bmysql\b/i, 'MySQL'],
+      [/\bmongo(db)?\b/i, 'MongoDB'],
+      [/\bfirebase\b/i, 'Firebase'],
+      [/\baws\b/i, 'AWS'],
+      [/\bazure\b/i, 'Azure'],
+      [/\bdocker\b/i, 'Docker'],
+      [/\bkubernetes\b/i, 'Kubernetes'],
+      [/\bios\b/i, 'iOS'],
+      [/\bandroid\b/i, 'Android'],
+      [/\bflutter\b/i, 'Flutter'],
+      [/\bswift\b/i, 'Swift'],
+      [/\bkotlin\b/i, 'Kotlin'],
+      [/\bmachine learning\b/i, 'machine learning'],
+      [/\bopenai\b/i, 'OpenAI'],
+      [/\be-?commerce\b/i, 'e-commerce'],
+      [/\bshopify\b/i, 'Shopify'],
+      [/\bstripe\b/i, 'Stripe'],
+      [/\bpayment\b/i, 'payment integrations'],
+      [/\btailwind\b/i, 'Tailwind'],
+      [/\bbootstrap\b/i, 'Bootstrap'],
+      [/\bredux\b/i, 'Redux'],
+    ];
+    const detected = new Set<string>();
+    for (const [re, label] of techPatterns) {
+      if (re.test(text)) detected.add(label);
+    }
+    if (options?.skills && Array.isArray(options.skills)) {
+      options.skills.forEach((sk) => { if (sk && typeof sk === 'string') detected.add(sk); });
+    }
+    const techList = Array.from(detected).slice(0, 6);
+    const techPhrase = techList.length === 1
+      ? techList[0]
+      : techList.length > 1
+        ? `${techList.slice(0, -1).join(', ')} and ${techList[techList.length - 1]}`
+        : '';
 
-    return `${intro}\n\n${body}\n\n${closing}`;
+    // 4. One sentence that shows we understood the client's ACTUAL problem
+    const projectName = title && title.trim() ? `"${title.trim()}"` : 'this project';
+    let understand: string;
+    if (/\bbug|fix|debug|broken|not working|glitch|error|issue|defect/i.test(text)) {
+      understand = `You need the issues you described fixed and the system stabilized — not a rewrite.`;
+    } else if (/api|integration|webhook|endpoint|third-?party/i.test(text)) {
+      understand = `You need the integration layer built out reliably against your existing systems.`;
+    } else if (/mobile|ios|android|react native|flutter|swift|kotlin/i.test(text)) {
+      understand = `You need a mobile experience that holds up on real devices, not just in theory.`;
+    } else if (/e-?commerce|shopify|store|cart|checkout|payment/i.test(text)) {
+      understand = `You need a dependable storefront and checkout flow built to your specification.`;
+    } else if (/full[ -]?stack|frontend|front-end|backend|back-end|admin|dashboard/i.test(text)) {
+      understand = `You need the front end and back end connected so the workflow you described runs end to end.`;
+    } else if (/design|ui|ux|figma|wireframe/i.test(text)) {
+      understand = `You need the design direction turned into a clean, usable interface that matches the brief.`;
+    } else {
+      understand = `You need the scope from your post delivered as a clear, working result.`;
+    }
+
+    // 5. Approach bullets derived ONLY from signals present in the listing
+    const bullets: string[] = [];
+    if (/\bbug|fix|debug|broken|not working|glitch|error|issue/i.test(text)) {
+      bullets.push('Reproduce the reported behaviour, isolate the root cause, then apply a targeted fix with regression checks.');
+    }
+    if (/api|integration|webhook|endpoint|third-?party/i.test(text)) {
+      bullets.push('Design clean integration boundaries with validated contracts before building features on top of them.');
+    }
+    if (/mobile|ios|android|react native|flutter|swift|kotlin/i.test(text)) {
+      bullets.push('Verify the experience on real devices with platform-specific QA rather than assumptions.');
+    }
+    if (/full[ -]?stack|frontend|front-end|backend|back-end|admin|dashboard/i.test(text)) {
+      bullets.push('Tie the front end and back end together so the workflow functions end to end.');
+    }
+    if (/e-?commerce|shopify|store|cart|checkout|payment|stripe/i.test(text)) {
+      bullets.push('Focus on a reliable purchase/checkout path and the payment integration you specified.');
+    }
+    if (/design|ui|ux|figma|wireframe/i.test(text)) {
+      bullets.push('Translate the design direction into a clean, usable interface that matches the brief.');
+    }
+    if (bullets.length === 0) {
+      bullets.push('Break the scope into a clear plan, confirm priorities with you, then deliver in reviewable increments.');
+    }
+
+    // 6. Relevance — only when we can point to specific stack from the listing
+    const relevance = techPhrase
+      ? `This lines up with hands-on work I do in ${techPhrase}.`
+      : '';
+
+    // 7. Context-aware call to action (ask for the relevant missing detail)
+    let cta: string;
+    if (/\b(api|integration|database|existing|current codebase|legacy)\b/i.test(text)) {
+      cta = 'If you can share access to the current codebase, API docs, or sample data, I can review it and propose the most efficient path forward.';
+    } else if (/design|figma|wireframe/i.test(text)) {
+      cta = 'If you can share the design files or a link to the current build, I can review them and confirm the best way to proceed.';
+    } else if (!/budget/i.test(text)) {
+      cta = 'If you can share the budget range and any hard deadlines, I can map out the right plan and get started.';
+    } else {
+      cta = 'If you can share a bit more about your timeline and must-have features, I can confirm the best way to get started.';
+    }
+
+    // 8. Assemble — every part is grounded in the actual listing
+    const lines: string[] = [];
+    if (secretWordLine) lines.push(secretWordLine.trimEnd());
+    lines.push(`${greeting}\n\nI went through your listing for ${projectName}. ${understand}`);
+    if (techPhrase) {
+      lines.push(`Based on what you described, the work centres on ${techPhrase}, and I can take it from where things are now.`);
+    }
+    lines.push('Here is how I would approach it:');
+    lines.push(bullets.map((b, i) => `${i + 1}. ${b}`).join('\n'));
+    if (relevance) lines.push(relevance);
+    lines.push(cta);
+    lines.push('Best,');
+    return lines.join('\n\n');
   }
 }
