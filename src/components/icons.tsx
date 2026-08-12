@@ -191,3 +191,55 @@ export function IconAlert(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Conversational-agent identity mark: a chat bubble with a typing indicator.
+ * Communicates "assistant", not a robot or generic AI emblem.
+ */
+export function IconAgent(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 4h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+      <circle cx="8.5" cy="10" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="10" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="10" r="1.2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/**
+ * Brand-consistent avatar for the conversational Agent. Keep this as the single
+ * source of the Agent's visual identity across the launcher, panel header, and
+ * message loading state.
+ */
+export function AgentAvatar({
+  size = 32,
+  iconSize,
+  radius = 10,
+  className,
+}: {
+  size?: number;
+  iconSize?: number;
+  radius?: number;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden
+      className={className}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: radius,
+        background: '#2563eb',
+        color: '#fff',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }}
+    >
+      <IconAgent size={iconSize ?? Math.round(size * 0.55)} color="#fff" />
+    </span>
+  );
+}
