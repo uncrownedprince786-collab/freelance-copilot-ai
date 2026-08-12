@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Bot, RefreshCw, Send, Sparkles, X } from 'lucide-react';
+import { ArrowUp, MessageSquare, RefreshCw, Send, X } from 'lucide-react';
 import { timeAgo } from '@/lib/format';
 import { AGENT_GREETING, AGENT_SUGGESTIONS, AgentJobCard } from '@/lib/agentTypes';
 
@@ -368,7 +368,7 @@ export default function AgentPanel() {
         }}
         className="lh-agent-fab"
       >
-        {open ? <X size={24} /> : <Sparkles size={24} />}
+        {open ? <X size={24} /> : <MessageSquare size={24} />}
       </button>
 
       {nudge && (
@@ -428,7 +428,7 @@ export default function AgentPanel() {
           {/* Header */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', background: '#0f172a', color: '#fff' }}>
             <div style={{ width: 32, height: 32, borderRadius: 10, background: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Bot size={18} color="#fff" />
+              <MessageSquare size={18} color="#fff" />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 800 }}>Lead Hunter Assistant</div>
@@ -512,7 +512,7 @@ export default function AgentPanel() {
             {loading && (
               <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                 <div style={{ width: 26, height: 26, borderRadius: 8, background: '#2563eb', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Bot size={14} color="#fff" />
+                  <MessageSquare size={14} color="#fff" />
                 </div>
                 <div className="lh-agent-msg" style={{ background: '#fff', border: '1px solid #eef1f5', borderRadius: 14, padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span className="lh-typing">

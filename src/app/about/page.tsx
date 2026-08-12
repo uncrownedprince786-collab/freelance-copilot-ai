@@ -182,9 +182,9 @@ export default function AboutPage() {
         {/* The Problem */}
         <section style={styles.section} className="lh-surface">
           <div style={styles.kicker}>The Problem</div>
-          <h2 style={styles.heading}>The problem isn\u2019t a shortage of jobs.</h2>
+          <h2 style={styles.heading}>The problem isn&apos;t a shortage of jobs.</h2>
           <p className="lh-body" style={styles.body}>
-            Freelancers don\u2019t necessarily have a shortage of jobs. The real problem is finding the
+            Freelancers don&apos;t necessarily have a shortage of jobs. The real problem is finding the
             right opportunities at the right time — before competition increases and the window closes.
             High-quality listings attract proposals within hours, and most job boards give you little
             more than a wall of listings to scan manually.
@@ -215,15 +215,15 @@ export default function AboutPage() {
 
         {/* Why It's Different */}
         <section style={styles.section} className="lh-surface">
-          <div style={styles.kicker}>Why It\u2019s Different</div>
+          <div style={styles.kicker}>Why It&apos;s Different</div>
           <h2 style={styles.heading}>Signals, not black-box recommendations.</h2>
           <p className="lh-body" style={styles.body}>
-            We don\u2019t ask freelancers to trust a generic recommendation. Lead Hunter shows the
+            We don&apos;t ask freelancers to trust a generic recommendation. Lead Hunter shows the
             underlying opportunity signals — posting time, proposal activity, budget, and client history
             where the platform provides it — so you can make a better decision with your own judgment.
           </p>
           <blockquote className="lh-body" style={styles.quote}>
-            &ldquo;The goal isn\u2019t to tell you which job to take. It\u2019s to surface which
+            &ldquo;The goal isn&apos;t to tell you which job to take. It&apos;s to surface which
             opportunities are worth your attention, and why.&rdquo;
           </blockquote>
         </section>
