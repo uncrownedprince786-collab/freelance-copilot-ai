@@ -133,7 +133,6 @@ export default function JobDetailPage() {
           setJob(markViewedIfGuest(parsed));
           setLoading(false);
           sessionStorage.removeItem('selectedJob');
-          void fetchAnalysis(markViewedIfGuest(parsed));
           return;
         }
       } catch {/* fallback */}
@@ -150,7 +149,6 @@ export default function JobDetailPage() {
       const found = jobs.find(j => j.id === params.id);
       if (found) {
         setJob(markViewedIfGuest(found));
-        void fetchAnalysis(markViewedIfGuest(found));
       } else {
         setError('Job not found.');
       }
@@ -553,6 +551,20 @@ export default function JobDetailPage() {
 
         {/* ──── RIGHT PANEL: AI ANALYSIS ──── */}
         <aside style={s.rightPanel} className="lj-right lh-surface">
+
+          {!analyzing && !analysis && (
+            <div style={s.card} className="lh-surface">
+              <div style={s.sectionHead}>Proposal Generator</div>
+              <p className="lh-body" style={s.muted}>Generate a tailored proposal for this job.</p>
+              <button
+                onClick={() => job && void fetchAnalysis(job)}
+                disabled={analyzing || !job}
+                style={s.btnPrimary}
+              >
+                Generate Proposal
+              </button>
+            </div>
+          )}
 
           {analyzing && (
             <div style={s.card} className="lh-surface">

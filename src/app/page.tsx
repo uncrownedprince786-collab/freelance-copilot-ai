@@ -372,51 +372,6 @@ function HomeContent() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [pendingJob, setPendingJob] = useState<Job | null>(null);
 
-  // Per-job proposal generation (reuses /api/analyze with the job's own data).
-  const [proposalJob, setProposalJob] = useState<Job | null>(null);
-  const [proposalText, setProposalText] = useState('');
-  const [proposalLoading, setProposalLoading] = useState(false);
-  const [proposalError, setProposalError] = useState('');
-
-  const closeProposal = () => { setProposalJob(null); setProposalText(''); setProposalError(''); };
-
-  async function handleGenerateProposal(job: Job) {
-    setProposalJob(job);
-    setProposalText('');
-    setProposalError('');
-    setProposalLoading(true);
-    try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: (job.title || '').slice(0, 300),
-          description: (job.description || '').slice(0, 3000),
-          platform: job.platform || 'Unknown',
-          budget: job.budget || 'Negotiable',
-          clientName: job.clientName || '',
-          opportunityId: job.id,
-          skills: job.skills || [],
-          proposalCount: job.proposalCount ?? null,
-          connectsRequired: job.connections ?? null,
-          budgetType: job.budgetType || '',
-        }),
-      });
-      if (!res.ok) throw new Error('Analysis failed');
-      const data = await res.json();
-      let text = data?.proposal || '';
-      const client = job.clientName && !job.clientName.toLowerCase().includes('client') ? job.clientName : 'there';
-      if (text && !text.toLowerCase().startsWith('hi ') && !text.toLowerCase().startsWith('dear ')) {
-        text = `Hi ${client},\n\n${text}`;
-      }
-      setProposalText(text || 'No proposal could be generated for this listing.');
-    } catch {
-      setProposalError('Could not generate a proposal right now. Please try again.');
-    } finally {
-      setProposalLoading(false);
-    }
-  }
-
   const handleJobClick = (job: Job) => {
     if (!isAuthenticated()) {
       setPendingJob(job);
@@ -915,15 +870,6 @@ function HomeContent() {
                   <div style={styles.barTrack}>
                     <div style={{ ...styles.barFill, width: `${job.score}%`, background: getScoreColor(job.score) }} />
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); void handleGenerateProposal(job); }}
-                      style={styles.btnProposal}
-                    >
-                      Generate Proposal
-                    </button>
-                  </div>
                 </article>
             ))}
           </div>
@@ -1006,65 +952,6 @@ function HomeContent() {
           </p>
         </footer>
 
-        {/* Per-job proposal modal */}
-        {proposalJob && (
-          <div
-            onClick={closeProposal}
-            role="dialog"
-            aria-label="Generated proposal"
-            style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}
-            className="lh-proposal-modal"
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{ background: '#fff', borderRadius: 16, maxWidth: 560, width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#16a34a' }}>Generate Proposal</div>
-                  <h3 style={{ margin: '4px 0 0', fontSize: 18, fontWeight: 800, color: '#0f172a', lineHeight: 1.3 }}>{proposalJob.title}</h3>
-                </div>
-                <button onClick={closeProposal} aria-label="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: 22, lineHeight: 1 }}>&times;</button>
-              </div>
-
-              {proposalLoading && (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '28px 0' }}>
-                  <div style={styles.spinner} />
-                  <p style={{ color: '#64748b', fontSize: 13, margin: 0 }}>Generating a proposal for this job…</p>
-                </div>
-              )}
-
-              {proposalError && !proposalLoading && (
-                <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: '#b91c1c' }}>{proposalError}</div>
-              )}
-
-              {!proposalLoading && !proposalError && proposalText && (
-                <>
-                  <textarea
-                    readOnly
-                    value={proposalText}
-                    style={{ width: '100%', minHeight: 220, border: '1px solid #e2e8f0', borderRadius: 10, padding: '12px 14px', fontSize: 13, lineHeight: 1.6, color: '#374151', background: '#f9fafb', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }}
-                  />
-                  <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={async () => { try { await navigator.clipboard.writeText(proposalText); } catch {} }}
-                      style={styles.btnPrimary}
-                    >
-                      Copy Proposal
-                    </button>
-                    <a href={proposalJob.url} target="_blank" rel="noopener noreferrer" style={{ ...styles.btnGhost, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
-                      View on {proposalJob.platform}
-                    </a>
-                  </div>
-                  <p style={{ fontSize: 11.5, color: '#94a3b8', margin: '10px 0 0', lineHeight: 1.5 }}>
-                    Generated from this job&apos;s actual title, description, budget, skills, and competition. Review and edit before sending.
-                  </p>
-                </>
-              )}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1122,10 +1009,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#fff', color: '#475569',
     borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
     borderRadius: 999, padding: '10px 14px', fontSize: 13, cursor: 'pointer',
-  },
-  btnProposal: {
-    background: '#0f172a', color: '#fff', border: 'none',
-    borderRadius: 999, padding: '8px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
   },
 
   banner: {
