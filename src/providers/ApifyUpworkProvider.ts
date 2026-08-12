@@ -1,6 +1,21 @@
 import { JobProvider } from "./JobProvider";
 import { Job } from "../types/job";
 
+// Upwork reports competition as text bands ("50+", "0 to 5", "5 to 10",
+// "20 to 50") or phrases like "Be the first to apply". Normalize to a numeric
+// floor so the real value is preserved (never coerced to 0) and stored
+// consistently. "50+" → 50, "0 to 5" → 0, "5 to 10" → 5. Returns null only when
+// there is genuinely no count (e.g. "Be the first to apply").
+function parseUpworkCount(v: unknown): number | null {
+  if (typeof v === "number") return v;
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const m = s.match(/\d+/);
+  if (!m) return null;
+  return parseInt(m[0], 10);
+}
+
 export class ApifyUpworkProvider implements JobProvider {
   name = "ApifyUpwork";
   private token = process.env.APIFY_TOKEN;
@@ -85,9 +100,9 @@ export class ApifyUpworkProvider implements JobProvider {
             experienceLevel: this.cleanText(item.experienceLevel || item.experience || '') || null,
             duration: this.cleanText(item.engagementDuration || item.duration || '') || null,
             connectsRequired: connects,
-            proposalCount: typeof item.totalApplicants === 'number' ? item.totalApplicants : (typeof item.proposalCount === 'number' ? item.proposalCount : null),
-            interviewingCount: typeof item.interviewingCount === 'number' ? item.interviewingCount : 0,
-            hiresCount: typeof item.totalHired === 'number' ? item.totalHired : (typeof item.hiresCount === 'number' ? item.hiresCount : 0),
+            proposalCount: parseUpworkCount(item.proposals ?? item.proposalCount ?? item.totalApplicants),
+            interviewingCount: parseUpworkCount(item.interviewing ?? item.interviewingCount) ?? 0,
+            hiresCount: parseUpworkCount(item.hires ?? item.totalHired ?? item.hiresCount) ?? 0,
             postedAt: postedDate,
             client: {
               name: clientName,

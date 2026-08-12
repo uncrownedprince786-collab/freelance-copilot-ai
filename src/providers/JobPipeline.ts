@@ -42,6 +42,21 @@ export class JobPipeline {
     console.log('[JobPipeline] Step 3: Applying 7-Day Age Filter & Hard Filters...');
     const validFetched = fetchedJobs.filter(job => this.applyHardFilters(job));
 
+    // Refresh volatile competition signals on already-stored jobs so corrected
+    // parse values (e.g. Upwork "50+") propagate on the next sync instead of
+    // waiting for the listing to be re-discovered. This only updates counts;
+    // it does not change filtering or scoring inputs.
+    const storeByUrl = new Map<string, Job>();
+    activeStore.forEach(j => { if (j.url) storeByUrl.set(j.url, j); });
+    for (const f of validFetched) {
+      const ex = f.url ? storeByUrl.get(f.url) : undefined;
+      if (ex) {
+        ex.proposalCount = f.proposalCount;
+        ex.interviewingCount = f.interviewingCount;
+        ex.hiresCount = f.hiresCount;
+      }
+    }
+
     // Step 4: Deduplication against existing store
     console.log('[JobPipeline] Step 4: Deduplicating against existing store...');
     const brandNewJobs: Job[] = [];
@@ -236,13 +251,16 @@ export class JobPipeline {
       return false;
     }
 
-    // Rule 3: interviewingCount <= 3 (prefer low competition)
-    if (typeof job.interviewingCount === "number" && job.interviewingCount > 3) {
+    // Rule 3: interviewingCount <= 10 (prefer low/medium competition; Upwork's
+    // "5 to 10" band stays visible so real high-signal jobs aren't dropped).
+    if (typeof job.interviewingCount === "number" && job.interviewingCount > 10) {
       return false;
     }
 
-    // Rule 4: Reject jobs with high competition (>= 50 proposals)
-    if (typeof job.proposalCount === "number" && job.proposalCount >= 50) {
+    // Rule 4: Reject only clearly extreme competition (> 50 proposals). Upwork's
+    // top band is "50+", which normalizes to 50 — keep it so tracked jobs stay
+    // visible instead of being silently discarded.
+    if (typeof job.proposalCount === "number" && job.proposalCount > 50) {
       return false;
     }
 
