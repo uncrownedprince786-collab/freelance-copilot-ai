@@ -525,6 +525,15 @@ Return JSON with these exact keys:
       [/\btailwind\b/i, 'Tailwind'],
       [/\bbootstrap\b/i, 'Bootstrap'],
       [/\bredux\b/i, 'Redux'],
+      [/\bcharts?\b/i, 'charts'],
+      [/\bdashboard\b/i, 'dashboards'],
+      [/\bpandas\b/i, 'pandas'],
+      [/\bexcel\b|\bxlsx\b/i, 'Excel data handling'],
+      [/\bwoocommerce\b/i, 'WooCommerce'],
+      [/\bcach(e|ing)\b/i, 'caching'],
+      [/\boptimiz/i, 'performance optimization'],
+      [/\be?mail\b/i, 'email'],
+      [/\bseo\b/i, 'SEO'],
     ];
     const detected = new Set<string>();
     for (const [re, label] of techPatterns) {
@@ -555,6 +564,10 @@ Return JSON with these exact keys:
       understand = `You need the front end and back end connected so the workflow you described runs end to end.`;
     } else if (/design|ui|ux|figma|wireframe/i.test(text)) {
       understand = `You need the design direction turned into a clean, usable interface that matches the brief.`;
+    } else if (/optimiz|performance|speed|slow|latency|load time/i.test(text)) {
+      understand = `You need the performance problem you described fixed at the root, with a measurable improvement.`;
+    } else if (/excel|\bxlsx\b|csv|data import|pandas|spreadsheet/i.test(text)) {
+      understand = `You need the data workflow you described handled reliably end to end, at your real data volume.`;
     } else {
       understand = `You need the scope from your post delivered as a clear, working result.`;
     }
@@ -578,6 +591,12 @@ Return JSON with these exact keys:
     }
     if (/design|ui|ux|figma|wireframe/i.test(text)) {
       bullets.push('Translate the design direction into a clean, usable interface that matches the brief.');
+    }
+    if (/optimiz|performance|speed|slow|latency|load time/i.test(text)) {
+      bullets.push('Profile the current bottlenecks first, then apply targeted optimizations (caching, queries, payloads) and report before/after metrics.');
+    }
+    if (/excel|\bxlsx\b|csv|pandas|spreadsheet|data import/i.test(text)) {
+      bullets.push('Build a robust import/export path that handles your real data volumes without crashing or silently dropping rows.');
     }
     if (bullets.length === 0) {
       bullets.push('Break the scope into a clear plan, confirm priorities with you, then deliver in reviewable increments.');
