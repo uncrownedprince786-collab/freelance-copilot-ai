@@ -106,8 +106,9 @@ function fmt(n: number): string {
 }
 
 /** Numeric USD budget value (midpoint/ceiling) for trend charts. Mixed
- *  currencies are excluded so the average stays meaningful. */
-function usdBudgetMidpoint(job: RawJob): number | null {
+ *  currencies are excluded so the average stays meaningful. Exported so the
+ *  intelligence API can compute real per-skill budget averages. */
+export function usdBudgetMidpoint(job: RawJob): number | null {
   const b = job.budget;
   if (!b || typeof b !== 'object') return null;
   const sym = b.currency ? String(b.currency) : '';
