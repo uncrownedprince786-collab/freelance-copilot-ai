@@ -161,7 +161,7 @@ export default function TrendsPage() {
 
         {/* Page heading */}
         <div style={s.pageHead}>
-          <h1 style={s.pageTitle}>Market Intelligence</h1>
+          <h1 style={s.pageTitle}>Market Trends</h1>
           <p className="lh-body" style={s.pageDesc}>
             What&apos;s happening in the freelance market right now — based on live listings from Upwork and Freelancer.
           </p>

@@ -167,24 +167,66 @@ export default function AgentPanel() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nudge, setNudge] = useState(false);
+  const playedRef = useRef(false);
   const [suggestions, setSuggestions] = useState<string[]>(AGENT_SUGGESTIONS);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // One-time, very subtle welcome sound (respects autoplay restrictions).
+  const playSound = useCallback(() => {
+    if (playedRef.current) return;
+    playedRef.current = true;
+    try {
+      const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+      const Ctx = w.AudioContext || w.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 587.33;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.55);
+      osc.onended = () => { try { ctx.close(); } catch {} };
+    } catch {
+      /* autoplay blocked or unsupported — fail silently */
+    }
+  }, []);
+
+  // First-session greeting nudge near the launcher (panel stays closed by default).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (sessionStorage.getItem(WELCOME_KEY) === '1') return;
+    const t = setTimeout(() => {
+      try { sessionStorage.setItem(WELCOME_KEY, '1'); } catch {}
+      setNudge(true);
+      playSound();
+      const onGesture = () => { playSound(); };
+      window.addEventListener('pointerdown', onGesture, { once: true });
+      window.addEventListener('keydown', onGesture, { once: true });
+    }, 2200);
+    return () => clearTimeout(t);
+  }, [playSound]);
+
+  // Dismiss the nudge once the panel is opened.
+  useEffect(() => { if (open) setNudge(false); }, [open]);
 
   // Restore session + first-landing welcome.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const storedMessages = loadJSON<AgentMessage[]>(MSG_KEY);
     const storedWorking = loadJSON<AgentJobCard[]>(WORKING_KEY);
-    const welcomeShown = sessionStorage.getItem(WELCOME_KEY) === '1';
     const msgs: AgentMessage[] = storedMessages && storedMessages.length
       ? storedMessages
       : [{ id: nextId(), role: 'assistant', content: AGENT_GREETING, time: Date.now() }];
     setMessages(msgs);
     setWorkingJobs(storedWorking ?? []);
-    if (!welcomeShown) {
-      sessionStorage.setItem(WELCOME_KEY, '1');
-    }
     setHydrated(true);
   }, []);
 
@@ -328,6 +370,36 @@ export default function AgentPanel() {
       >
         {open ? <X size={24} /> : <Sparkles size={24} />}
       </button>
+
+      {nudge && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed', right: 18, bottom: 84, zIndex: 68,
+            maxWidth: 300, background: '#0f172a', color: '#fff',
+            borderRadius: 14, padding: '14px 16px', boxShadow: '0 12px 32px rgba(15,23,42,0.28)',
+          }}
+          className="lh-agent-nudge"
+        >
+          <button
+            type="button"
+            aria-label="Dismiss greeting"
+            onClick={() => setNudge(false)}
+            style={{ position: 'absolute', top: 6, right: 8, background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
+          >&times;</button>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Welcome to Lead Hunter</div>
+          <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.55, color: '#cbd5e1' }}>
+            Hi! I can help you find opportunities, understand the market, or decide what to focus on.
+          </p>
+          <button
+            type="button"
+            onClick={() => { setNudge(false); setOpen(true); }}
+            style={{ marginTop: 10, background: '#2563eb', color: '#fff', border: 'none', borderRadius: 999, padding: '8px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}
+          >
+            Open Assistant
+          </button>
+        </div>
+      )}
 
       {open && hydrated && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} aria-hidden onClick={() => setOpen(false)} className="lh-agent-backdrop" />

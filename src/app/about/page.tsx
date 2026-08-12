@@ -121,7 +121,7 @@ const WORKFLOW = [
   { title: 'Competition', desc: 'real proposal signals' },
   { title: 'Ranking', desc: 'opportunity scoring' },
   { title: 'Assessment', desc: 'per-job analysis' },
-  { title: 'Market Intelligence', desc: 'marketplace trends' },
+  { title: 'Market Trends', desc: 'marketplace trends' },
 ];
 
 export default function AboutPage() {
@@ -256,7 +256,7 @@ export default function AboutPage() {
               'Per-job analysis and proposal draft',
               'Market trends built from real marketplace data',
               'Posting-time intelligence for when to check platforms',
-              'A dedicated Market Intelligence view with competition, budgets, and skill demand',
+              'Market Trends — a market-level view built from real listing activity',
             ].map(g => (
               <div key={g} style={styles.getCard} className="lh-surface">
                 <span style={styles.getCheck}>✓</span>

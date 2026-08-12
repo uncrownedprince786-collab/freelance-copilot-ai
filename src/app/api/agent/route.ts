@@ -117,6 +117,12 @@ function followUpSuggestions(intent: AgentIntent, cards: AgentJobCard[]): string
   if (intent === 'trends') return ['What should I learn?', 'Which jobs should I prioritize?', 'Show me recent React jobs'];
   if (intent === 'guidance') return AGENT_SUGGESTIONS;
   if (cards.length === 0) return AGENT_SUGGESTIONS;
+  if (cards.length > 0) {
+    const top = [...cards].sort((a, b) => b.score - a.score)[0];
+    const suggestions = ['Compare these', 'Only hourly ones', 'Higher budget only'];
+    if (top?.platform) suggestions.push(`More ${top.platform} jobs`);
+    return suggestions;
+  }
   return ['Compare these', 'Only hourly ones', 'Higher budget only'];
 }
 
