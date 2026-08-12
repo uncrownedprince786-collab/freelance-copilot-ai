@@ -282,7 +282,7 @@ export default function AdminSessionsPage() {
 }
 
 const st: Record<string, React.CSSProperties> = {
-  page: { minHeight: '100vh', background: 'linear-gradient(135deg,#f0f4ff 0%,#f8fafc 100%)', padding: '24px 16px', fontFamily: 'Inter,"Segoe UI",sans-serif' },
+  page: { minHeight: '100vh', background: 'linear-gradient(135deg,#f0f4ff 0%,#f8fafc 100%)', padding: '24px 16px' },
   shell: { maxWidth: 1100, margin: '0 auto' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28, paddingBottom: 16, borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap', gap: 8 },
   brand: { fontSize: 22, fontWeight: 800, color: '#0f172a', margin: 0 },

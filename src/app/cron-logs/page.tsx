@@ -205,7 +205,7 @@ export default function CronLogsPage() {
 }
 
 const st: Record<string, React.CSSProperties> = {
-  page: { minHeight: '100vh', background: '#f7f9fc', padding: '24px 16px', fontFamily: '"Inter","Segoe UI",system-ui,sans-serif', color: '#111827' },
+  page: { minHeight: '100vh', background: '#f7f9fc',     padding: '24px 16px', color: '#111827' },
   shell: { maxWidth: 900, margin: '0 auto' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid #e5e7eb' },
   brandGroup: { display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' },

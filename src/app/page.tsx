@@ -964,7 +964,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'linear-gradient(135deg,#f0f4ff 0%,#f8fafc 100%)',
     color: '#111827',
     padding: '24px 16px',
-    fontFamily: 'Inter,"Segoe UI",sans-serif',
   },
   shell: { maxWidth: 1320, margin: '0 auto' },
 
@@ -974,7 +973,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    fontFamily: 'Inter,"Segoe UI",sans-serif',
   },
   spinner: {
     width: 40,

@@ -12,7 +12,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'linear-gradient(135deg,#f0f4ff 0%,#f8fafc 100%)',
     color: '#111827',
     padding: '24px 16px',
-    fontFamily: 'Inter,"Segoe UI",sans-serif',
   },
   shell: { maxWidth: 880, margin: '0 auto' },
   header: {
@@ -168,7 +167,7 @@ export default function AboutPage() {
               'We monitor freelance opportunities from Upwork and Freelancer.',
               'We bring listings into one place.',
               'We surface competition and freshness signals.',
-              'We prioritize opportunities so you don\u2019t have to scan hundreds of listings.',
+              'We prioritize opportunities so you don’t have to scan hundreds of listings.',
               'We turn collected job data into market intelligence.',
             ].map(b => (
               <li key={b} className="lh-body" style={styles.bullet}>

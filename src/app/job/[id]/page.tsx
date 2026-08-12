@@ -765,7 +765,6 @@ const s: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     background: '#f7f9fc',
-    fontFamily: '"Inter","Segoe UI",system-ui,sans-serif',
     color: '#1f2937',
   },
   topBar: {
@@ -881,7 +880,6 @@ const s: Record<string, React.CSSProperties> = {
     color: '#374151', background: '#f9fafb',
     resize: 'vertical', marginBottom: 10,
     boxSizing: 'border-box', display: 'block',
-    fontFamily: '"Inter","Segoe UI",sans-serif',
   },
   warnBox: { background: '#fefce8', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#92400e' },
 

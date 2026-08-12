@@ -85,7 +85,7 @@ const DIRECTION_META: Record<string, { label: string; color: string; bg: string;
 
 const GROWTH_META: Record<string, { label: string; color: string; arrow: string }> = {
   growing:   { label: 'Growing',   color: '#15803d', arrow: '↗' },
-  new:       { label: 'New',       color: '#2563eb', arrow: '✦' },
+  new:       { label: 'New',       color: '#2563eb', arrow: '↑' },
   declining: { label: 'Declining', color: '#b91c1c', arrow: '↘' },
   stable:    { label: 'Steady',    color: '#6b7280', arrow: '→' },
 };
@@ -260,7 +260,7 @@ export default function IntelligencePage() {
                         <span style={{ ...s.scoreChip, background: op.score >= 80 ? '#f0fdf4' : op.score >= 70 ? '#fffbeb' : '#f3f4f6', color: op.score >= 80 ? '#15803d' : op.score >= 70 ? '#b45309' : '#374151', border: `1px solid ${op.score >= 80 ? '#bbf7d0' : op.score >= 70 ? '#fde68a' : '#e5e7eb'}` }}>
                           {op.score} match
                         </span>
-                        {op.actFast && <span style={{ ...s.actFastTag }}>⚡ Act fast</span>}
+                        {op.actFast && <span style={{ ...s.actFastTag }}>Act fast</span>}
                       </div>
                       <div className="lh-h" style={{ fontSize: 13.5, fontWeight: 700, color: '#111827', margin: '8px 0 4px', lineHeight: 1.45 }}>{op.title}</div>
                       <div className="lh-muted" style={{ fontSize: 12, color: '#6b7280', marginBottom: 6 }}>
@@ -495,7 +495,7 @@ export default function IntelligencePage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  page: { minHeight: '100vh', background: '#f7f9fc', padding: '24px 16px', fontFamily: '"Inter","Segoe UI",system-ui,sans-serif', color: '#111827' },
+  page: { minHeight: '100vh', background: '#f7f9fc',     padding: '24px 16px', color: '#111827' },
   shell: { maxWidth: 980, margin: '0 auto' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28, paddingBottom: 16, borderBottom: '1px solid #e5e7eb' },
   brand: { fontSize: 18, fontWeight: 800, color: '#111827', margin: 0 },

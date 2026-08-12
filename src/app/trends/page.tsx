@@ -81,7 +81,7 @@ const DIRECTION_META: Record<string, { label: string; color: string; bg: string;
 
 const GROWTH_META: Record<string, { label: string; color: string; arrow: string }> = {
   growing:   { label: 'Growing',  color: '#15803d', arrow: '↗' },
-  new:       { label: 'New',      color: '#2563eb', arrow: '✦' },
+  new:       { label: 'New',      color: '#2563eb', arrow: '↑' },
   declining: { label: 'Declining', color: '#b91c1c', arrow: '↘' },
   stable:    { label: 'Steady',   color: '#6b7280', arrow: '→' },
 };
@@ -459,11 +459,11 @@ export default function TrendsPage() {
                   <span className="lh-body">{decliningSkills.length ? decliningSkills.slice(0, 3).map(s => s.skill).join(', ') : 'No clear declining signals yet.'}</span>
                 </div>
                 <div style={s.actionItem}>
-                  <span style={{ fontWeight: 700, color: '#2563eb' }}>🕐 Best times to apply: </span>
+                  <span style={{ fontWeight: 700, color: '#2563eb' }}>Best times to apply: </span>
                   <span className="lh-body">{topMonitorHours.map(h => h.label.replace(' UTC', '')).join(', ') || 'Check back after more data.'}</span>
                 </div>
                 <div style={s.actionItem}>
-                  <span style={{ fontWeight: 700, color: '#f59e0b' }}>💰 Budget outlook: </span>
+                  <span style={{ fontWeight: 700, color: '#f59e0b' }}>Budget outlook: </span>
                   <span className="lh-body">{(intel.budgetTrend.length >= 2 && (() => {
                     const recent = intel.budgetTrend.slice(-3).filter(d => d.avgUsd != null);
                     const older = intel.budgetTrend.slice(-7, -3).filter(d => d.avgUsd != null);
@@ -476,7 +476,7 @@ export default function TrendsPage() {
                   })()) || 'Insufficient data.'}</span>
                 </div>
                 <div style={s.actionItem}>
-                  <span style={{ fontWeight: 700, color: '#7c3aed' }}>🎯 Target categories: </span>
+                  <span style={{ fontWeight: 700, color: '#7c3aed' }}>Target categories: </span>
                   <span className="lh-body">{topCategories.slice(0, 3).map(c => c.category).join(', ') || 'Data still accumulating.'}</span>
                 </div>
               </div>
@@ -562,7 +562,7 @@ export default function TrendsPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  page: { minHeight: '100vh', background: '#f7f9fc', padding: '24px 16px', fontFamily: '"Inter","Segoe UI",system-ui,sans-serif', color: '#111827' },
+  page: { minHeight: '100vh', background: '#f7f9fc',     padding: '24px 16px', color: '#111827' },
   shell: { maxWidth: 980, margin: '0 auto' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28, paddingBottom: 16, borderBottom: '1px solid #e5e7eb' },
   brand: { fontSize: 18, fontWeight: 800, color: '#111827', margin: 0 },
