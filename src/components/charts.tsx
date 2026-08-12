@@ -5,13 +5,13 @@ import React from 'react';
  * Colors use CSS variables where possible so they adapt to dark mode.
  */
 
-const UPWORK = '#14a800';
-const FREELANCER = '#29b2fe';
-const BLUE = '#2563eb';
-const AMBER = '#f59e0b';
+const UPWORK = '#2563EB';
+const FREELANCER = '#60A5FA';
+const BLUE = '#2563EB';
+const AMBER = '#D97706';
 
-const TEXT = 'var(--lh-chart-text, #6b7280)';
-const GRID = 'var(--lh-chart-grid, #e5e7eb)';
+const TEXT = 'var(--lh-chart-text, #64748B)';
+const GRID = 'var(--lh-chart-grid, #E2E8F0)';
 
 function fmtK(n: number): string {
   if (n >= 1000) {
@@ -195,7 +195,7 @@ export function BudgetTrendChart({ data, height = 150 }: { data: { label: string
       {/* area under the line */}
       <polygon
         points={`${PAD.left},${PAD.top + innerH} ${points.filter(p => p.y != null).map(p => `${p.x},${p.y}`).join(' ')} ${W - PAD.right},${PAD.top + innerH}`}
-        fill="rgba(20,168,0,0.10)"
+        fill="rgba(37,99,235,0.10)"
       />
       <polyline
         points={points.filter(p => p.y != null).map(p => `${p.x},${p.y}`).join(' ')}
@@ -284,7 +284,7 @@ export function HistoryChart({ data, height = 200 }: { data: HistPoint[]; height
       {data.map((d, i) => {
         const x = PAD.left + i * band + band / 2 - barW / 2;
         return (
-          <rect key={d.label} x={x} y={yC(d.count)} width={barW} height={(d.count / maxCount) * innerH} rx={2} fill="rgba(20,168,0,0.32)" stroke={UPWORK} strokeWidth={1} />
+          <rect key={d.label} x={x} y={yC(d.count)} width={barW} height={(d.count / maxCount) * innerH} rx={2} fill="rgba(37,99,235,0.32)" stroke={UPWORK} strokeWidth={1} />
         );
       })}
 

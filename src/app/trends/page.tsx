@@ -88,8 +88,8 @@ const GROWTH_META: Record<string, { label: string; color: string; arrow: string 
 const TREND_COLORS: Record<string, string> = { high: '#16a34a', moderate: '#2563eb', steady: '#6b7280' };
 const TREND_LABELS: Record<string, string> = { high: 'High demand', moderate: 'Moderate demand', steady: 'Steady demand' };
 
-const UPWORK = '#14a800';
-const FREELANCER = '#29b2fe';
+const UPWORK = '#2563EB';
+const FREELANCER = '#60A5FA';
 
 function fmt(n: number): string {
   if (Number.isInteger(n)) return String(n);
@@ -287,7 +287,7 @@ export default function TrendsPage() {
           id="volume"
           title="Jobs Posted per Day (7d)"
           subtitle="How many new listings landed each of the last 7 days. This is straight from the collected data — no projections or estimates."
-          note="Bars split into Upwork (green) and Freelancer (blue). Based on the listings we actually captured in the window."
+           note="Bars split into Upwork (blue) and Freelancer (light blue). Based on the listings we actually captured in the window."
         >
           <div style={s.chartWrap}>
             <JobsPerDayChart data={dailyChart} />
@@ -372,26 +372,30 @@ export default function TrendsPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(280px,100%),1fr))', gap: 14 }}>
             <div>
               <div style={s.colHead}><span style={{ ...s.colDot, background: GROWTH_META.growing.color }} />Heating up</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {growingSkills.length ? growingSkills.map(sk => (
-                  <div key={sk.skill} style={s.growthRow}>
-                    <span className="lh-h" style={{ fontWeight: 600, color: '#111827', flex: 1 }}>{sk.skill}</span>
-                    <span style={{ ...s.growthTag, color: '#fff', background: GROWTH_META[sk.status].color }}>{GROWTH_META[sk.status].label}{sk.growthPct != null ? ` ${sk.growthPct >= 0 ? '+' : ''}${sk.growthPct}%` : ''}</span>
-                    <span className="lh-muted" style={{ fontSize: 11, color: '#6b7280' }}>×{sk.count}</span>
-                  </div>
-                )) : <p className="lh-muted" style={s.emptyNote}>No clear upward movers yet.</p>}
+              <div className="lh-skill-scroll" style={s.skillScroll}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {growingSkills.length ? growingSkills.map(sk => (
+                    <div key={sk.skill} style={s.growthRow}>
+                      <span className="lh-h" style={{ fontWeight: 600, color: '#111827', flex: 1 }}>{sk.skill}</span>
+                      <span style={{ ...s.growthTag, color: '#fff', background: GROWTH_META[sk.status].color }}>{GROWTH_META[sk.status].label}{sk.growthPct != null ? ` ${sk.growthPct >= 0 ? '+' : ''}${sk.growthPct}%` : ''}</span>
+                      <span className="lh-muted" style={{ fontSize: 11, color: '#6b7280' }}>×{sk.count}</span>
+                    </div>
+                  )) : <p className="lh-muted" style={s.emptyNote}>No clear upward movers yet.</p>}
+                </div>
               </div>
             </div>
             <div>
               <div style={s.colHead}><span style={{ ...s.colDot, background: GROWTH_META.declining.color }} />Cooling off</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {decliningSkills.length ? decliningSkills.map(sk => (
-                  <div key={sk.skill} style={s.growthRow}>
-                    <span className="lh-h" style={{ fontWeight: 600, color: '#111827', flex: 1 }}>{sk.skill}</span>
-                    <span style={{ ...s.growthTag, color: '#fff', background: GROWTH_META[sk.status].color }}>{GROWTH_META[sk.status].label}{sk.growthPct != null ? ` ${sk.growthPct >= 0 ? '+' : ''}${sk.growthPct}%` : ''}</span>
-                    <span className="lh-muted" style={{ fontSize: 11, color: '#6b7280' }}>×{sk.count}</span>
-                  </div>
-                )) : <p className="lh-muted" style={s.emptyNote}>Nothing clearly cooling yet.</p>}
+              <div className="lh-skill-scroll" style={s.skillScroll}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {decliningSkills.length ? decliningSkills.map(sk => (
+                    <div key={sk.skill} style={s.growthRow}>
+                      <span className="lh-h" style={{ fontWeight: 600, color: '#111827', flex: 1 }}>{sk.skill}</span>
+                      <span style={{ ...s.growthTag, color: '#fff', background: GROWTH_META[sk.status].color }}>{GROWTH_META[sk.status].label}{sk.growthPct != null ? ` ${sk.growthPct >= 0 ? '+' : ''}${sk.growthPct}%` : ''}</span>
+                      <span className="lh-muted" style={{ fontSize: 11, color: '#6b7280' }}>×{sk.count}</span>
+                    </div>
+                  )) : <p className="lh-muted" style={s.emptyNote}>Nothing clearly cooling yet.</p>}
+                </div>
               </div>
             </div>
           </div>
@@ -567,7 +571,7 @@ export default function TrendsPage() {
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={s.actionItem}>
-              <span style={{ fontWeight: 700, color: '#16a34a' }}>✓ Learn toward demand: </span>
+              <span style={{ fontWeight: 700, color: '#2563EB' }}>✓ Learn toward demand: </span>
               <span className="lh-body">{growingSkills.length ? growingSkills.slice(0, 3).map(s => s.skill).join(', ') : 'Data still accumulating — check back soon.'}</span>
             </div>
             <div style={s.actionItem}>
@@ -606,7 +610,7 @@ const s: Record<string, React.CSSProperties> = {
   shell: { maxWidth: 980, margin: '0 auto' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, paddingBottom: 16, borderBottom: '1px solid #e5e7eb' },
   brand: { fontSize: 18, fontWeight: 800, color: '#111827', margin: 0 },
-  slogan: { fontSize: 11, color: '#16a34a', fontWeight: 600, marginTop: 1 },
+  slogan: { fontSize: 11, color: '#2563EB', fontWeight: 600, marginTop: 1 },
   backBtn: { background: '#fff', border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 14px', fontSize: 13, fontWeight: 600, color: '#374151', cursor: 'pointer' },
   pageHead: { marginBottom: 20 },
   pageTitle: { fontSize: 28, fontWeight: 800, color: '#111827', margin: '0 0 6px', letterSpacing: '-0.02em' },
@@ -646,6 +650,16 @@ const s: Record<string, React.CSSProperties> = {
   colDot: { width: 10, height: 10, borderRadius: 999, display: 'inline-block' },
   growthRow: { background: '#fafafa', border: '1px solid #eef1f5', borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 },
   growthTag: { fontSize: 10.5, fontWeight: 700, padding: '2px 7px', borderRadius: 999 },
+  // Contained scroll for the skills lists — only scrolls when content exceeds the
+  // height, keeps the "Heating up" / "Cooling off" group headings pinned above.
+  skillScroll: {
+    maxHeight: 340,
+    overflowY: 'auto',
+    paddingRight: 6,
+    marginRight: -6,
+    scrollbarWidth: 'thin',
+    scrollbarColor: '#d1d5db transparent',
+  },
 
   monitorRow: { display: 'flex', alignItems: 'center', gap: 10, background: '#fafafa', border: '1px solid #eef1f5', borderRadius: 8, padding: '9px 12px' },
   hourChip: { fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999, background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb' },
