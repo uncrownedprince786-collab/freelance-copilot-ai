@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { Logo } from "@/components/Logo";
 import {
   AgentAvatar,
   IconAgent,
@@ -188,7 +189,10 @@ export default function AboutPage() {
 
       <div style={styles.shell}>
         <header style={styles.header} className="lh-topbar">
-          <div className="lh-h" style={styles.brand}>Lead Hunter</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Logo size={36} />
+            <div className="lh-h" style={styles.brand}>Lead Hunter</div>
+          </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <ThemeToggle />
             <Link href="/" style={styles.backBtn} className="lh-field">Dashboard</Link>
@@ -197,6 +201,7 @@ export default function AboutPage() {
 
         {/* Hero */}
         <section style={styles.hero}>
+          <Logo size={64} />
           <div style={styles.eyebrow}>Product</div>
           <h1 style={styles.title}>About Lead Hunter</h1>
           <p className="lh-body" style={styles.tagline}>

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { isAuthenticated, isAdmin, logout, trackActivity } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { Logo } from '@/components/Logo';
 import { IconTrend, IconShield, IconMapPin } from '@/components/icons';
 import { timeAgo } from '@/lib/format';
 
@@ -449,6 +450,7 @@ function HomeContent() {
         {/* ── HEADER ── */}
         <header style={styles.header}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <Logo size={44} />
             <div>
               <h1 style={styles.brand}>Lead Hunter</h1>
               <p style={{ fontSize: 13, color: '#16a34a', fontWeight: 700, margin: '2px 0 0' }}>

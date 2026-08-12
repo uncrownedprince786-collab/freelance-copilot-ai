@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { login, loginAsGuest } from '@/lib/auth';
 import { IconLock, IconUser } from '@/components/icons';
+import { Logo } from '@/components/Logo';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -40,7 +41,10 @@ export function AdminLoginModal({ isOpen, onClose, onSuccess }: AdminLoginModalP
     <div style={styles.overlay}>
       <div style={styles.modal} className="lh-modal">
         <div style={styles.header}>
-          <h2 className="lh-h" style={styles.title}>Lead Hunter Access</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Logo size={34} />
+            <h2 className="lh-h" style={styles.title}>Lead Hunter Access</h2>
+          </div>
           <button onClick={onClose} className="lh-muted" style={styles.closeBtn}>&times;</button>
         </div>
 
