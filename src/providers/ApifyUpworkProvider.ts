@@ -16,6 +16,17 @@ function parseUpworkCount(v: unknown): number | null {
   return parseInt(m[0], 10);
 }
 
+// Upwork's Apify scraper names the competition fields inconsistently across
+// actor versions, so try every known candidate and take the first usable value.
+// "50+" → 50, "0 to 5" → 0, "Be the first to apply" → null.
+function firstCount(...vals: unknown[]): number | null {
+  for (const v of vals) {
+    const n = parseUpworkCount(v);
+    if (n !== null) return n;
+  }
+  return null;
+}
+
 export class ApifyUpworkProvider implements JobProvider {
   name = "ApifyUpwork";
   private token = process.env.APIFY_TOKEN;
@@ -100,9 +111,18 @@ export class ApifyUpworkProvider implements JobProvider {
             experienceLevel: this.cleanText(item.experienceLevel || item.experience || '') || null,
             duration: this.cleanText(item.engagementDuration || item.duration || '') || null,
             connectsRequired: connects,
-            proposalCount: parseUpworkCount(item.proposals ?? item.proposalCount ?? item.totalApplicants),
-            interviewingCount: parseUpworkCount(item.interviewing ?? item.interviewingCount) ?? 0,
-            hiresCount: parseUpworkCount(item.hires ?? item.totalHired ?? item.hiresCount) ?? 0,
+            proposalCount: firstCount(
+              item.proposals,
+              item.applicants,
+              item.applicantCount,
+              item.numberOfProposals,
+              item.proposalCount,
+              item.totalApplicants,
+              item.bidCount,
+              item.bids,
+            ),
+            interviewingCount: firstCount(item.interviewing, item.interviewingCount, item.interviews) ?? 0,
+            hiresCount: firstCount(item.hires, item.totalHired, item.hiresCount, item.hired) ?? 0,
             postedAt: postedDate,
             client: {
               name: clientName,
