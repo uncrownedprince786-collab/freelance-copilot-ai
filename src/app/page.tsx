@@ -11,43 +11,23 @@ import { timeAgo } from '@/lib/format';
 const FILTERS_KEY = 'lh_jobs_filters';
 
 type PlatformScope = 'all' | 'Upwork' | 'Freelancer';
-type Tier = 'all' | 'high' | 'medium' | 'low';
-type Bucket = 'all' | 'low' | 'med' | 'high';
+type SortKey = 'recommended' | 'date' | 'competition' | 'budget';
+type OpportunityKey = 'all' | 'recommended' | 'actFast';
 
 interface FilterState {
   platform: PlatformScope;
-  statusFilter: 'all' | 'new' | 'viewed' | 'applied' | 'hot';
-  countryFilter: string;
-  scoreFilter: Tier;
+  sortBy: SortKey;
   jobTypeFilter: 'all' | 'fixed' | 'hourly';
-  experienceFilter: string;
+  opportunityFilter: OpportunityKey;
   skillsFilter: string[];
-  competitionFilter: Bucket;
-  connectsFilter: Bucket;
-  postedFilter: 'all' | '24h' | '3d' | '7d';
-  search: string;
-  smartActive: boolean;
-  smartKeyword: string;
-  smartMaxBid: number | null;
-  nowMs: number;
 }
 
 const DEFAULT_FILTERS: FilterState = {
-  platform: 'Upwork',
-  statusFilter: 'all',
-  countryFilter: 'All',
-  scoreFilter: 'all',
+  platform: 'all',
+  sortBy: 'recommended',
   jobTypeFilter: 'all',
-  experienceFilter: 'all',
+  opportunityFilter: 'all',
   skillsFilter: [],
-  competitionFilter: 'all',
-  connectsFilter: 'all',
-  postedFilter: 'all',
-  search: '',
-  smartActive: false,
-  smartKeyword: '',
-  smartMaxBid: null,
-  nowMs: 0,
 };
 
 function loadFilters(): FilterState {
@@ -121,24 +101,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   Skip: '#ef4444',
 };
 
-function scoreTier(score: number): 'high' | 'medium' | 'low' {
-  if (score >= 70) return 'high';
-  if (score >= 50) return 'medium';
-  return 'low';
-}
-function compBucket(n: number | null | undefined): 'low' | 'med' | 'high' | null {
-  if (typeof n !== 'number') return null;
-  if (n <= 5) return 'low';
-  if (n <= 20) return 'med';
-  return 'high';
-}
-function connBucket(n: number | undefined): 'low' | 'med' | 'high' {
-  const v = n ?? 0;
-  if (v <= 5) return 'low';
-  if (v <= 12) return 'med';
-  return 'high';
-}
-
 // Normalized competition value for ranking: known counts sort ascending;
 // missing/unknown proposal data is sent to the very bottom (never treated as 0).
 function compValue(j: Job): number {
@@ -178,7 +140,6 @@ function recommendedComparator(a: Job, b: Job): number {
   if (rb !== ra) return rb - ra;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
-const POSTED_HOURS: Record<string, number> = { '24h': 24, '3d': 72, '7d': 168 };
 
 /**
  * Single source of truth for filtering. Applies every active filter to a job.
@@ -187,21 +148,6 @@ const POSTED_HOURS: Record<string, number> = { '24h': 24, '3d': 72, '7d': 168 };
  * (the platform selector defines the dataset, it is not a facet).
  */
 function passes(f: FilterState, job: Job, except?: string): boolean {
-  if (except !== 'status') {
-    if (f.statusFilter === 'new' && !( !job.viewed && !job.applied)) return false;
-    if (f.statusFilter === 'viewed' && !( job.viewed && !job.applied)) return false;
-    if (f.statusFilter === 'applied' && !job.applied) return false;
-    if (f.statusFilter === 'hot' && !(job.score >= 70)) return false;
-  }
-  if (except !== 'country') {
-    if (f.countryFilter !== 'All' && (job.country || '') !== f.countryFilter) return false;
-  }
-  if (except !== 'experience') {
-    if (f.experienceFilter !== 'all' && (job.experienceLevel || '') !== f.experienceFilter) return false;
-  }
-  if (except !== 'skills') {
-    if (f.skillsFilter.length && !(job.skills || []).some(s => f.skillsFilter.includes(s))) return false;
-  }
   if (except !== 'jobType') {
     if (f.jobTypeFilter !== 'all') {
       const bt = (job.budgetType || '').toLowerCase();
@@ -209,30 +155,12 @@ function passes(f: FilterState, job: Job, except?: string): boolean {
       if (f.jobTypeFilter === 'hourly' && !bt.includes('hourly')) return false;
     }
   }
-  if (except !== 'competition') {
-    if (f.competitionFilter !== 'all' && compBucket(job.proposalCount) !== f.competitionFilter) return false;
+  if (except !== 'opportunity') {
+    if (f.opportunityFilter === 'recommended' && !(job.score >= 70)) return false;
+    if (f.opportunityFilter === 'actFast' && !job.actFast) return false;
   }
-  if (except !== 'connects') {
-    if (f.connectsFilter !== 'all' && connBucket(job.connections) !== f.connectsFilter) return false;
-  }
-  if (except !== 'score') {
-    if (f.scoreFilter !== 'all' && scoreTier(job.score) !== f.scoreFilter) return false;
-  }
-  if (except !== 'posted') {
-    if (f.postedFilter !== 'all') {
-      if (!job.postedAt) return false;
-      const cutoff = f.nowMs - POSTED_HOURS[f.postedFilter] * 3600000;
-      const t = new Date(job.postedAt).getTime();
-      if (!Number.isFinite(t) || t < cutoff) return false;
-    }
-  }
-  if (except !== 'search') {
-    const q = (f.smartActive ? f.smartKeyword : f.search).trim().toLowerCase();
-    if (q && !`${job.title} ${job.description} ${job.platform} ${job.clientName || ''} ${job.country || ''}`.toLowerCase().includes(q)) return false;
-    if (f.smartMaxBid != null) {
-      const m = job.budget.match(/\$?([\d,]+)/);
-      if (m && parseInt(m[1].replace(',', ''), 10) > f.smartMaxBid) return false;
-    }
+  if (except !== 'skills') {
+    if (f.skillsFilter.length && !(job.skills || []).some(s => f.skillsFilter.includes(s))) return false;
   }
   return true;
 }
@@ -270,45 +198,20 @@ function HomeContent() {
     return () => clearInterval(idle);
   }, [authed]);
 
-  // Filters — restored from per-tab sessionStorage; a completely new session
-  // defaults to Upwork only (not overwritten by async job fetching).
+  // Filters — restored from per-tab sessionStorage; a fresh session defaults
+  // to "all platforms" with the Recommended sort.
   const [platform, setPlatform] = useState<PlatformScope>(() => loadFilters().platform);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'viewed' | 'applied' | 'hot'>(() => loadFilters().statusFilter);
-  const [countryFilter, setCountryFilter] = useState(() => loadFilters().countryFilter);
-  const [scoreFilter, setScoreFilter] = useState<Tier>(() => loadFilters().scoreFilter);
+  const [sortBy, setSortBy] = useState<SortKey>(() => loadFilters().sortBy || 'recommended');
   const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'fixed' | 'hourly'>(() => loadFilters().jobTypeFilter);
-  const [experienceFilter, setExperienceFilter] = useState(() => loadFilters().experienceFilter);
+  const [opportunityFilter, setOpportunityFilter] = useState<OpportunityKey>(() => loadFilters().opportunityFilter);
   const [skillsFilter, setSkillsFilter] = useState<string[]>(() => loadFilters().skillsFilter);
-  const [competitionFilter, setCompetitionFilter] = useState<Bucket>(() => loadFilters().competitionFilter);
-  const [connectsFilter, setConnectsFilter] = useState<Bucket>(() => loadFilters().connectsFilter);
-  const [postedFilter, setPostedFilter] = useState<'all' | '24h' | '3d' | '7d'>(() => loadFilters().postedFilter);
-  const [search, setSearch] = useState(() => loadFilters().search);
-  const [smartActive, setSmartActive] = useState(() => loadFilters().smartActive);
-  const [smartRaw, setSmartRaw] = useState(() => loadFilters().smartKeyword);
-  const [smartKeyword, setSmartKeyword] = useState(() => loadFilters().smartKeyword);
-  const [smartMaxBid, setSmartMaxBid] = useState<number | null>(() => loadFilters().smartMaxBid);
-  const [sortBy, setSortBy] = useState<'score' | 'date' | 'budget' | 'recommended' | 'proposals'>(() => 'recommended');
+  const [skillQuery, setSkillQuery] = useState('');
   const [page, setPage] = useState(1);
-
-  // Search state: `search` is the natural-language box; when a query is
-  // parsed into filters we keep the raw text for the active chip and use the
-  // stripped `smartKeyword` for the actual keyword filter.
-  const [searchFocus, setSearchFocus] = useState(false);
-
-  // Current time kept in state (refreshed every minute) so "posted within"
-  // filtering stays pure during render.
-  const [nowMs, setNowMs] = useState(0);
-  useEffect(() => {
-    const tick = () => setNowMs(Date.now());
-    tick();
-    const id = setInterval(tick, 60_000);
-    return () => clearInterval(id);
-  }, []);
 
   // Persist filter state across navigation/refresh (per-tab sessionStorage).
   useEffect(() => {
-    saveFilters({ platform, statusFilter, countryFilter, scoreFilter, jobTypeFilter, experienceFilter, skillsFilter, competitionFilter, connectsFilter, postedFilter, search, smartActive, smartKeyword, smartMaxBid, nowMs });
-  }, [platform, statusFilter, countryFilter, scoreFilter, jobTypeFilter, experienceFilter, skillsFilter, competitionFilter, connectsFilter, postedFilter, search, smartActive, smartKeyword, smartMaxBid, nowMs]);
+    saveFilters({ platform, sortBy, jobTypeFilter, opportunityFilter, skillsFilter });
+  }, [platform, sortBy, jobTypeFilter, opportunityFilter, skillsFilter]);
 
   const PER_PAGE = 24;
 
@@ -322,33 +225,24 @@ function HomeContent() {
     [jobs, platform]
   );
 
-  const hasCompetitionData = useMemo(() => scopeJobs.some(j => typeof j.proposalCount === 'number'), [scopeJobs]);
-  const showConnects = platform !== 'Freelancer';
-
-  // Dynamic options — derived ONLY from real jobs in the current platform scope.
-  const experienceOptions = useMemo(
-    () => Array.from(new Set(scopeJobs.map(j => j.experienceLevel || '').filter(Boolean))).sort(),
-    [scopeJobs]
-  );
+  // Dynamic skills — derived ONLY from real jobs in the current platform scope.
   const skillOptions = useMemo(() => {
     const m = new Map<string, number>();
     scopeJobs.forEach(j => (j.skills || []).forEach(s => m.set(s, (m.get(s) || 0) + 1)));
     return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24).map(([s]) => s);
   }, [scopeJobs]);
-  const countryOptions = useMemo(() => {
-    const cs = scopeJobs.map(j => j.country || '').filter(c => Boolean(c) && c.toLowerCase() !== 'remote');
-    return ['All', ...Array.from(new Set(cs)).sort()];
-  }, [scopeJobs]);
+  const visibleSkillOptions = useMemo(() => {
+    const q = skillQuery.trim().toLowerCase();
+    if (!q) return skillOptions;
+    return skillOptions.filter(s => s.toLowerCase().includes(q));
+  }, [skillOptions, skillQuery]);
   const hasFixed = useMemo(() => scopeJobs.some(j => (j.budgetType || '').toLowerCase().includes('fixed')), [scopeJobs]);
   const hasHourly = useMemo(() => scopeJobs.some(j => (j.budgetType || '').toLowerCase().includes('hourly')), [scopeJobs]);
 
-  // Competition label follows each platform's real terminology (rule 6).
-  const competitionLabel = platform === 'Upwork' ? 'Proposals' : platform === 'Freelancer' ? 'Bids' : 'Proposals / Bids';
-
   // Bundle the active filters so the pure filter/count helpers can read them.
   const f = useMemo<FilterState>(
-    () => ({ platform, statusFilter, countryFilter, scoreFilter, jobTypeFilter, experienceFilter, skillsFilter, competitionFilter, connectsFilter, postedFilter, search, smartActive, smartKeyword, smartMaxBid, nowMs }),
-    [platform, statusFilter, countryFilter, scoreFilter, jobTypeFilter, experienceFilter, skillsFilter, competitionFilter, connectsFilter, postedFilter, search, smartActive, smartKeyword, smartMaxBid, nowMs]
+    () => ({ platform, sortBy, jobTypeFilter, opportunityFilter, skillsFilter }),
+    [platform, sortBy, jobTypeFilter, opportunityFilter, skillsFilter]
   );
 
   const stats = useMemo(() => ({
@@ -358,41 +252,17 @@ function HomeContent() {
     applied: jobs.filter(j => j.applied).length,
   }), [jobs]);
 
-  // Search suggestions built from the real data (platforms, countries, skills)
-  // plus a few canned time/type intents.
-  const searchSuggestions = useMemo(() => {
-    const skills = new Set<string>();
-    jobs.forEach(j => (j.skills ?? []).forEach(s => { const low = s.toLowerCase(); if (low.length >= 2) skills.add(low); }));
-    const countries = new Set(jobs.map(j => j.country).filter(Boolean));
-    const base: string[] = ['last 24 hours', 'last 3 days', 'last 7 days', 'hourly', 'fixed', 'high score', 'review'];
-    base.push('upwork', 'freelancer');
-    countries.forEach(c => base.push(`${String(c).toLowerCase()} jobs`));
-    base.push(...[...skills].slice(0, 10));
-    return [...new Set(base)].slice(0, 16);
-  }, [jobs]);
-
-  const visibleSuggestions = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return searchSuggestions.slice(0, 6);
-    return searchSuggestions.filter(s => s.includes(q)).slice(0, 6);
-  }, [search, searchSuggestions]);
-
   // Faceted counts — every option count is recomputed from jobs that match all
   // OTHER active filters, so counts stay honest as the user changes anything.
   const facets = useMemo(() => {
     const countExcept = (except: string, pred: (j: Job) => boolean) =>
       scopeJobs.filter(j => passes(f, j, except) && pred(j)).length;
 
-    const tiers = {
-      all: countExcept('score', () => true),
-      high: countExcept('score', j => scoreTier(j.score) === 'high'),
-      medium: countExcept('score', j => scoreTier(j.score) === 'medium'),
-      low: countExcept('score', j => scoreTier(j.score) === 'low'),
+    const opportunity = {
+      all: countExcept('opportunity', () => true),
+      recommended: countExcept('opportunity', j => j.score >= 70),
+      actFast: countExcept('opportunity', j => !!j.actFast),
     };
-    const countries: Record<string, number> = {};
-    countryOptions.filter(c => c !== 'All').forEach(c => { countries[c] = countExcept('country', j => (j.country || '') === c); });
-    const experiences: Record<string, number> = {};
-    experienceOptions.forEach(e => { experiences[e] = countExcept('experience', j => (j.experienceLevel || '') === e); });
     const skills: Record<string, number> = {};
     skillOptions.forEach(s => { skills[s] = countExcept('skills', j => (j.skills || []).includes(s)); });
 
@@ -401,51 +271,29 @@ function HomeContent() {
       hourly: hasHourly ? countExcept('jobType', j => (j.budgetType || '').toLowerCase().includes('hourly')) : 0,
     };
 
-    const competition: Record<string, number> = {};
-    if (hasCompetitionData) {
-      (['low', 'med', 'high'] as const).forEach(b => {
-        competition[b] = countExcept('competition', j => compBucket(j.proposalCount) === b);
-      });
-    }
-    const connects: Record<string, number> = {};
-    if (showConnects) {
-      (['low', 'med', 'high'] as const).forEach(b => {
-        connects[b] = countExcept('connects', j => connBucket(j.connections) === b);
-      });
-    }
-
-    return { tiers, countries, experiences, skills, jobType, competition, connects };
-  }, [scopeJobs, f, countryOptions, experienceOptions, skillOptions, hasFixed, hasHourly, hasCompetitionData, showConnects]);
+    return { opportunity, skills, jobType };
+  }, [scopeJobs, f, skillOptions, hasFixed, hasHourly]);
 
   const filteredJobs = useMemo(() => {
     const result = scopeJobs.filter(j => passes(f, j));
 
-    if (sortBy === 'recommended' || sortBy === 'proposals') {
+    if (sortBy === 'recommended' || sortBy === 'competition') {
+      // Recommended and Lowest competition both use the canonical comparator:
+      // lowest KNOWN competition first (unknown proposals go last, never zero),
+      // then stronger score, freshness, act-fast, budget, repeat-client.
       result.sort(recommendedComparator);
-    } else if (sortBy === 'score') {
-      result.sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        const tb = postedTimeOf(b) - postedTimeOf(a);
-        if (tb !== 0) return tb;
-        const pa = a.proposalCount ?? Number.MAX_SAFE_INTEGER;
-        const pb = b.proposalCount ?? Number.MAX_SAFE_INTEGER;
-        if (pa !== pb) return pa - pb;
-        return budgetNumber(b.budget) - budgetNumber(a.budget);
-      });
     } else if (sortBy === 'date') result.sort((a, b) => postedTimeOf(b) - postedTimeOf(a));
     else if (sortBy === 'budget') result.sort((a, b) => budgetNumber(b.budget) - budgetNumber(a.budget));
 
-    // Push applied jobs to the very end (bottom) unless user is explicitly on the 'Applied' filter tab.
-    // Stable sort preserves the primary ranking among non-applied jobs.
-    if (statusFilter !== 'applied') {
-      result.sort((a, b) => {
-        if (a.applied && !b.applied) return 1;
-        if (!a.applied && b.applied) return -1;
-        return 0;
-      });
-    }
+    // Push applied jobs to the bottom so open opportunities lead (stable sort
+    // preserves the primary ranking among non-applied jobs).
+    result.sort((a, b) => {
+      if (a.applied && !b.applied) return 1;
+      if (!a.applied && b.applied) return -1;
+      return 0;
+    });
     return result;
-  }, [scopeJobs, f, sortBy, statusFilter]);
+  }, [scopeJobs, f, sortBy]);
 
   const totalPages = Math.ceil(filteredJobs.length / PER_PAGE);
   const paginatedJobs = useMemo(() => filteredJobs.slice((page - 1) * PER_PAGE, page * PER_PAGE), [filteredJobs, page]);
@@ -550,16 +398,13 @@ function HomeContent() {
     }
   };
 
-  // Switching platform clears every scope-dependent selection so no Upwork-only
-  // control (or stale value) leaks into a Freelancer view, and vice-versa.
+  // Switching platform clears every scope-dependent selection so no stale
+  // value leaks across platforms (skills/budget-type are platform-specific).
   const changePlatform = (next: PlatformScope) => {
     setPlatform(next);
-    setExperienceFilter('all');
     setSkillsFilter([]);
-    setCountryFilter('All');
     setJobTypeFilter('all');
-    setCompetitionFilter('all');
-    setConnectsFilter('all');
+    setSkillQuery('');
     setPage(1);
   };
 
@@ -570,74 +415,11 @@ function HomeContent() {
 
   const clearAll = () => {
     setPlatform(DEFAULT_FILTERS.platform);
-    setStatusFilter('all');
-    setCountryFilter('All');
-    setScoreFilter('all');
+    setSortBy(DEFAULT_FILTERS.sortBy);
     setJobTypeFilter('all');
-    setExperienceFilter('all');
+    setOpportunityFilter('all');
     setSkillsFilter([]);
-    setCompetitionFilter('all');
-    setConnectsFilter('all');
-    setPostedFilter('all');
-    setSearch('');
-    setSmartActive(false);
-    setSmartRaw('');
-    setSmartKeyword('');
-    setSmartMaxBid(null);
-    setPage(1);
-  };
-
-  // Search: parse a natural-language query into whitelisted filters via
-  // /api/search, apply them, and surface an active chip with the raw text.
-  const applySmartSearch = async (raw: string) => {
-    const q = raw.trim();
-    if (!q) return;
-    try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-      if (!res.ok) return;
-      const parsed = await res.json();
-      if (parsed.platform === 'Upwork' || parsed.platform === 'Freelancer') changePlatform(parsed.platform);
-      if (parsed.opportunity === 'high') setScoreFilter('high');
-      else if (parsed.opportunity === 'good') setScoreFilter('medium');
-      else if (parsed.opportunity === 'review') setScoreFilter('low');
-      if (parsed.jobType === 'hourly' || parsed.jobType === 'fixed') setJobTypeFilter(parsed.jobType);
-      if (parsed.posted) setPostedFilter(parsed.posted);
-      if (parsed.country) setCountryFilter(parsed.country);
-      setSmartMaxBid(parsed.maxBid ?? null);
-      setSmartKeyword(parsed.query || '');
-      setSmartActive(true);
-      setSmartRaw(q);
-      setPage(1);
-      setSearchFocus(false);
-    } catch {
-      setSmartKeyword('');
-      setSmartActive(true);
-      setSmartRaw(q);
-      setPage(1);
-      setSearchFocus(false);
-    }
-  };
-
-  const clearSmartSearch = () => {
-    setSmartActive(false);
-    setSmartRaw('');
-    setSmartKeyword('');
-    setSmartMaxBid(null);
-    setSearch('');
-    setScoreFilter('all');
-    setJobTypeFilter('all');
-    setPostedFilter('all');
-    setPage(1);
-  };
-
-  const onSearchChange = (v: string) => {
-    setSearch(v);
-    if (smartActive) {
-      setSmartActive(false);
-      setSmartKeyword('');
-      setSmartRaw('');
-      setSmartMaxBid(null);
-    }
+    setSkillQuery('');
     setPage(1);
   };
 
@@ -651,9 +433,8 @@ function HomeContent() {
   }
 
   const anyFilterActive =
-    statusFilter !== 'all' || countryFilter !== 'All' || scoreFilter !== 'all' || jobTypeFilter !== 'all' ||
-    experienceFilter !== 'all' || skillsFilter.length > 0 || competitionFilter !== 'all' || connectsFilter !== 'all' ||
-    postedFilter !== 'all' || smartActive || search.trim() !== '';
+    platform !== 'all' || jobTypeFilter !== 'all' || opportunityFilter !== 'all' ||
+    skillsFilter.length > 0 || sortBy !== 'recommended';
 
   return (
     <div style={styles.page} className="lh-page">
@@ -726,114 +507,31 @@ function HomeContent() {
         {newCount > 0 && (
           <div style={styles.banner}>
             <span><strong>{newCount} new opportunities</strong> just fetched!</span>
-            <button onClick={() => { setNewCount(0); setStatusFilter('new'); }} style={styles.bannerBtn}>View New</button>
+            <button onClick={() => { setNewCount(0); setSortBy('date'); setPage(1); }} style={styles.bannerBtn}>View New</button>
           </div>
         )}
 
-        {/* ── STATS ── */}
+        {/* ── STATS (display only) ── */}
         <div style={styles.statsRow}>
           {[
-            { label: 'Total', value: stats.total, key: 'all' as const },
-            { label: 'New', value: stats.new, key: 'new' as const },
-            { label: 'Hot (70+)', value: stats.hot, key: 'hot' as const },
-            { label: 'Applied', value: stats.applied, key: 'applied' as const },
+            { label: 'Total', value: stats.total },
+            { label: 'New', value: stats.new },
+            { label: 'Hot (70+)', value: stats.hot },
+            { label: 'Applied', value: stats.applied },
           ].map(s => (
-            <button
-              key={s.key}
-              className="lh-surface"
-              onClick={() => { setStatusFilter(prev => prev === s.key ? 'all' : s.key); setPage(1); }}
-              style={{
-                ...styles.statCard,
-                borderWidth: '2px',
-                borderStyle: 'solid',
-                borderColor: statusFilter === s.key ? '#2563eb' : '#e2e8f0',
-                boxShadow: statusFilter === s.key ? '0 0 0 3px rgba(37,99,235,0.12)' : '0 1px 2px rgba(15,23,42,0.04)',
-              }}
-            >
+            <div key={s.label} className="lh-surface" style={styles.statCard}>
               <div className="lh-h" style={styles.statNum}>{s.value}</div>
               <div className="lh-muted" style={styles.statLabel}>{s.label}</div>
-            </button>
+            </div>
           ))}
         </div>
 
         {/* ── FILTERS ── */}
         <div style={styles.filtersBox} className="lh-surface">
 
-          {/* Search + sort + posted window */}
+          {/* Row 1 — Platform + Sort */}
           <div style={styles.filterRow}>
-            <div style={{ position: 'relative', flex: 1, minWidth: 'min(260px,100%)' }}>
-              <input
-                type="text"
-                className="lh-field"
-                placeholder="Search — try “react jobs from the last 3 days” or “flutter por hora”…"
-                value={search}
-                onChange={e => onSearchChange(e.target.value)}
-                onFocus={() => setSearchFocus(true)}
-                onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
-                onKeyDown={e => { if (e.key === 'Enter') void applySmartSearch(search); }}
-                style={styles.searchInput}
-                aria-label="Search jobs"
-              />
-              {searchFocus && visibleSuggestions.length > 0 && (
-                <div style={styles.suggestBox} className="lh-surface">
-                  {visibleSuggestions.map(s => (
-                    <button
-                      key={s}
-                      type="button"
-                      className="lh-field"
-                      style={styles.suggestItem}
-                      onMouseDown={e => { e.preventDefault(); void applySmartSearch(s); }}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <button onClick={() => void applySmartSearch(search)} style={styles.btnPrimary}>
-              Search
-            </button>
-            <select value={sortBy} onChange={e => { setSortBy(e.target.value as 'score' | 'date' | 'budget' | 'recommended' | 'proposals'); setPage(1); }} style={styles.select} className="lh-field">
-              <option value="recommended">Sort: Recommended</option>
-              <option value="proposals">Sort: Lowest proposals</option>
-              <option value="score">Sort: Best score</option>
-              <option value="date">Sort: Latest first</option>
-              <option value="budget">Sort: Highest budget</option>
-            </select>
-            <select value={postedFilter} onChange={e => { setPostedFilter(e.target.value as 'all' | '24h' | '3d' | '7d'); setPage(1); }} style={styles.select} className="lh-field">
-              <option value="all">Posted: Any time</option>
-              <option value="24h">Posted: Last 24 hours</option>
-              <option value="3d">Posted: Last 3 days</option>
-              <option value="7d">Posted: Last 7 days</option>
-            </select>
-          </div>
-
-          {/* Active search chip */}
-          {smartActive && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={styles.smartChip} className="lh-field">
-                Search: “{smartRaw}”
-                <button
-                  onClick={clearSmartSearch}
-                  aria-label="Clear search"
-                  className="lh-muted"
-                  style={styles.smartChipX}
-                >
-                  ×
-                </button>
-              </span>
-              {smartMaxBid != null && (
-                <span style={styles.smartChip} className="lh-field">Budget ≤ ${smartMaxBid.toLocaleString()}</span>
-              )}
-              <span className="lh-muted" style={{ fontSize: 11.5, color: '#94a3b8' }}>
-                Filters applied from your search — click × to reset.
-              </span>
-            </div>
-          )}
-
-          {/* Platform selector — controls the whole filter structure */}
-          <div style={styles.filterRow}>
-            <span className="lh-muted" style={styles.filterLabel}>Platform:</span>
+            <span className="lh-muted" style={styles.filterLabel}>Platform</span>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {PLATFORM_OPTIONS.map(p => {
                 const active = platform === p;
@@ -855,92 +553,49 @@ function HomeContent() {
                 );
               })}
             </div>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={sortBy} onChange={e => { setSortBy(e.target.value as SortKey); setPage(1); }} style={styles.select} className="lh-field">
+                <option value="recommended">Sort: Recommended</option>
+                <option value="date">Sort: Newest</option>
+                <option value="competition">Sort: Lowest competition</option>
+                <option value="budget">Sort: Highest budget</option>
+              </select>
+              {anyFilterActive && (
+                <button onClick={clearAll} style={styles.clearBtn}>Reset</button>
+              )}
+            </div>
           </div>
 
-          {/* Opportunity tier pills — primary filter dimension, with live counts */}
+          {/* Row 2 — Job Type + Opportunity */}
           <div style={styles.filterRow}>
-            <span className="lh-muted" style={styles.filterLabel}>Opportunity:</span>
-            <FilterPill label="All" count={facets.tiers.all} active={scoreFilter === 'all'} color="#2563eb" onClick={() => { setScoreFilter('all'); setPage(1); }} />
-            <FilterPill label="High" count={facets.tiers.high} active={scoreFilter === 'high'} color="#10b981" onClick={() => { setScoreFilter(prev => prev === 'high' ? 'all' : 'high'); setPage(1); }} />
-            <FilterPill label="Good" count={facets.tiers.medium} active={scoreFilter === 'medium'} color="#3b82f6" onClick={() => { setScoreFilter(prev => prev === 'medium' ? 'all' : 'medium'); setPage(1); }} />
-            <FilterPill label="Hot Lead" count={facets.tiers.low} active={scoreFilter === 'low'} color="#f59e0b" onClick={() => { setScoreFilter(prev => prev === 'low' ? 'all' : 'low'); setPage(1); }} />
+            <span className="lh-muted" style={styles.filterLabel}>Job Type</span>
+            <FilterPill label="All" count={facets.opportunity.all} active={jobTypeFilter === 'all'} color="#2563eb" onClick={() => { setJobTypeFilter('all'); setPage(1); }} />
+            {hasFixed && <FilterPill label="Fixed Price" count={facets.jobType.fixed} active={jobTypeFilter === 'fixed'} color="#2563eb" onClick={() => { setJobTypeFilter(prev => prev === 'fixed' ? 'all' : 'fixed'); setPage(1); }} />}
+            {hasHourly && <FilterPill label="Hourly" count={facets.jobType.hourly} active={jobTypeFilter === 'hourly'} color="#2563eb" onClick={() => { setJobTypeFilter(prev => prev === 'hourly' ? 'all' : 'hourly'); setPage(1); }} />}
+
+            <span className="lh-muted" style={{ ...styles.filterLabel, marginLeft: 12 }}>Opportunity</span>
+            <FilterPill label="All" count={facets.opportunity.all} active={opportunityFilter === 'all'} color="#2563eb" onClick={() => { setOpportunityFilter('all'); setPage(1); }} />
+            <FilterPill label="Recommended" count={facets.opportunity.recommended} active={opportunityFilter === 'recommended'} color="#16a34a" onClick={() => { setOpportunityFilter(prev => prev === 'recommended' ? 'all' : 'recommended'); setPage(1); }} />
+            <FilterPill label="Act Fast" count={facets.opportunity.actFast} active={opportunityFilter === 'actFast'} color="#d97706" onClick={() => { setOpportunityFilter(prev => prev === 'actFast' ? 'all' : 'actFast'); setPage(1); }} />
           </div>
 
-          {/* Job type (Fixed / Hourly) — shared concept, both platforms */}
-          <div style={styles.filterRow}>
-            <span className="lh-muted" style={styles.filterLabel}>Budget Type:</span>
-            <select value={jobTypeFilter} onChange={e => { setJobTypeFilter(e.target.value as 'all' | 'fixed' | 'hourly'); setPage(1); }} style={styles.select} className="lh-field">
-              <option value="all">Any Budget Type</option>
-              {hasFixed && <option value="fixed">Fixed Price ({facets.jobType.fixed})</option>}
-              {hasHourly && <option value="hourly">Hourly Rate ({facets.jobType.hourly})</option>}
-            </select>
-
-            <span className="lh-muted" style={styles.filterLabel}>Country:</span>
-            <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }} style={styles.select} className="lh-field">
-              {countryOptions.map(c => <option key={c} value={c}>{c === 'All' ? 'All' : `${c} (${facets.countries[c] ?? 0})`}</option>)}
-            </select>
-          </div>
-
-          {/* Experience level — dynamic from real values in the platform scope */}
-          {experienceOptions.length > 0 && (
-            <div style={styles.filterRow}>
-              <span className="lh-muted" style={styles.filterLabel}>Experience:</span>
-              <FilterPill label="All" count={facets.tiers.all} active={experienceFilter === 'all'} color="#0f172a" onClick={() => { setExperienceFilter('all'); setPage(1); }} />
-              {experienceOptions.map(e => (
-                <FilterPill
-                  key={e}
-                  label={e}
-                  count={facets.experiences[e] ?? 0}
-                  active={experienceFilter === e}
-                  color="#7c3aed"
-                  onClick={() => { setExperienceFilter(prev => prev === e ? 'all' : e); setPage(1); }}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Competition — labelled per platform (Proposals / Bids) */}
-          {hasCompetitionData && (
-            <div style={styles.filterRow}>
-              <span className="lh-muted" style={styles.filterLabel}>{competitionLabel}:</span>
-              <FilterPill label="Any" count={facets.tiers.all} active={competitionFilter === 'all'} color="#0f172a" onClick={() => { setCompetitionFilter('all'); setPage(1); }} />
-              {(['low', 'med', 'high'] as const).map(b => (
-                <FilterPill
-                  key={b}
-                  label={b === 'low' ? 'Low (≤5)' : b === 'med' ? 'Medium (6–20)' : 'High (20+)'}
-                  count={facets.competition[b] ?? 0}
-                  active={competitionFilter === b}
-                  color="#b45309"
-                  onClick={() => { setCompetitionFilter(prev => prev === b ? 'all' : b); setPage(1); }}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Connects / Bid Cost — Upwork only (Freelancer has no connects) */}
-          {showConnects && (
-            <div style={styles.filterRow}>
-              <span className="lh-muted" style={styles.filterLabel}>Connects:</span>
-              <FilterPill label="Any" count={facets.tiers.all} active={connectsFilter === 'all'} color="#0f172a" onClick={() => { setConnectsFilter('all'); setPage(1); }} />
-              {(['low', 'med', 'high'] as const).map(b => (
-                <FilterPill
-                  key={b}
-                  label={b === 'low' ? 'Low (≤5)' : b === 'med' ? 'Medium (6–12)' : 'High (13+)'}
-                  count={facets.connects[b] ?? 0}
-                  active={connectsFilter === b}
-                  color="#2563eb"
-                  onClick={() => { setConnectsFilter(prev => prev === b ? 'all' : b); setPage(1); }}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Skills — dynamic, multi-select, from real skills in the scope */}
+          {/* Row 3 — Skills (dynamic, searchable, multi-select) */}
           {skillOptions.length > 0 && (
             <div style={{ ...styles.filterRow, alignItems: 'flex-start' }}>
-              <span className="lh-muted" style={styles.filterLabel}>Skills:</span>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flex: 1 }}>
-                {skillOptions.map(s => {
+              <span className="lh-muted" style={styles.filterLabel}>Skills</span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flex: 1, alignItems: 'center' }}>
+                {visibleSkillOptions.length > 8 && (
+                  <input
+                    type="text"
+                    className="lh-field"
+                    placeholder="Filter skills…"
+                    value={skillQuery}
+                    onChange={e => setSkillQuery(e.target.value)}
+                    style={{ ...styles.select, minWidth: 140 }}
+                    aria-label="Filter skills"
+                  />
+                )}
+                {visibleSkillOptions.map(s => {
                   const active = skillsFilter.includes(s);
                   return (
                     <button
@@ -970,9 +625,6 @@ function HomeContent() {
             <div className="lh-muted" style={{ fontSize: 12, color: '#94a3b8' }}>
               Showing {Math.min((page - 1) * PER_PAGE + 1, filteredJobs.length)}–{Math.min(page * PER_PAGE, filteredJobs.length)} of {filteredJobs.length} jobs{filteredJobs.length !== scopeJobs.length ? ` (from ${scopeJobs.length} in ${platform === 'all' ? 'all platforms' : platform})` : ''}
             </div>
-            {anyFilterActive && (
-              <button onClick={clearAll} style={styles.clearBtn}>Clear all filters</button>
-            )}
           </div>
         </div>
 
