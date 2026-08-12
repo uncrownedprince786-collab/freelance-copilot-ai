@@ -345,32 +345,35 @@ export default function AgentPanel() {
 
   return (
     <>
-      {/* Floating trigger button */}
-      <button
-        type="button"
-        aria-label={open ? 'Close AI assistant' : 'Open AI assistant'}
-        onClick={() => setOpen(o => !o)}
-        style={{
-          position: 'fixed',
-          right: 18,
-          bottom: 18,
-          zIndex: 70,
-          width: 54,
-          height: 54,
-          borderRadius: '50%',
-          border: 'none',
-          cursor: 'pointer',
-          background: open ? '#0f172a' : '#2563eb',
-          color: '#fff',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 8px 24px rgba(37,99,235,0.35)',
-        }}
-        className="lh-agent-fab"
-      >
-        {open ? <X size={24} /> : <IconAgent size={24} color="#fff" />}
-      </button>
+      {/* Floating trigger button — hidden while the panel is open so it never
+          overlaps the composer. Closing is handled by the header × and backdrop. */}
+      {!open && (
+        <button
+          type="button"
+          aria-label="Open AI assistant"
+          onClick={() => setOpen(o => !o)}
+          style={{
+            position: 'fixed',
+            right: 18,
+            bottom: 18,
+            zIndex: 70,
+            width: 54,
+            height: 54,
+            borderRadius: '50%',
+            border: 'none',
+            cursor: 'pointer',
+            background: '#2563eb',
+            color: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 8px 24px rgba(37,99,235,0.35)',
+          }}
+          className="lh-agent-fab"
+        >
+          <IconAgent size={24} color="#fff" />
+        </button>
+      )}
 
       {nudge && (
         <div
