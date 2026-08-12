@@ -43,7 +43,7 @@ export interface JobFeedItem {
 }
 
 export async function buildJobFeed(): Promise<JobFeedItem[]> {
-  const rawJobs = await getRawJobs();
+  const rawJobs = await getRawJobs(500);
   const appliedSet = await getAppliedSet();
 
   // Repeat-client signal: jobs sharing the same stable client key in the
@@ -67,7 +67,6 @@ export async function buildJobFeed(): Promise<JobFeedItem[]> {
     const totalForClient = clientKey ? (clientCounts.get(clientKey) || 0) : 0;
     const postedMs = new Date(job.postedAt || job.postedDate || 0).getTime();
     const isFresh = Number.isFinite(postedMs) && postedMs > 0 && Date.now() - postedMs < 24 * 60 * 60 * 1000;
-    const actFast = isFresh && (job.proposalCount == null || job.proposalCount <= 5);
 
     // --- Country: only show real countries, never "Remote" or generic
     const rawCountry = job.country || clientObj.country || job.location || '';
@@ -160,17 +159,17 @@ export async function buildJobFeed(): Promise<JobFeedItem[]> {
       memberSince,
       category,
       opportunityReason,
-      // Repeat-client + act-fast signals
+      // --- Repeat-client + act-fast signals
       clientKey,
       repeatClient: totalForClient >= 2,
       repeatClientCount: Math.max(totalForClient - 1, 0),
-      actFast,
+      actFast: isFresh && typeof job.proposalCount === 'number' && job.proposalCount <= 5,
       // Job specifics
       connections: job.connectsRequired || job.connections || 0,
       skills: Array.isArray(job.skills) ? job.skills : [],
       experienceLevel,
       duration: job.duration || '',
-      proposalCount: job.proposalCount || null,
+      proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
       interviewingCount: job.interviewingCount || 0,
       hiresCount: job.hiresCount || 0,
       // Meta — "New" badge only for genuinely recent listings (posted within

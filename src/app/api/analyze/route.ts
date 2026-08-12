@@ -181,12 +181,12 @@ export async function POST(request: NextRequest) {
     const key = cacheKey(safeOpportunityId);
     const memHit = memCache.get(key);
     if (memHit && isCacheValid(memHit.ts)) {
-      return NextResponse.json({ ...(memHit.data as Record<string, unknown>), cached: true }, { headers: secureHeaders });
+      return NextResponse.json({ ...(memHit.data as Record<string, unknown>) }, { headers: secureHeaders });
     }
     const persisted = await readPersistentCache(key);
     if (persisted) {
       memCache.set(key, persisted);
-      return NextResponse.json({ ...(persisted.data as Record<string, unknown>), cached: true }, { headers: secureHeaders });
+      return NextResponse.json({ ...(persisted.data as Record<string, unknown>) }, { headers: secureHeaders });
     }
   }
 
@@ -217,7 +217,7 @@ export async function POST(request: NextRequest) {
     });
 
     const cleaned = scrubAnalysis(analysis);
-    const responseData = { ...cleaned, cached: false, repeatClient: repeat.repeatClient, clientJobsCount: repeat.clientJobsCount };
+    const responseData = { ...cleaned, repeatClient: repeat.repeatClient, clientJobsCount: repeat.clientJobsCount };
 
     if (safeOpportunityId) {
       const key = cacheKey(safeOpportunityId);

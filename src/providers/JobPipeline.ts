@@ -127,7 +127,7 @@ export class JobPipeline {
           skills: op.skills ? op.skills.split(',') : [],
           experienceLevel: op.experienceLevel || '',
           duration: op.duration || '',
-          proposalCount: op.proposalCount || null,
+          proposalCount: typeof op.proposalCount === 'number' ? op.proposalCount : null,
           interviewingCount: op.interviewingCount || 0,
           hiresCount: op.hiresCount || 0,
           client: op.rawPayload ? JSON.parse(op.rawPayload) : {},
@@ -292,10 +292,23 @@ export class JobPipeline {
       if (job.proposalCount <= 5) {
         score += 15;
         reasons.push('Low competition');
+      } else if (job.proposalCount >= 15) {
+        score -= 20;
+        reasons.push('High competition (15+ proposals)');
       } else if (job.proposalCount > 20) {
         score -= 15;
         reasons.push('High competition');
       }
+    }
+
+    // Interview/progress status penalty
+    if (typeof job.interviewingCount === "number" && job.interviewingCount > 0) {
+      score -= 15;
+      reasons.push('Candidates already interviewing');
+    }
+    if (typeof job.hiresCount === "number" && job.hiresCount > 0) {
+      score -= 25;
+      reasons.push('Position already filled');
     }
 
     // Relevancy signal check

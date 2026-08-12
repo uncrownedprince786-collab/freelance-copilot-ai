@@ -29,7 +29,7 @@ export default function CronLogsPage() {
   const router = useRouter();
   const [logs, setLogs] = useState<CronLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [totalCachedJobs, setTotalCachedJobs] = useState(0);
+  const [totalStoredJobs, setTotalStoredJobs] = useState(0);
   const [running, setRunning] = useState(false);
   const [runMsg, setRunMsg] = useState('');
   const [countdown, setCountdown] = useState('');
@@ -61,7 +61,7 @@ export default function CronLogsPage() {
       const res = await fetch('/api/cron-logs');
       const data = await res.json();
       if (data.logs) setLogs(data.logs);
-      if (data.totalCachedJobs) setTotalCachedJobs(data.totalCachedJobs);
+      if (data.totalStoredJobs) setTotalStoredJobs(data.totalStoredJobs);
     } catch (err) {
       console.error('Failed to load cron logs', err);
     } finally {
@@ -117,8 +117,8 @@ export default function CronLogsPage() {
         {/* Status bar */}
         <div style={st.statusBar}>
           <div style={st.statusItem} className="lh-surface">
-            <div className="lh-muted" style={st.statusLabel}>Jobs in Cache</div>
-            <div className="lh-h" style={st.statusVal}>{totalCachedJobs || '—'}</div>
+            <div className="lh-muted" style={st.statusLabel}>Jobs Stored</div>
+            <div className="lh-h" style={st.statusVal}>{totalStoredJobs || '—'}</div>
           </div>
           <div style={st.statusItem} className="lh-surface">
             <div className="lh-muted" style={st.statusLabel}>Last Run</div>
@@ -140,10 +140,9 @@ export default function CronLogsPage() {
         )}
 
         {/* Cache explanation */}
-        {totalCachedJobs > 0 && (
+{totalStoredJobs > 0 && (
           <div style={st.infoBox}>
-            <strong>{totalCachedJobs} unique jobs</strong> in dashboard cache.
-            &nbsp;&quot;Total Scraped&quot; = raw count from that run. Dashboard total = deduplicated accumulation across all runs.
+            <strong>{totalStoredJobs} jobs stored</strong> in dashboard. &nbsp;&ldquo;Total Scraped&rdquo; = raw count from that run. Dashboard total = deduplicated accumulation across all runs.
           </div>
         )}
 

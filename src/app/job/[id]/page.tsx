@@ -46,7 +46,7 @@ interface Job {
 interface Analysis {
   summary: string;
   score: number;
-  risk: string;
+  risk: 'Low' | 'Medium' | 'High';
   reasons: string[];
   bidAmount: string;
   questions: string[];
@@ -58,7 +58,6 @@ interface Analysis {
   suggestedEta?: string;
   repeatClient?: boolean;
   clientJobsCount?: number;
-  cached?: boolean;
 }
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -614,11 +613,7 @@ export default function JobDetailPage() {
               <div style={s.card} className="lh-surface">
                 <div style={{ ...s.sectionHead, display: 'flex', alignItems: 'center', gap: 8 }}>
                   Overall Assessment
-                  {analysis.cached && (
-                    <span style={{ ...s.badge, background: '#dbeafe', color: '#1e40af', padding: '2px 8px', fontSize: 10, fontWeight: 700 }}>
-                      Cached (24h)
-                    </span>
-                  )}
+
                 </div>
                 <div style={s.verdictGrid}>
                   <div style={s.verdictCell} className="lh-surface">

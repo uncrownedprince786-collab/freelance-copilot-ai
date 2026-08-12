@@ -77,7 +77,7 @@ async function analyzeJobsLocally(): Promise<{ skills: Record<string, number>, c
     'Automation / Scraping': ['web scraping', 'automation', 'selenium', 'playwright'],
   };
 
-  const jobs = await getRawJobs(); // Use shared utility — same source as jobs API
+  const jobs = await getRawJobs(2000); // Use shared utility — same source as jobs API
 
   for (const job of jobs) {
     const skillsText = Array.isArray(job.skills) ? job.skills.join(' ').toLowerCase() : '';

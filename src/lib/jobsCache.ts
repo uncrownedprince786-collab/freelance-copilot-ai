@@ -33,10 +33,11 @@ export interface RawJob {
   [key: string]: any;
 }
 
-export async function getRawJobs(): Promise<RawJob[]> {
+export async function getRawJobs(limit = 500): Promise<RawJob[]> {
   try {
     const dbOps = await prisma.opportunity.findMany({
       orderBy: { createdAt: 'desc' },
+      take: limit,
     });
     return dbOps.map(op => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,7 +66,7 @@ export async function getRawJobs(): Promise<RawJob[]> {
         skills: op.skills ? op.skills.split(',') : [],
         experienceLevel: op.experienceLevel || '',
         duration: op.duration || '',
-        proposalCount: op.proposalCount || null,
+        proposalCount: typeof op.proposalCount === 'number' ? op.proposalCount : null,
         interviewingCount: op.interviewingCount || 0,
         hiresCount: op.hiresCount || 0,
         client: op.rawPayload ? JSON.parse(op.rawPayload) : {},

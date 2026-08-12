@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { isAuthenticated, isAdmin, logout, trackActivity } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { IconTrend, IconShield, IconMapPin } from '@/components/icons';
+import { IconTrend, IconShield, IconMapPin, IconEye } from '@/components/icons';
 import { timeAgo } from '@/lib/format';
 
 const FILTERS_KEY = 'lh_jobs_filters';
@@ -152,9 +152,9 @@ function HomeContent() {
   const [sortBy, setSortBy] = useState<'score' | 'date' | 'budget'>(() => loadFilters().sortBy);
   const [page, setPage] = useState(1);
 
-  // Smart search state: `search` is the natural-language box; when a query is
-  // parsed into filters we keep the raw text for the active chip and use the
-  // stripped `smartKeyword` for the actual keyword filter.
+// Search state: `search` is the natural-language box; when a query is
+// parsed into filters we keep the raw text for the active chip and use the
+// stripped `smartKeyword` for the actual keyword filter.
   const [smartActive, setSmartActive] = useState(false);
   const [smartRaw, setSmartRaw] = useState('');
   const [smartKeyword, setSmartKeyword] = useState('');
@@ -201,7 +201,7 @@ function HomeContent() {
     review: jobs.filter(j => j.score < 50).length,
   }), [jobs]);
 
-  // Smart-search suggestions built from the real data (platforms, countries,
+  // Search suggestions built from the real data (platforms, countries,
   // skills) plus a few canned time/type intents.
   const searchSuggestions = useMemo(() => {
     const skills = new Set<string>();
@@ -416,7 +416,7 @@ function HomeContent() {
     setPage(1);
   };
 
-  // Smart search: parse a natural-language query into whitelisted filters via
+  // Search: parse a natural-language query into whitelisted filters via
   // /api/search, apply them, and surface an active chip with the raw text.
   const applySmartSearch = async (raw: string) => {
     const q = raw.trim();
@@ -512,6 +512,12 @@ function HomeContent() {
                 Market Trends
               </span>
             </button>
+            <button onClick={() => router.push('/intelligence')} style={styles.btnCron}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <IconEye size={14} color="#fff" />
+                Market Intelligence
+              </span>
+            </button>
             {adminMode && (
               <>
                 <button onClick={() => router.push('/cron-logs')} style={styles.btnCron}>
@@ -583,20 +589,20 @@ function HomeContent() {
 
         {/* ── FILTERS ── */}
         <div style={styles.filtersBox} className="lh-surface">
-          {/* Smart search + sort + posted window */}
+          {/* Search + sort + posted window */}
           <div style={styles.filterRow}>
             <div style={{ position: 'relative', flex: 1, minWidth: 'min(260px,100%)' }}>
               <input
                 type="text"
                 className="lh-field"
-                placeholder="Smart search — try “react jobs from the last 3 days” or “flutter por hora”…"
+                placeholder="Search — try “react jobs from the last 3 days” or “flutter por hora”…"
                 value={search}
                 onChange={e => onSearchChange(e.target.value)}
                 onFocus={() => setSearchFocus(true)}
                 onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
                 onKeyDown={e => { if (e.key === 'Enter') void applySmartSearch(search); }}
                 style={styles.searchInput}
-                aria-label="Smart search"
+                aria-label="Search jobs"
               />
               {searchFocus && visibleSuggestions.length > 0 && (
                 <div style={styles.suggestBox} className="lh-surface">
@@ -630,14 +636,14 @@ function HomeContent() {
             </select>
           </div>
 
-          {/* Active smart-search chip */}
+          {/* Active search chip */}
           {smartActive && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={styles.smartChip} className="lh-field">
-                Smart search: “{smartRaw}”
+                Search: “{smartRaw}”
                 <button
                   onClick={clearSmartSearch}
-                  aria-label="Clear smart search"
+                  aria-label="Clear search"
                   className="lh-muted"
                   style={styles.smartChipX}
                 >
@@ -702,7 +708,7 @@ function HomeContent() {
                 borderColor: scoreFilter === 'low' ? '#f59e0b' : '#e2e8f0',
               }}
             >
-              Review <span style={styles.oppCount}>{oppStats.review}</span>
+              Hot Lead <span style={styles.oppCount}>{oppStats.review}</span>
             </button>
           </div>
 
@@ -828,7 +834,7 @@ function HomeContent() {
                             borderColor: job.proposalCount <= 5 ? '#bbf7d0' : job.proposalCount <= 20 ? '#fde68a' : '#fecaca',
                           }}
                         >
-                          {job.proposalCount} props
+                          {job.proposalCount} Applied Proposals
                         </span>
                       )}
                       {job.actFast && (

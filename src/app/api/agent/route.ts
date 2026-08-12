@@ -41,6 +41,12 @@ const COMPARE_NO_CONTEXT =
 const NO_RESULTS = (terms: string) =>
   `I couldn't find current listings matching "${terms}" in the live feed. You can try a different skill, remove filters, or broaden the time range. Want me to show you the top opportunities right now instead?`;
 
+const EMPTY_INPUT =
+  `I'm here to help with freelance opportunities, market trends, and job analysis. Could you tell me what you're looking for? For example: "Find me recent React jobs" or "What skills are in demand?"`;
+
+const API_ERROR =
+  `I'm having trouble reaching the job data right now. Please try again in a moment, or let me know what type of opportunities you're interested in.`;
+
 // Ground-truth fallback when no AI provider is configured/available. Never
 // fabricates: it only restates the data the tools actually retrieved.
 function fallbackReply(intent: AgentIntent, lastMsg: string, cards: AgentJobCard[], snapshotText: string): string {
@@ -55,7 +61,7 @@ function fallbackReply(intent: AgentIntent, lastMsg: string, cards: AgentJobCard
   const ranked = [...cards].sort((a, b) => b.score - a.score);
   const top = ranked[0];
   const lines = cards.slice(0, 5).map((c, i) =>
-    `${i + 1}. ${c.title} — ${c.budget} · score ${c.score}${c.proposalCount != null ? ` · ${c.proposalCount} proposals` : ''}${c.platform ? ` · ${c.platform}` : ''}`,
+    `${i + 1}. ${c.title} — ${c.budget} · score ${c.score}${c.proposalCount != null ? ` · ${c.proposalCount} Applied Proposals` : ''}${c.platform ? ` · ${c.platform}` : ''}`,
   );
   const why = [
     top.score >= 70 ? `highest opportunity score (${top.score})` : '',
@@ -159,15 +165,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'A user message is required.' }, { status: 400, headers: secureHeaders });
   }
 
+  // Handle empty/whitespace input
+  const userContent = lastUserMsg.content.trim();
+  if (!userContent) {
+    return NextResponse.json({ reply: EMPTY_INPUT, tool: 'greeting', suggestions: AGENT_SUGGESTIONS }, { headers: secureHeaders });
+  }
+
+  // Cap very long input
+  const cappedContent = userContent.slice(0, MAX_MSG_LEN);
+  if (cappedContent.length !== userContent.length) {
+    // Input was truncated, but we'll process what we have
+  }
+
   const workingJobs: AgentJobCard[] = Array.isArray(rawWorking)
     ? rawWorking.slice(0, MAX_JOBS).map(sanitizeJob).filter((j): j is AgentJobCard => j !== null)
     : [];
 
   try {
-    const intent: AgentIntent = classifyIntent(lastUserMsg.content, workingJobs.length);
+    const intent: AgentIntent = classifyIntent(cappedContent, workingJobs.length);
 
     // "which is best?" with nothing to compare yet → ask for a search first.
-    if (intent === 'search' && workingJobs.length === 0 && /(which (is|one)|best|compare|recommend|prioritize)/i.test(lastUserMsg.content) && lastUserMsg.content.length < 60) {
+    if (intent === 'search' && workingJobs.length === 0 && /(which (is|one)|best|compare|recommend|prioritize)/i.test(cappedContent) && cappedContent.length < 60) {
       return NextResponse.json({ reply: COMPARE_NO_CONTEXT, tool: 'compare', suggestions: AGENT_SUGGESTIONS }, { headers: secureHeaders });
     }
 
@@ -177,7 +195,7 @@ export async function POST(request: NextRequest) {
     let tool: string = intent;
 
     if (intent === 'greeting' || intent === 'injection' || intent === 'guidance') {
-      reply = fallbackReply(intent, lastUserMsg.content, cards, '');
+      reply = fallbackReply(intent, cappedContent, cards, '');
     } else if (intent === 'trends') {
       const snap = await buildTrendsSnapshot();
       snapshotText = snap.text;
@@ -185,32 +203,32 @@ export async function POST(request: NextRequest) {
     } else if (intent === 'compare') {
       // Reason over the current working set (jobs from the last search).
       if (cards.length > 0) {
-        reply = await reasonOverJobs('compare', lastUserMsg.content, cards);
-        if (!reply) reply = fallbackReply(intent, lastUserMsg.content, cards, '');
+        reply = await reasonOverJobs('compare', cappedContent, cards);
+        if (!reply) reply = fallbackReply(intent, cappedContent, cards, '');
       } else {
         reply = COMPARE_NO_CONTEXT;
       }
     } else {
       // search or refine over the live feed.
       const result = intent === 'refine' && workingJobs.length > 0
-        ? await refineWorkingSet(workingJobs, lastUserMsg.content)
-        : await runJobSearch(lastUserMsg.content, MAX_JOBS);
+        ? await refineWorkingSet(workingJobs, cappedContent)
+        : await runJobSearch(cappedContent, MAX_JOBS);
       cards = result.jobs;
       const dataCtx = serializeJobsForLLM(cards, MAX_JOBS);
       const summary = result.total > cards.length
         ? ` (showing the top ${cards.length} of ${result.total})`
         : '';
       if (cards.length > 0) {
-        reply = await reasonOverJobs(intent === 'refine' ? 'refine' : 'search', lastUserMsg.content, cards, dataCtx, `Filters: ${result.filtersNote}${summary}.`);
-        if (!reply) reply = fallbackReply(intent, lastUserMsg.content, cards, '');
+        reply = await reasonOverJobs(intent === 'refine' ? 'refine' : 'search', cappedContent, cards, dataCtx, `Filters: ${result.filtersNote}${summary}.`);
+        if (!reply) reply = fallbackReply(intent, cappedContent, cards, '');
       } else {
-        reply = NO_RESULTS(extractTermsForMessage(lastUserMsg.content));
+        reply = NO_RESULTS(extractTermsForMessage(cappedContent));
       }
     }
 
     // trends → build an LLM answer, falling back to the deterministic snapshot.
     if (intent === 'trends') {
-      reply = await reasonOverTrends(lastUserMsg.content, snapshotText);
+      reply = await reasonOverTrends(cappedContent, snapshotText);
       if (!reply) reply = snapshotText || 'Market intelligence is still being computed — check back after the next sync.';
     }
 
@@ -224,7 +242,7 @@ export async function POST(request: NextRequest) {
     console.error('[agent] Internal error:', error);
     return NextResponse.json(
       {
-        reply: `I couldn't retrieve those opportunities right now. Please try again, or tell me what type of jobs you'd like me to look for.`,
+        reply: API_ERROR,
         tool: 'error',
         suggestions: AGENT_SUGGESTIONS,
       },

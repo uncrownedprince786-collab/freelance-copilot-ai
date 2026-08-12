@@ -262,3 +262,74 @@ html[data-theme='dark'] .lh-agent-fab {
     display: none;
   }
 }
+
+/* ── TRENDS PAGE DARK MODE ──────────────────────────────────────────────
+   Styles for the simplified market intelligence page. */
+html[data-theme='dark'] .lh-page .actionCard {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .insightCard {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .growthRow {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .monitorRow {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .hourChip {
+  background: #1e293b !important;
+  color: #e2e8f0 !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .histInsight {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .actionItem {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .learnCard {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .urgencyTag {
+  /* urgencyTag has inline background, leave as-is for accent colors */
+}
+
+html[data-theme='dark'] .lh-page .catRow {
+  border-bottom-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .card {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .heroCard {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+
+html[data-theme='dark'] .lh-page .errorBox {
+  background: #131c2e !important;
+  border-color: #7f1d1d !important;
+}
+
+html[data-theme='dark'] .lh-page .spinner {
+  border-color: #26334a !important;
+  border-top-color: #2563eb !important;
+}

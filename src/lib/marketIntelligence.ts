@@ -270,14 +270,16 @@ export function computeMarketIntelligence(jobs: RawJob[]): MarketIntelligence {
       else if (pl === 'freelancer') platformNew7d.freelancer++;
     }
   }
-  const totalJobs = valid.length || 1;
+  const totalJobs = valid.length;
+  // Report the real count; only the percentage denominator guards div-by-zero.
+  const totalDenom = Math.max(1, totalJobs);
   const platformMix: PlatformMix = {
     upwork: platform.upwork,
     freelancer: platform.freelancer,
     other: platform.other,
-    upworkPct: Math.round(platform.upwork / totalJobs * 100),
-    freelancerPct: Math.round(platform.freelancer / totalJobs * 100),
-    otherPct: Math.round(platform.other / totalJobs * 100),
+    upworkPct: Math.round(platform.upwork / totalDenom * 100),
+    freelancerPct: Math.round(platform.freelancer / totalDenom * 100),
+    otherPct: Math.round(platform.other / totalDenom * 100),
   };
 
   // ── Skills ───────────────────────────────────────────────────────────

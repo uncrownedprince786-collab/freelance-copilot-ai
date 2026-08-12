@@ -256,6 +256,7 @@ export default function AboutPage() {
               'Per-job analysis and proposal draft',
               'Market trends built from real marketplace data',
               'Posting-time intelligence for when to check platforms',
+              'A dedicated Market Intelligence view with competition, budgets, and skill demand',
             ].map(g => (
               <div key={g} style={styles.getCard} className="lh-surface">
                 <span style={styles.getCheck}>✓</span>
