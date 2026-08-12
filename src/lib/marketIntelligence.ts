@@ -178,20 +178,25 @@ function skillCounts(jobs: RawJob[]): Record<string, number> {
   for (const job of jobs) {
     const skillsText = Array.isArray(job.skills) ? job.skills.join(' ').toLowerCase() : '';
     const text = `${job.title || ''} ${job.description || ''} ${skillsText}`.toLowerCase();
+    // Count a skill at most once per job: match it from the explicit skills array
+    // OR the listing text, then increment the aggregate by exactly 1 for this job.
+    // This guarantees every per-skill count stays <= totalJobs (no "1181 of 1134").
+    const present = new Set<string>();
     if (Array.isArray(job.skills)) {
       for (const sk of job.skills) {
         const s = sk.toLowerCase();
         for (const kw of SKILL_KEYWORDS) {
           if (s.includes(kw) || kw.includes(s)) {
-            counts[kw] = (counts[kw] || 0) + 1;
+            present.add(kw);
             break;
           }
         }
       }
     }
     for (const kw of SKILL_KEYWORDS) {
-      if (text.includes(kw)) counts[kw] = (counts[kw] || 0) + 1;
+      if (text.includes(kw)) present.add(kw);
     }
+    for (const kw of present) counts[kw] = (counts[kw] || 0) + 1;
   }
   return counts;
 }

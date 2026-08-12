@@ -105,21 +105,20 @@ async function analyzeJobsLocally(): Promise<{ skills: Record<string, number>, c
       }
     }
 
-    // Skills from actual skills array first
+    // Skills: count each keyword at most once per job (explicit skills array OR
+    // listing text), so per-skill counts never exceed the number of jobs analyzed.
+    const jobSkills = new Set<string>();
     if (Array.isArray(job.skills)) {
       for (const sk of job.skills) {
         const skl = sk.toLowerCase();
-        if (SKILL_KEYWORDS.some(kw => skl.includes(kw) || kw.includes(skl))) {
-          const matched = SKILL_KEYWORDS.find(kw => skl.includes(kw) || kw === skl) || skl;
-          skills[matched] = (skills[matched] || 0) + 1;
-        }
+        const matched = SKILL_KEYWORDS.find(kw => skl.includes(kw) || kw.includes(skl));
+        if (matched) jobSkills.add(matched);
       }
     }
-
-    // Also scan description
     for (const kw of SKILL_KEYWORDS) {
-      if (text.includes(kw)) skills[kw] = (skills[kw] || 0) + 1;
+      if (text.includes(kw)) jobSkills.add(kw);
     }
+    for (const kw of jobSkills) skills[kw] = (skills[kw] || 0) + 1;
 
     for (const [cat, kws] of Object.entries(CATEGORY_MAP)) {
       if (kws.some(kw => text.includes(kw))) {
