@@ -207,11 +207,15 @@ export async function runJobSearch(rawText: string, limit = 8): Promise<AgentSea
   const feed = await buildJobFeed();
   const parsed = parseSmartSearch(rawText);
   const filtered = feed.filter(j => applySmartFilters(j, parsed));
-  // Fresh results first, then by score — mirrors the dashboard's default sort.
+  // Mirrors the dashboard's "Recommended" default: lowest KNOWN competition
+  // first (unknown proposal counts go last), then strongest score, then freshest.
+  const comp = (j: JobFeedItem) => (typeof j.proposalCount === 'number' ? j.proposalCount : Number.POSITIVE_INFINITY);
+  const age = (j: JobFeedItem) => new Date(j.postedAt || 0).getTime();
   const sorted = [...filtered].sort((a, b) => {
-    const recency = (Number(b.isNew ? 1 : 0) - Number(a.isNew ? 1 : 0));
-    if (recency !== 0) return recency;
-    return (b.score || 0) - (a.score || 0);
+    const ca = comp(a), cb = comp(b);
+    if (ca !== cb) return ca - cb;
+    if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
+    return age(b) - age(a);
   });
   return {
     jobs: sorted.slice(0, limit).map(shapeJobCard),

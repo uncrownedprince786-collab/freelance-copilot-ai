@@ -138,6 +138,46 @@ function connBucket(n: number | undefined): 'low' | 'med' | 'high' {
   if (v <= 12) return 'med';
   return 'high';
 }
+
+// Normalized competition value for ranking: known counts sort ascending;
+// missing/unknown proposal data is sent to the very bottom (never treated as 0).
+function compValue(j: Job): number {
+  const n = j.proposalCount;
+  return typeof n === 'number' ? n : Number.POSITIVE_INFINITY;
+}
+function postedTimeOf(j: Job): number {
+  return new Date(j.postedAt || 0).getTime();
+}
+function budgetNumber(s: string): number {
+  const m = s.match(/\$?([\d,]+)/);
+  return m ? parseInt(m[1].replace(',', ''), 10) : 0;
+}
+
+/**
+ * Default "Recommended" ranking (also used by the explicit "Lowest proposals"
+ * sort). Deterministic priority:
+ *   1. Lowest KNOWN competition first; unknown competition last.
+ *   2. Stronger opportunity score.
+ *   3. Fresher posting.
+ *   4. Act-fast signal.
+ *   5. Healthier budget.
+ *   6. Repeat-client signal.
+ *   7. Stable job-id tie-breaker (no randomness / insertion order).
+ */
+function recommendedComparator(a: Job, b: Job): number {
+  const ca = compValue(a), cb = compValue(b);
+  if (ca !== cb) return ca - cb;
+  if (b.score !== a.score) return b.score - a.score;
+  const ta = postedTimeOf(a), tb = postedTimeOf(b);
+  if (tb !== ta) return tb - ta;
+  const fa = a.actFast ? 1 : 0, fb = b.actFast ? 1 : 0;
+  if (fb !== fa) return fb - fa;
+  const ba = budgetNumber(a.budget), bb = budgetNumber(b.budget);
+  if (bb !== ba) return bb - ba;
+  const ra = a.repeatClient ? 1 : 0, rb = b.repeatClient ? 1 : 0;
+  if (rb !== ra) return rb - ra;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
 const POSTED_HOURS: Record<string, number> = { '24h': 24, '3d': 72, '7d': 168 };
 
 /**
@@ -247,7 +287,7 @@ function HomeContent() {
   const [smartRaw, setSmartRaw] = useState(() => loadFilters().smartKeyword);
   const [smartKeyword, setSmartKeyword] = useState(() => loadFilters().smartKeyword);
   const [smartMaxBid, setSmartMaxBid] = useState<number | null>(() => loadFilters().smartMaxBid);
-  const [sortBy, setSortBy] = useState<'score' | 'date' | 'budget'>(() => loadFilters().scoreFilter === 'all' ? 'score' : 'score');
+  const [sortBy, setSortBy] = useState<'score' | 'date' | 'budget' | 'recommended' | 'proposals'>(() => 'recommended');
   const [page, setPage] = useState(1);
 
   // Search state: `search` is the natural-language box; when a query is
@@ -380,22 +420,23 @@ function HomeContent() {
   const filteredJobs = useMemo(() => {
     const result = scopeJobs.filter(j => passes(f, j));
 
-    const postedTime = (j: Job) => new Date(j.postedAt || 0).getTime();
-    const budgetNum = (s: string) => { const m = s.match(/\$?([\d,]+)/); return m ? parseInt(m[1].replace(',', '')) : 0; };
-    if (sortBy === 'score') {
+    if (sortBy === 'recommended' || sortBy === 'proposals') {
+      result.sort(recommendedComparator);
+    } else if (sortBy === 'score') {
       result.sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score;
-        const tb = postedTime(b) - postedTime(a);
+        const tb = postedTimeOf(b) - postedTimeOf(a);
         if (tb !== 0) return tb;
         const pa = a.proposalCount ?? Number.MAX_SAFE_INTEGER;
         const pb = b.proposalCount ?? Number.MAX_SAFE_INTEGER;
         if (pa !== pb) return pa - pb;
-        return budgetNum(b.budget) - budgetNum(a.budget);
+        return budgetNumber(b.budget) - budgetNumber(a.budget);
       });
-    } else if (sortBy === 'date') result.sort((a, b) => postedTime(b) - postedTime(a));
-    else if (sortBy === 'budget') result.sort((a, b) => budgetNum(b.budget) - budgetNum(a.budget));
+    } else if (sortBy === 'date') result.sort((a, b) => postedTimeOf(b) - postedTimeOf(a));
+    else if (sortBy === 'budget') result.sort((a, b) => budgetNumber(b.budget) - budgetNumber(a.budget));
 
-    // Push applied jobs to the very end (bottom) unless user is explicitly on the 'Applied' filter tab
+    // Push applied jobs to the very end (bottom) unless user is explicitly on the 'Applied' filter tab.
+    // Stable sort preserves the primary ranking among non-applied jobs.
     if (statusFilter !== 'applied') {
       result.sort((a, b) => {
         if (a.applied && !b.applied) return 1;
@@ -752,7 +793,9 @@ function HomeContent() {
             <button onClick={() => void applySmartSearch(search)} style={styles.btnPrimary}>
               Search
             </button>
-            <select value={sortBy} onChange={e => { setSortBy(e.target.value as 'score' | 'date' | 'budget'); setPage(1); }} style={styles.select} className="lh-field">
+            <select value={sortBy} onChange={e => { setSortBy(e.target.value as 'score' | 'date' | 'budget' | 'recommended' | 'proposals'); setPage(1); }} style={styles.select} className="lh-field">
+              <option value="recommended">Sort: Recommended</option>
+              <option value="proposals">Sort: Lowest proposals</option>
               <option value="score">Sort: Best score</option>
               <option value="date">Sort: Latest first</option>
               <option value="budget">Sort: Highest budget</option>
@@ -970,6 +1013,8 @@ function HomeContent() {
                     {job.isNew && <span style={{ ...styles.badge, background: '#22c55e' }}>New</span>}
                      {job.score >= 70 && <span style={{ ...styles.badge, background: '#f59e0b' }}>Hot</span>}
                      {job.score >= 70 && !job.applied && <span style={{ ...styles.badge, background: '#16a34a' }}>Suggested</span>}
+                    {typeof job.proposalCount === 'number' && job.proposalCount === 0 && <span style={{ ...styles.badge, background: '#16a34a' }}>No competition</span>}
+                    {typeof job.proposalCount === 'number' && job.proposalCount > 0 && job.proposalCount <= 5 && <span style={{ ...styles.badge, background: '#16a34a' }}>Low competition</span>}
                     {job.applied && <span style={{ ...styles.badge, background: '#3b82f6' }}>Applied</span>}
                     {job.viewed && !job.applied && <span style={{ ...styles.badge, background: '#94a3b8' }}>Viewed</span>}
                     <span className="lh-muted" style={{ marginLeft: 'auto', fontSize: 11, color: '#94a3b8' }}>{timeAgo(job.postedAt)}</span>
