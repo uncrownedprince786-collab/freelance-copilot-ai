@@ -76,6 +76,21 @@ export class ApifyUpworkProvider implements JobProvider {
         for (const item of rawItems) {
           if (!item.title || !item.url) continue;
 
+          // TEMP DEBUG — discover the real Apify proposal field names.
+          console.log('[ApifyDebug] keys=' + JSON.stringify(Object.keys(item)));
+          console.log('[ApifyDebug] candidates=' + JSON.stringify({
+            proposals: item.proposals,
+            applicants: item.applicants,
+            applicantCount: item.applicantCount,
+            numberOfProposals: item.numberOfProposals,
+            proposalCount: item.proposalCount,
+            totalApplicants: item.totalApplicants,
+            bidCount: item.bidCount,
+            bids: item.bids,
+            activity: item.activity,
+            competition: item.competition,
+          }));
+
           const normalizedUrl = String(item.url || item.portalUrl || '').trim();
           const dedupeKey = normalizedUrl || `${item.title}|${item.clientName || item.contactName || 'unknown'}`;
           if (seen.has(dedupeKey)) continue;
