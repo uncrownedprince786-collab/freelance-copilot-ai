@@ -1,20 +1,34 @@
 /**
  * Shared opportunity ranking — single source of truth for "what shows first".
  *
- * Business philosophy (freshness-first):
- *   1. FRESHEST jobs first, bucketed into natural freshness tiers derived from
- *      the real postedAt age. A proposal refresh NEVER re-ages a job (postedAt
- *      is the source posting time, persisted and never rewritten).
- *   2. Within a comparable-freshness tier: LOWER KNOWN competition first. A
- *      confirmed 0 proposals is a real low-competition signal; unknown/null
- *      proposal counts are NOT treated as 0 and go last.
- *   3. Stronger opportunity score (existing signal).
- *   4. Fresher exact posting time (residual tiebreak inside a tier).
- *   5. Act-fast signal, then budget, then repeat-client signal.
- *   6. Stable id tiebreak so the feed never appears random across syncs.
+ * Composite, freshness-weighted score. Every job gets ONE rank score computed
+ * from the three live signals; lower score ranks first. This replaces the old
+ * hard freshness-tier buckets, which silently made 1-5 minute age differences
+ * meaningless (any two jobs in the same bucket ignored freshness entirely).
  *
- * Used by the dashboard (Recommended), the /api/jobs feed, and the AI agent
- * search — the whole product orders opportunities the same way.
+ *   rankScore = FRESHNESS * ageMinutes
+ *              + PROPOSAL  * proposalCount
+ *              + SCORE     * (MAX_SCORE - score)
+ *
+ * All three share one unit ("minutes equivalent") so the weights are
+ * comparable and easy to reason about:
+ *
+ *  - Freshness dominates at LARGE gaps: the combined proposal + score swing is
+ *    bounded by PROPOSAL_WEIGHT*50 + SCORE_WEIGHT*100 = 10 + 20 = 30 min, so any
+ *    freshness gap larger than ~30 minutes can never be overturned by proposal
+ *    count or assessment score. A 1-minute-old job therefore always beats a
+ *    2-hour-old job.
+ *  - Small differences still matter: a 1 vs 5-minute age gap is a 4-minute
+ *    freshness edge, which is comparable to a few proposals or a few score
+ *    points, so it meaningfully affects ordering instead of being discarded.
+ *  - When freshness is close, fewer proposals and a higher assessment win.
+ *  - Unknown/null proposal counts are treated as worst-in-class (50), never as 0,
+ *    so a confirmed 0-proposal job always outranks one with an unknown count.
+ *  - Unknown postedAt (Infinity age) sorts last regardless of other signals.
+ *
+ * The score is derived purely from current DB fields, so it recalculates on every
+ * getRawJobs() read — whenever sync/refresh changes freshness, proposal count,
+ * assessment score, or adds new jobs.
  */
 
 export interface OpportunityLike {
@@ -27,71 +41,42 @@ export interface OpportunityLike {
   repeatClient?: boolean;
 }
 
-// Natural freshness tiers (minutes since posting). General business windows —
-// fresher work always leads, competition only breaks ties within a tier.
-const TIER_MIN = [
-  30,    // < 30 min
-  60,    // < 1 h
-  120,   // < 2 h
-  240,   // < 4 h
-  480,   // < 8 h
-  720,   // < 12 h
-  1440,  // < 24 h
-  4320,  // < 3 d
-  10080, // < 7 d
-];
+// Weights in "minutes-equivalent" so all three signals are comparable.
+// Freshness gap must exceed the bounded proposal+score swing (30 min) to be
+// "major" enough to always dominate — a 2h gap (120 min) always does.
+const FRESHNESS_WEIGHT = 1.0; // minutes of age
+const PROPOSAL_WEIGHT = 0.2;   // minutes added per proposal (max 50 -> +10 min)
+const SCORE_WEIGHT = 0.2;      // minutes added per missing score point (max 100 -> +20 min)
+const MAX_PROPOSALS = 50;      // Upwork "50+" band normalizes here
+const MAX_SCORE = 100;
 
-function postedTimeOf(j: OpportunityLike): number {
-  return new Date(j.postedAt || 0).getTime();
+function ageMinutes(j: OpportunityLike): number {
+  const ms = new Date(j.postedAt || 0).getTime();
+  if (!Number.isFinite(ms) || ms <= 0) return Infinity; // unknown age -> last
+  const age = (Date.now() - ms) / 60000;
+  return age < 0 ? 0 : age; // defensive: postedAt is clamped, but never negative-score
 }
 
-function freshnessTier(j: OpportunityLike): number {
-  const ms = postedTimeOf(j);
-  if (!Number.isFinite(ms) || ms <= 0) return TIER_MIN.length; // unknown age last
-  const ageMin = (Date.now() - ms) / 60000;
-  for (let i = 0; i < TIER_MIN.length; i++) {
-    if (ageMin < TIER_MIN[i]) return i;
-  }
-  return TIER_MIN.length;
+function proposalMinutes(j: OpportunityLike): number {
+  const n = j.proposalCount;
+  if (typeof n !== 'number') return MAX_PROPOSALS * PROPOSAL_WEIGHT; // unknown -> worst
+  return n * PROPOSAL_WEIGHT; // more proposals = larger penalty
 }
 
-function compKey(n: number | null | undefined): number {
-  return typeof n === 'number' ? n : Number.MAX_SAFE_INTEGER;
+function scoreMinutes(j: OpportunityLike): number {
+  const s = typeof j.score === 'number' ? j.score : 0;
+  return (MAX_SCORE - s) * SCORE_WEIGHT; // higher score = smaller penalty
 }
 
-function budgetNumber(s: string | undefined): number {
-  const m = String(s || '').match(/\$?([\d,]+)/);
-  return m ? parseInt(m[1].replace(/,/g, ''), 10) : 0;
+/** Lower rankScore ranks first. */
+export function rankScore(j: OpportunityLike): number {
+  return FRESHNESS_WEIGHT * ageMinutes(j) + proposalMinutes(j) + scoreMinutes(j);
 }
 
 export function compareOpportunities(a: OpportunityLike, b: OpportunityLike): number {
-  const ta = freshnessTier(a);
-  const tb = freshnessTier(b);
-  if (ta !== tb) return ta - tb;
-
-  const ca = compKey(a.proposalCount);
-  const cb = compKey(b.proposalCount);
-  if (ca !== cb) return ca - cb;
-
-  const sa = a.score ?? 0;
-  const sb = b.score ?? 0;
-  if (sb !== sa) return sb - sa;
-
-  const at = postedTimeOf(a);
-  const bt = postedTimeOf(b);
-  if (bt !== at) return bt - at;
-
-  const fa = a.actFast ? 1 : 0;
-  const fb = b.actFast ? 1 : 0;
-  if (fb !== fa) return fb - fa;
-
-  const ba = budgetNumber(a.budget);
-  const bb = budgetNumber(b.budget);
-  if (bb !== ba) return bb - ba;
-
-  const ra = a.repeatClient ? 1 : 0;
-  const rb = b.repeatClient ? 1 : 0;
-  if (rb !== ra) return rb - ra;
-
+  const sa = rankScore(a);
+  const sb = rankScore(b);
+  if (sa !== sb) return sa - sb; // lower score first
+  // Stable, deterministic tiebreak so the feed never appears random across syncs.
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
