@@ -53,7 +53,10 @@ export class JobPipeline {
     for (const f of validFetched) {
       const ex = f.url ? storeByUrl.get(f.url) : undefined;
       if (ex) {
-        if (typeof f.proposalCount === 'number') ex.proposalCount = f.proposalCount;
+        // Proposal counts are monotonic non-decreasing on Upwork; only advance on
+        // confirmed positive counts. A provider 0 is ambiguous (range floor or
+        // scrape fallback) and must not overwrite a stored positive count.
+        if (typeof f.proposalCount === 'number' && f.proposalCount > 0) ex.proposalCount = f.proposalCount;
         if (typeof f.interviewingCount === 'number' && f.interviewingCount > 0) ex.interviewingCount = f.interviewingCount;
         if (typeof f.hiresCount === 'number' && f.hiresCount > 0) ex.hiresCount = f.hiresCount;
       }
@@ -90,25 +93,32 @@ export class JobPipeline {
     // Sort latest first
     finalCollection.sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
 
-    // Save back to database
-    await this.saveStore(finalCollection);
-
-    // Enforce the intended 7-day active window at the database level. The
-    // in-memory purge above only drops records from the working set; without
-    // this, stale unapplied rows linger in the feed for up to 40 days with
-    // frozen competition data. Applied jobs are preserved (40-day retention).
+    // Enforce the active-job window at the database level BEFORE upserting.
+    // This mirrors the in-memory purge logic (7 days unapplied, 40 days applied)
+    // so we never delete a row we just upserted, and applied jobs get the
+    // correct 40-day retention.
     try {
-      const purgeCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const now = Date.now();
+      const unappliedCutoff = new Date(now - 7 * 24 * 60 * 60 * 1000);
+      const appliedCutoff = new Date(now - 40 * 24 * 60 * 60 * 1000);
       const purged = await prisma.opportunity.deleteMany({
-        where: { createdAt: { lt: purgeCutoff }, applied: false },
+        where: {
+          OR: [
+            { createdAt: { lt: unappliedCutoff }, applied: false },
+            { createdAt: { lt: appliedCutoff }, applied: true },
+          ],
+        },
       });
       if (purged.count > 0) {
-        console.log(`[JobPipeline] Purged ${purged.count} unapplied rows older than 7 days.`);
+        console.log(`[JobPipeline] Purged ${purged.count} rows outside active window.`);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn('[JobPipeline] DB purge skipped (non-fatal):', msg);
     }
+
+    // Save back to database
+    await this.saveStore(finalCollection);
 
     // Persist per-day aggregate facts so market intelligence survives the
     // 7-day raw listing retention. Non-fatal if the table is not present yet.
@@ -200,9 +210,11 @@ export class JobPipeline {
             // Preserve stored competition signals when the fetched record has
             // no usable value: `undefined` tells Prisma to leave the column
             // untouched instead of overwriting a valid count with null/0.
-            proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : undefined,
-            interviewingCount: typeof job.interviewingCount === 'number' ? job.interviewingCount : undefined,
-            hiresCount: typeof job.hiresCount === 'number' ? job.hiresCount : undefined,
+            // Proposal counts are monotonic non-decreasing; only write positive
+            // advances. A genuine zero is only set on CREATE for new jobs.
+            proposalCount: typeof job.proposalCount === 'number' && job.proposalCount > 0 ? job.proposalCount : undefined,
+            interviewingCount: typeof job.interviewingCount === 'number' && job.interviewingCount > 0 ? job.interviewingCount : undefined,
+            hiresCount: typeof job.hiresCount === 'number' && job.hiresCount > 0 ? job.hiresCount : undefined,
             paymentVerified: clientObj.paymentVerified === true,
             clientRating: clientObj.rating ? String(clientObj.rating) : '',
             jobsPosted: clientObj.jobsPosted ?? null,
