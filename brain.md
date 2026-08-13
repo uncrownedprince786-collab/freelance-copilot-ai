@@ -50,7 +50,13 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
    - Supported platforms: `Upwork` (default) and `Freelancer`. No generic/unfiltered platform scopes. Switching platform clears all scope-dependent filters (Country, Connections, Budget).
 4. **Per-Job AI Assessment & Proposal**:
    - `POST /api/analyze` evaluates the selected job's specific title, description, skills, budget, client signals, and competition. Cached per `opportunityId` in `SystemKv`.
-5. **Market Intelligence**:
+5. **Proposal Grounding (P0 hotfix)**:
+   - Every generated proposal is grounded in the CURRENT selected job only — title, description, and required skills. `src/lib/proposalGrounding.ts` is the single source of truth for extraction, validation, and the deterministic grounded generator (`generateGroundedProposal`).
+   - Verification instructions are honored exactly: if a listing requires a proposal to open with a word (e.g. "Start your proposal with SMILE"), `extractVerificationWord` detects it and `ensureStartsWithWord` forces the surfaced proposal to begin with that literal word (all AI providers + the fallback). The job detail UI never prepends a greeting over it (`verificationWord` is returned by the API).
+   - No candidate context is ever invented: the AI prompts forbid experience/projects/portfolio/tool/result/qualification claims (no profile exists), and `validateProposal` rejects claims, generic-template contamination, missing verification words, and foreign-topic leads (context leakage from another job).
+   - `POST /api/analyze` validates before returning and regenerates once with corrective guidance if validation fails. Cached analyses (`SystemKv` / in-memory) are only reused when they pass the same validation AND match the current job's fingerprint (`jobFingerprint`) — stale or cross-job entries are treated as misses.
+   - The legacy `gemini.ts` flow (`/opportunities/[id]` server action) funnels through the same shared generator + validation; its canned fallback template was replaced.
+6. **Market Intelligence**:
    - Derived 100% from real database listings and `MarketFact` daily aggregates.
 
 ## Key Files & Directories
@@ -59,6 +65,7 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
 - `src/lib/jobFeed.ts`: Enriched job feed builder used by jobs API and AI Agent.
 - `src/lib/marketIntelligence.ts` & `marketFacts.ts`: Real marketplace trends, distribution, and historical tracking.
 - `src/services/ai/`: AI reasoning layer (`MultiAI.ts`, `gemini.ts`, `agentChat.ts`, `analyzer.ts`).
+- `src/lib/proposalGrounding.ts`: Proposal grounding guards + shared deterministic `generateGroundedProposal` (verification words, claim/template/foreign-topic checks, job fingerprint).
 - `src/app/`: App Router pages (`page.tsx` Dashboard, `job/[id]/page.tsx` Job Detail, `trends/page.tsx` Market Trends, `cron-logs/page.tsx`).
 - `src/app/api/`: REST endpoints (`jobs`, `sync`, `sync/refresh`, `sync/status`, `analyze`, `agent`, `trends`, `search`).
 
@@ -70,4 +77,5 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
 
 ## Status & Audit Verification
 - Audit complete: All 12 production audit areas verified.
+- P0 hotfix deployed: AI proposals grounded in the current job only (`eaaa3b8`, pushed to GitHub `main`, deployed to Vercel production).
 - Code matches `brain.md`, GitHub `main`, and Vercel production deployment.
