@@ -279,10 +279,11 @@ export class JobPipeline {
       return false;
     }
 
-    // Rule 4: Reject only clearly extreme competition (> 50 proposals). Upwork's
-    // top band is "50+", which normalizes to 50 — keep it so tracked jobs stay
-    // visible instead of being silently discarded.
-    if (typeof job.proposalCount === "number" && job.proposalCount > 50) {
+    // Rule 4: Reject clearly saturated competition (>= 50 proposals). Upwork's
+    // top band "50+" normalizes to 50, so this now rejects listings at/over that
+    // threshold instead of letting every saturated job through (the previous > 50
+    // check was unreachable because normalization already caps at 50).
+    if (typeof job.proposalCount === "number" && job.proposalCount >= 50) {
       return false;
     }
 

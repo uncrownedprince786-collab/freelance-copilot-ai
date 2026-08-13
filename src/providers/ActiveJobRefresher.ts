@@ -3,6 +3,7 @@ import { JobProvider } from "./JobProvider";
 import { ApifyUpworkProvider } from "./ApifyUpworkProvider";
 import { FreelancerProvider } from "./FreelancerProvider";
 import { prisma } from "../lib/db";
+import { logCronRun } from "../lib/cronLogger";
 
 // Lightweight, separate refresh flow for EXISTING active jobs. It must NOT touch
 // the new-job ingestion pipeline — it only re-reads fresh provider data for a
@@ -93,6 +94,12 @@ export class ActiveJobRefresher {
 
     if (active.length === 0) {
       console.log("[ActiveJobRefresher] No active jobs to refresh.");
+      await logCronRun({
+        status: "SUCCESS",
+        jobsFetched: 0,
+        newJobsAdded: 0,
+        sourceSummary: "refresher: no active jobs within 7-day window",
+      }).catch(() => {});
       return { refreshed: 0, scanned: 0, totalActive: 0, elapsedMs: Date.now() - startedAt };
     }
 
@@ -168,6 +175,18 @@ export class ActiveJobRefresher {
     console.log(
       `[ActiveJobRefresher] Done. scanned=${batch.length}, refreshed=${refreshed}, totalActive=${active.length}, cursorStart=${startIdx}, nextAfterId=${nextAfterId || "(wrap)"}, elapsed=${elapsedMs}ms`,
     );
+
+    // Surface refresh activity in /cron-logs (refresh runs were previously invisible).
+    // A fetch that returned no fresh data is a WARNING (possible provider/token issue);
+    // otherwise the run succeeded even if this batch had no counts to patch.
+    const status = fetched.length === 0 ? "WARNING" : "SUCCESS";
+    await logCronRun({
+      status,
+      jobsFetched: refreshed,
+      newJobsAdded: 0,
+      sourceSummary: `refresher: scanned=${batch.length} refreshed=${refreshed} totalActive=${active.length} fetched=${fetched.length}`,
+    }).catch(() => {});
+
     return { refreshed, scanned: batch.length, totalActive: active.length, elapsedMs };
   }
 }
