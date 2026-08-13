@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { isAuthenticated } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
@@ -112,6 +112,16 @@ export default function JobDetailPage() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [showAuthModal, setShowAuthModal] = useState(false);
+
+  // Let the Proposal Draft textarea grow to fit its content so it never shows a
+  // nested scrollbar — it lives inside the scrollable AI Assessment panel.
+  const proposalRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = proposalRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [proposalDraft]);
 
   // Load the full store once so "Other jobs from this client" can be shown.
   useEffect(() => {
@@ -619,10 +629,12 @@ export default function JobDetailPage() {
             </div>
           </div>
 
-          {!analyzing && analysis && (
-            <>
-              {/* Overall Assessment — score / risk / ETA */}
-              <div style={s.card} className="lh-surface">
+            {!analyzing && analysis && (
+              <div style={s.assessmentPanel} className="lh-surface">
+                <div style={s.assessmentHead}>AI Assessment</div>
+                <div style={s.assessmentBody}>
+                {/* Overall Assessment — score / risk / ETA */}
+                <div style={s.card} className="lh-surface">
                 <div style={{ ...s.sectionHead, display: 'flex', alignItems: 'center', gap: 8 }}>
                   Overall Assessment
 
@@ -740,6 +752,7 @@ export default function JobDetailPage() {
                 </div>
                 <div style={s.sectionHead}>Proposal Draft</div>
                 <textarea
+                  ref={proposalRef}
                   value={proposalDraft}
                   onChange={e => setProposalDraft(e.target.value)}
                   style={s.proposalTA}
@@ -749,8 +762,9 @@ export default function JobDetailPage() {
                 <button onClick={() => void copyProposal()} style={s.btnPrimary}>
                   {copied ? 'Copied!' : 'Copy Proposal'}
                 </button>
+                </div>
+                </div>
               </div>
-            </>
           )}
         </aside>
       </div>
@@ -854,6 +868,32 @@ const s: Record<string, React.CSSProperties> = {
   rightPanel: { padding: '16px', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 12 },
   card: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '16px' },
 
+  // Single scroll container for the whole AI Assessment — keeps the page from
+  // growing unbounded while the Proposal Draft (auto-sized textarea) flows
+  // naturally inside instead of owning its own nested scrollbar.
+  assessmentPanel: {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 12,
+    maxHeight: '74vh',
+    overflowY: 'auto',
+    WebkitOverflowScrolling: 'touch',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  assessmentHead: {
+    position: 'sticky',
+    top: 0,
+    background: '#fff',
+    zIndex: 2,
+    padding: '14px 18px',
+    fontSize: 16,
+    fontWeight: 800,
+    color: '#0f172a',
+    borderBottom: '1px solid #eef2f7',
+  },
+  assessmentBody: { display: 'flex', flexDirection: 'column', gap: 12, padding: 16 },
+
   verdictGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100px,100%),1fr))', gap: 8, marginTop: 12, textAlign: 'center' },
   verdictCell: { background: '#f9fafb', borderRadius: 8, padding: '10px 4px' },
   vLabel: { fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 },
@@ -874,12 +914,12 @@ const s: Record<string, React.CSSProperties> = {
   chip: { fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, border: '1px solid #e5e7eb', color: '#374151', background: '#fff' },
   bidInput: { width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', fontSize: 14, fontWeight: 700, color: '#111827', background: 'transparent', boxSizing: 'border-box' },
   proposalTA: {
-    width: '100%', minHeight: 180,
+    width: '100%', minHeight: 140,
     border: '1px solid #e5e7eb', borderRadius: 8,
     padding: '10px 12px', fontSize: 13, lineHeight: 1.65,
     color: '#374151', background: '#f9fafb',
-    resize: 'vertical', marginBottom: 10,
-    boxSizing: 'border-box', display: 'block',
+    resize: 'none', marginBottom: 10,
+    boxSizing: 'border-box', display: 'block', overflow: 'hidden',
   },
   warnBox: { background: '#fefce8', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#92400e' },
 
