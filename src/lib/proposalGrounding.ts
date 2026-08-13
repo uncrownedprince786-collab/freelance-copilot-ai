@@ -56,35 +56,54 @@ function hasWord(text: string, term: string): boolean {
   return new RegExp(`(^|[^a-z0-9])${escapeRe(w)}([^a-z0-9]|$)`).test(t);
 }
 
+/** Try to pull a required opening token/phrase out of an instruction sentence. */
+function extractVerificationToken(sent: string): string | null {
+  const quoted = sent.match(/["'`“”]([^"'`“”]+)["'`“”]/);
+  if (quoted) {
+    const w = quoted[1].replace(/[.!?,;:)\]]+$/g, '').trim();
+    if (
+      w.length >= 2 &&
+      w.length <= 40 &&
+      /^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(w) &&
+      !INSTRUCTION_VERBS.has(w.toUpperCase())
+    ) {
+      return w;
+    }
+    return null;
+  }
+
+  // All-caps word or short all-caps phrase (e.g. "SMILE" or "I OWN THE INBOX").
+  const caps = sent.match(/\b(?:[A-Z]+\b)(?:\s+[A-Z]+\b){0,5}/);
+  if (caps) {
+    const w = caps[0].trim();
+    if (w.length >= 2 && !INSTRUCTION_VERBS.has(w.toUpperCase())) return w;
+  }
+  return null;
+}
+
 /**
  * Extract the verification word a listing requires a proposal to start with.
  * Only returns a token when the listing actually instructs the applicant to
- * open with a specific word — never for incidental quoted/uppercase text.
+ * open with a specific word or phrase — never for incidental quoted/uppercase
+ * text and never from negative language like "DO NOT APPLY".
  */
 export function extractVerificationWord(description: string): string {
   const text = (description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   if (!text) return '';
 
   const sentences = text.split(/(?<=[.!?])\s+|\n+/).map(s => s.trim()).filter(Boolean);
-  const instruction = /(start|begin|beginning|open|first (word|line|sentence)|include|type|write|enter|code|keyword|word|phrase|verification)/i;
-  const context = /(proposal|cover letter|response|application|apply|bid|message)/i;
-  const explicit = /(start (your|the)|begin (your|the)|must (start|begin)|first word|first line|open with)/i;
+  const explicit = /\b(start|begin|beginning|open|first|must|keyword|verification)\b/i;
+  const otherInstruction = /\b(write|type|include|enter|use|code|word|phrase)\b/i;
+  const context = /\b(proposal|cover letter|response|application|bid|message|answer|reply)\b/i;
+  const negative = /\bdo not\b|\bdon'?t\b|\bnever\b/i;
 
   for (const sent of sentences) {
-    if (!instruction.test(sent)) continue;
-    const hasContext = context.test(sent) || explicit.test(sent);
-    if (!hasContext) continue;
-
-    const quoted = sent.match(/["'`]([A-Za-z0-9_-]{2,})["'`]/);
-    if (quoted) {
-      const w = quoted[1];
-      if (!INSTRUCTION_VERBS.has(w.toUpperCase())) return w;
-    }
-    const caps = sent.match(/\b([A-Z]{2,})\b/);
-    if (caps) {
-      const w = caps[1];
-      if (!INSTRUCTION_VERBS.has(w.toUpperCase())) return w;
-    }
+    if (negative.test(sent)) continue;
+    const hasContext = context.test(sent);
+    const hasInstruction = explicit.test(sent) || otherInstruction.test(sent);
+    if (!hasContext || !hasInstruction) continue;
+    const token = extractVerificationToken(sent);
+    if (token) return token;
   }
   return '';
 }
@@ -357,7 +376,7 @@ export function jobFingerprint(title: string, skills: string[]): string {
   return head.slice(0, 80);
 }
 
-const QUESTION_INTENT = /(\bwhat(?:'|’)?s\b|\bwhat do you\b|\bwhat would\b|\bhow (?:do|would|can|will) you\b|\bcan you\b|\bcould you\b|\bdo you (?:have|know|use|work)\b|\bare you (?:available|able|open|interested)\b|\bplease (?:answer|respond|explain|tell|share|reply|provide|confirm|state|include)\b|\blet me know\b|\btell me\b|\bquestion\b|\bquestions\b|\bqueries\b)/i;
+const QUESTION_INTENT = /(\bwhat(?:'|’)?s\b|\bwhat (?:do|would|can|are|is)\b|\bhow (?:do|would|can|will) you\b|\bcan you\b|\bcould you\b|\bdo you (?:have|know|use|work)\b|\bare you (?:available|able|open|interested|willing)\b|\bplease (?:answer|respond|explain|tell|share|reply|provide|confirm|state|include)\b|\blet me know\b|\btell me\b|\bany questions\b|\bquestions?\s*(?:for|about|regarding|below)\b|\banswer the (?:following|questions)\b)/i;
 
 /**
  * Detects things the listing explicitly asks of an applicant (a required
@@ -488,11 +507,13 @@ export function generateGroundedProposal(title: string, description: string, opt
     understand = `You need a dependable storefront and checkout flow built to your specification.`;
   } else if (/full[ -]?stack|frontend|front-end|backend|back-end|admin|dashboard/i.test(text)) {
     understand = `You need the front end and back end connected so the workflow you described runs end to end.`;
-  } else if (/design|ui|ux|figma|wireframe/i.test(text)) {
+  } else if (/inbox|dm|instagram|facebook|messag|social media|book\w*|appointment|consultation|lead (?:gen|qualif)|setter/i.test(text)) {
+    understand = `You need someone to genuinely work the inbox through the whole shift — reply fast, build real rapport, and turn warm leads into booked consultations instead of letting conversations stall.`;
+  } else if (/\bdesign\b|\bui\/?ux\b|\bux\b|\bfigma\b|\bwireframes?\b/i.test(text)) {
     understand = `You need the design direction turned into a clean, usable interface that matches the brief.`;
-  } else if (/optimiz|performance|speed|slow|latency|load time/i.test(text)) {
+  } else if (/optimiz|speed|slow|latency|load time|bottleneck/i.test(text)) {
     understand = `You need the performance problem you described fixed at the root, with a measurable improvement.`;
-  } else if (/excel|\bxlsx\b|csv|data import|pandas|spreadsheet/i.test(text)) {
+  } else if (/\bexcel\b|\bxlsx\b|csv|data import|\bpandas\b|spreadsheet/i.test(text)) {
     understand = `You need the data workflow you described handled reliably end to end, at your real data volume.`;
   } else {
     understand = `You need the scope from your post delivered as a clear, working result.`;
@@ -515,13 +536,25 @@ export function generateGroundedProposal(title: string, description: string, opt
   if (/e-?commerce|shopify|store|cart|checkout|payment|stripe/i.test(text)) {
     bullets.push('Focus on a reliable purchase/checkout path and the payment integration you specified.');
   }
-  if (/design|ui|ux|figma|wireframe/i.test(text)) {
+  if (/inbox|dm|instagram|facebook|social media/i.test(text)) {
+    bullets.push('Keep the inbox moving all shift — reply fast, stay present in Instagram and Facebook DMs, and never let a warm thread go cold.');
+  }
+  if (/book\w*|appointment|consultation|schedule/i.test(text)) {
+    bullets.push('Move each conversation toward a booked consultation naturally — listen first, qualify, handle hesitation, then ask for the call at the right moment.');
+  }
+  if (/rapport|trust|relationship|emotion|listen|empath|personable/i.test(text)) {
+    bullets.push('Talk like a real person — listen, remember details, empathise, and build genuine trust before anything else.');
+  }
+  if (/lead|pipeline|tracking|follow[- ]?up|sheet/i.test(text)) {
+    bullets.push('Keep the lead tracking sheet current and follow up on hot leads already in the pipeline, not just new messages.');
+  }
+  if (/\bdesign\b|\bui\/?ux\b|\bux\b|\bfigma\b|\bwireframes?\b/i.test(text)) {
     bullets.push('Translate the design direction into a clean, usable interface that matches the brief.');
   }
-  if (/optimiz|performance|speed|slow|latency|load time/i.test(text)) {
+  if (/optimiz|speed|slow|latency|load time|bottleneck|cach(e|ing)/i.test(text)) {
     bullets.push('Profile the current bottlenecks first, then apply targeted optimizations (caching, queries, payloads) and report before/after metrics.');
   }
-  if (/excel|\bxlsx\b|csv|pandas|spreadsheet|data import/i.test(text)) {
+  if (/\bexcel\b|\bxlsx\b|csv|pandas|spreadsheet|data import/i.test(text)) {
     bullets.push('Build a robust import/export path that handles your real data volumes without crashing or silently dropping rows.');
   }
   if (bullets.length === 0) {
@@ -532,8 +565,10 @@ export function generateGroundedProposal(title: string, description: string, opt
   let cta: string;
   if (/\b(api|integration|database|existing|current codebase|legacy)\b/i.test(text)) {
     cta = 'If you can share access to the current codebase, API docs, or sample data, I can review it and propose the most efficient path forward.';
-  } else if (/design|figma|wireframe/i.test(text)) {
+  } else if (/\bdesign\b|\bui\/?ux\b|\bux\b|\bfigma\b|\bwireframes?\b/i.test(text)) {
     cta = 'If you can share the design files or a link to the current build, I can review them and confirm the best way to proceed.';
+  } else if (/inbox|dm|book\w*|appointment|consultation|lead/i.test(text)) {
+    cta = 'If you can share how bookings are handed off to the coach and how the lead tracking is organised, I can start owning the inbox and turn warm conversations into booked consultations from the first week.';
   } else if (!/budget/i.test(text)) {
     cta = 'If you can share the budget range and any hard deadlines, I can map out the right plan and get started.';
   } else {
