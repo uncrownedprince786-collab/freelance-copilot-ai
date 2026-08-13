@@ -9,6 +9,7 @@ import {
   extractVerificationWord,
   jobFingerprint,
   GroundingJob,
+  validateAssessment,
   validateProposal,
 } from '@/lib/proposalGrounding';
 
@@ -63,7 +64,9 @@ function isAnalysisUsable(
   if (!data || typeof data !== 'object') return false;
   if (typeof data.proposal !== 'string' || !data.proposal.trim()) return false;
   if (typeof data._jobFp === 'string' && data._jobFp !== fp) return false;
-  return validateProposal(data.proposal, job, verificationWord).ok;
+  const proposalOk = validateProposal(data.proposal, job, verificationWord).ok;
+  const assessmentOk = validateAssessment(data, job).ok;
+  return proposalOk && assessmentOk;
 }
 
 async function readPersistentCache(key: string): Promise<{ data: unknown; ts: number } | null> {
@@ -189,7 +192,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'title is required.' }, { status: 400, headers: secureHeaders });
   }
 
-  const safeDesc = sanitize(description, 3000);
+  const safeDesc = sanitize(description, 12000);
   const safePlatform = sanitize(platform, 50) || 'Unknown';
   const safeBudget = sanitize(budget, 100) || 'Negotiable';
   const safeClientName = sanitize(clientName, 100);
@@ -264,8 +267,9 @@ export async function POST(request: NextRequest) {
         ...(regenerationNote ? { regenerationNote } : {}),
       });
       const v = validateProposal(analysis.proposal, groundingJob, verificationWord);
-      if (v.ok) break;
-      issues = v.issues;
+      const a = validateAssessment(analysis, groundingJob);
+      if (v.ok && a.ok) break;
+      issues = [...v.issues, ...a.issues];
     }
 
     if (!analysis) {

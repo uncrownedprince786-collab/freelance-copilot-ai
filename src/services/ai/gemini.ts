@@ -91,7 +91,7 @@ TypeScript Type Definition:
     "premium": string // Bidding rate/amount for premium value delivery
   },
   "questions": string[], // Exactly 5 highly useful clarifying questions to ask the client to stand out.
-  "proposal": string // Single highly professional proposal (3-4 paragraphs). Tone: Humanized, direct, problem-solving. ZERO AI clichés (do not use "delve", "testament", "leverage", "passion", "dynamic", "thrilled"). Address the client by name if it is not "Client" or "Upwork Client".
+  "proposal": string // Single highly professional proposal in exactly 4 parts: (1) Opening — one direct sentence restating the client's actual problem/goal in your own words; (2) Understanding & solution — a concise approach tied only to what the listing describes; (3) Plan — 2-4 concrete next steps derived only from signals in the listing; (4) Call to action — a natural, specific ask for a missing detail the listing did not provide. No headers. Tone: Humanized, direct, problem-solving. ZERO AI clichés (do not use "delve", "testament", "leverage", "passion", "dynamic", "thrilled", "I went through your listing", "Here is how I would approach it", "Based on what you described"). Address the client by name if it is not "Client" or "Upwork Client".
 }
 
 Make sure the proposal:
@@ -99,6 +99,7 @@ Make sure the proposal:
 - Does NOT use typical AI jargon, generic greetings, or long fluff.
 - Starts directly by addressing the client's problem.
 - Is grounded ONLY in the Job Details above. Never reference anything not present in the listing.
+- If the listing asks questions or gives instructions, acknowledge them naturally in the opening.
 - Does NOT claim any of the freelancer's own experience, past projects, portfolio, tools they have used, results, or qualifications — no freelancer profile exists.
 - Includes a clear call to action to discuss details.
 ${(() => { const vw = extractVerificationWord(description); return vw ? `- The "proposal" value MUST begin with exactly the word "${vw}" as its very first characters (no greeting or other word before it). Example: "${vw}\\n\\n<proposal>".` : ''; })()}

@@ -193,6 +193,9 @@ const BOILERPLATE: [RegExp, string][] = [
   [/\bcutting[- ]edge\b/i, '“cutting edge”'],
   [/\bholistic approach\b/i, '“holistic approach”'],
   [/\bi would be (happy|delighted|great) to\b/i, '“I would be happy to”'],
+  [/\bi went through your listing\b/i, '“I went through your listing”'],
+  [/\bhere is how i would approach it\b/i, '“Here is how I would approach it”'],
+  [/\bbased on what you described\b/i, '“Based on what you described”'],
 ];
 
 /** Generic filler that indicates a canned, non-job-specific template. */
@@ -310,10 +313,69 @@ export function validateProposal(proposal: string, job: GroundingJob, verificati
   return { ok: issues.length === 0, issues };
 }
 
+export interface AssessmentValidation {
+  ok: boolean;
+  issues: string[];
+}
+
+/**
+ * Pre-display validation for a generated assessment. Returns concrete reasons
+ * the assessment should be regenerated from corrected context.
+ */
+export function validateAssessment(
+  assessment: { summary?: string; phases?: unknown[] },
+  job: GroundingJob,
+): AssessmentValidation {
+  const issues: string[] = [];
+  const summary = (assessment?.summary || '').trim();
+  if (!summary) {
+    issues.push('Assessment has no summary.');
+  } else if (summary.length < 40) {
+    issues.push('Assessment summary is too short to be job-specific.');
+  } else {
+    const terms = jobTopicTerms(job);
+    const overlap = terms.filter(t => hasWord(summary, t)).length;
+    if (terms.length && overlap === 0) {
+      issues.push('Assessment summary does not reference any requirement, skill, or topic from this job.');
+    }
+    const template = findTemplateContamination(summary);
+    if (template) issues.push(template.replace('Proposal', 'Assessment summary'));
+    const claims = findCandidateClaims(summary);
+    if (claims.length) {
+      issues.push(`Unsupported candidate claim${claims.length > 1 ? 's' : ''} in assessment summary: ${claims[0]}.`);
+    }
+  }
+  if (Array.isArray(assessment?.phases) && assessment.phases.length === 0) {
+    issues.push('Assessment has no phases.');
+  }
+  return { ok: issues.length === 0, issues };
+}
+
 /** A lightweight signature used to prove a cached analysis belongs to a job. */
 export function jobFingerprint(title: string, skills: string[]): string {
   const head = normalizeForMatch([title, ...(skills || [])].join(' '));
   return head.slice(0, 80);
+}
+
+const QUESTION_INTENT = /(\bwhat(?:'|’)?s\b|\bwhat do you\b|\bwhat would\b|\bhow (?:do|would|can|will) you\b|\bcan you\b|\bcould you\b|\bdo you (?:have|know|use|work)\b|\bare you (?:available|able|open|interested)\b|\bplease (?:answer|respond|explain|tell|share|reply|provide|confirm|state|include)\b|\blet me know\b|\btell me\b|\bquestion\b|\bquestions\b|\bqueries\b)/i;
+
+/**
+ * Detects things the listing explicitly asks of an applicant (a required
+ * opening word, or questions/instructions) so the proposal can acknowledge
+ * them instead of ignoring them. Returns safe, non-invented sentences.
+ */
+export function extractClientQuestions(description: string): string[] {
+  const desc = (description || '').trim();
+  if (!desc) return [];
+  const out: string[] = [];
+  const vw = extractVerificationWord(desc);
+  if (vw) {
+    out.push(`Your post asks to begin the response with "${vw}", so the proposal starts with that exact word.`);
+  }
+  if (QUESTION_INTENT.test(desc)) {
+    out.push('You asked a few specific questions in your post — the plan below answers each one directly.');
+  }
+  return out;
 }
 
 export interface GroundedProposalOptions {
@@ -414,7 +476,7 @@ export function generateGroundedProposal(title: string, description: string, opt
       : '';
 
   // One sentence that shows we understood the client's ACTUAL problem.
-  const projectName = title && title.trim() ? `"${title.trim()}"` : 'this project';
+  const titleRef = title && title.trim() ? title.trim() : null;
   let understand: string;
   if (/\bbug|fix|debug|broken|not working|glitch|error|issue|defect/i.test(text)) {
     understand = `You need the issues you described fixed and the system stabilized — not a rewrite.`;
@@ -478,14 +540,21 @@ export function generateGroundedProposal(title: string, description: string, opt
     cta = 'If you can share a bit more about your timeline and must-have features, I can confirm the best way to get started.';
   }
 
-  // Assemble — every part is grounded in the actual listing. If a verification
-  // word is required, the final text MUST begin with it.
+  // Assemble — four parts, each grounded in the actual listing:
+  //   Opening → Understanding & plan → CTA. No generic filler lines.
+  // If a verification word is required, the final text MUST begin with it.
   const lines: string[] = [];
-  lines.push(`${greeting}\n\nI went through your listing for ${projectName}. ${understand}`);
-  if (techPhrase) {
-    lines.push(`Based on what you described, the work centres on ${techPhrase}, and I can take it from where things are now.`);
-  }
-  lines.push('Here is how I would approach it:');
+  lines.push(greeting);
+
+  let opening = understand;
+  if (techPhrase) opening += ` The core here is ${techPhrase}.`;
+  if (titleRef) opening = `For ${titleRef}, ${opening}`;
+  lines.push(opening);
+
+  const asks = extractClientQuestions(desc);
+  if (asks.length) lines.push(asks.join(' '));
+
+  lines.push('The plan:');
   lines.push(bullets.map((b, i) => `${i + 1}. ${b}`).join('\n'));
   lines.push(cta);
   lines.push('Best,');

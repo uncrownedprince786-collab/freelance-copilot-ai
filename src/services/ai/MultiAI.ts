@@ -219,7 +219,7 @@ export class MultiAI {
     return `You are an expert freelance proposal strategist. Analyze this opportunity and return ONLY valid JSON.
 
 Title: ${title}
-Description: ${description.substring(0, 2200)}
+Description: ${description}
 Platform: ${options.platform ?? 'Unknown'}
 
 CLIENT & MARKET SIGNALS (ground truth — weigh these heavily):
@@ -237,14 +237,14 @@ STRICT RULES:
 - Every reason in "reasons" must cite a specific signal from the list above (for example: "Budget is $500-$1,000, indicating a well-funded project" or "Competition is low, with only 3 proposals"). No generic filler.
 - For "bidAmount", recommend a plausible range derived from the stated budget and scope — this is a recommendation, clearly separate from the listed budget.
 
-PROPOSAL (1-3 short paragraphs, written as a real freelancer speaking directly to the client):
-- Base EVERY sentence on the Title and Description above. Reference the client's actual requirements, the specific technologies/tasks mentioned, and the deliverables implied by the listing.
-- Open by showing you understood the client's actual problem in your own words (one sentence).
-- Then give a concise, relevant approach tied to what the listing actually describes — do NOT invent features, deliverables, or technologies that were not mentioned.
-- Do NOT use generic filler or boilerplate such as "clean, maintainable code", "transparent communication", "fast turnaround and high quality", "I am available to discuss your scope", or "schedule a quick chat".
+PROPOSAL (exactly 4 parts, no headers, written as a real freelancer speaking directly to the client):
+- READ THE COMPLETE description above first — base EVERY sentence on the Title and Description, referencing the client's actual requirements, the specific technologies/tasks mentioned, and the deliverables implied. Do not rely on any prior knowledge or assumptions about the client.
+- Part 1 — Opening: one direct sentence that restates the client's actual problem or goal in your own words (reference the specific task from the listing). If the listing asks questions or gives instructions, acknowledge them naturally.
+- Part 2 — Understanding & solution: a concise, relevant approach tied to what the listing actually describes. Do NOT invent features, deliverables, technologies, or scope that were not mentioned.
+- Part 3 — Plan: 2-4 short concrete next steps derived only from signals present in the listing.
+- Part 4 — Call to action: a natural, specific ask for a missing detail the listing did not provide (budget, timeline, or access to existing code/designs). If the description is thin, say what you would need from the client to proceed — never fabricate specifics.
+- Do NOT use generic filler or boilerplate such as "clean, maintainable code", "transparent communication", "fast turnaround and high quality", "I am available to discuss your scope", "schedule a quick chat", "I went through your listing", "Here is how I would approach it", or "Based on what you described".
 - Do NOT claim any of your own experience, past projects, portfolio, tools you have used, results you achieved, or qualifications — none of that information exists.
-- End with a natural, specific call to action (e.g. ask for a missing detail the listing did not provide, like budget, timeline, or access to existing code/designs).
-- If the description is thin, say what you would need from the client to proceed — never fabricate specifics.
 ${options.verificationWord ? `\nMANDATORY OPENING (strictly enforced):\n- The "proposal" value MUST begin with exactly the word "${options.verificationWord}" — it must be the very first characters of the proposal text, with no greeting, name, or any other word before it. Do not put it in quotes, brackets, or punctuation. Example: "${options.verificationWord}\\n\\n<rest of proposal>".` : ''}\n
 Return JSON with these exact keys:
 {
@@ -395,13 +395,14 @@ ${options.regenerationNote ? `\nCORRECTIVE GUIDANCE (from a rejected previous at
 
   private buildSummary(title: string, projectType: string, score: number, platform?: string): string {
     const platformName = platform ?? 'Unknown';
+    const jobTitle = (title || '').trim() || 'this job';
     if (projectType === 'growth') {
-      return `This ${platformName} opportunity looks like a growth-focused engagement with measurable commercial upside. The brief emphasizes funnel quality, acquisition strategy, and performance metrics, which makes it a strong fit if you can improve conversion, scale channels, or reduce CAC.`;
+      return `This "${jobTitle}" opportunity on ${platformName} looks like a growth-focused engagement with measurable commercial upside. The brief emphasizes funnel quality, acquisition strategy, and performance metrics, which makes it a strong fit if you can improve conversion, scale channels, or reduce CAC.`;
     }
     if (projectType === 'development') {
-      return `This ${platformName} opportunity appears to be a technical delivery project with clear scope and moderate-to-high execution risk. It is strongest if the work is structured, time-boxed, and supported by a clean technical plan.`;
+      return `This "${jobTitle}" opportunity on ${platformName} appears to be a technical delivery project with clear scope and moderate-to-high execution risk. It is strongest if the work is structured, time-boxed, and supported by a clean technical plan.`;
     }
-    return `Fallback review for "${title}" on ${platformName}: ${score >= 70 ? 'Strong signals for a worthwhile opportunity' : score >= 45 ? 'A moderate opportunity that needs a closer look' : 'High caution recommended before bidding'}`;
+    return `Fallback review for "${jobTitle}" on ${platformName}: ${score >= 70 ? 'Strong signals for a worthwhile opportunity' : score >= 45 ? 'A moderate opportunity that needs a closer look' : 'High caution recommended before bidding'}`;
   }
 
   private buildQuestions(projectType: string): string[] {

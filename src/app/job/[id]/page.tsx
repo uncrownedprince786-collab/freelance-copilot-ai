@@ -189,7 +189,7 @@ export default function JobDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: jobData.title.slice(0, 300),
-          description: jobData.description?.slice(0, 3000) ?? '',
+          description: jobData.description?.slice(0, 12000) ?? '',
           platform: jobData.platform ?? 'Unknown',
           budget: jobData.budget ?? 'Negotiable',
           clientName: jobData.clientName ?? '',
