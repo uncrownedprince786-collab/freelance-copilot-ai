@@ -27,8 +27,13 @@ function firstCount(...vals: unknown[]): number | null {
   return null;
 }
 
-// TEMP DEBUG — expose raw candidate fields so we can learn the real schema.
-export const lastProposalDebug: { id: string; isTarget: boolean; keys: string[]; candidates: Record<string, unknown> }[] = [];
+// Upwork's top competition band is "50+". Normalize that band to 50 (its floor)
+// so a genuinely busy listing is kept and refreshed instead of being coerced to 0.
+// Exact counts below 50 pass through untouched; a true 0 is preserved.
+function normalizeProposalCount(v: number | null): number | null {
+  if (v === null) return null;
+  return v >= 50 ? 50 : v;
+}
 
 export class ApifyUpworkProvider implements JobProvider {
   name = "ApifyUpwork";
@@ -52,7 +57,6 @@ export class ApifyUpworkProvider implements JobProvider {
 
     const results: Job[] = [];
     const seen = new Set<string>();
-    lastProposalDebug.length = 0;
 
     for (const query of queries) {
       if (results.length >= 60) break;
@@ -79,21 +83,6 @@ export class ApifyUpworkProvider implements JobProvider {
 
         for (const item of rawItems) {
           if (!item.title || !item.url) continue;
-
-          // TEMP DEBUG — discover the real Apify proposal field names.
-          console.log('[ApifyDebug] keys=' + JSON.stringify(Object.keys(item)));
-          console.log('[ApifyDebug] candidates=' + JSON.stringify({
-            proposals: item.proposals,
-            applicants: item.applicants,
-            applicantCount: item.applicantCount,
-            numberOfProposals: item.numberOfProposals,
-            proposalCount: item.proposalCount,
-            totalApplicants: item.totalApplicants,
-            bidCount: item.bidCount,
-            bids: item.bids,
-            activity: item.activity,
-            competition: item.competition,
-          }));
 
           const normalizedUrl = String(item.url || item.portalUrl || '').trim();
           const dedupeKey = normalizedUrl || `${item.title}|${item.clientName || item.contactName || 'unknown'}`;
@@ -130,16 +119,16 @@ export class ApifyUpworkProvider implements JobProvider {
             experienceLevel: this.cleanText(item.experienceLevel || item.experience || '') || null,
             duration: this.cleanText(item.engagementDuration || item.duration || '') || null,
             connectsRequired: connects,
-            proposalCount: firstCount(
-              item.proposals,
+            proposalCount: normalizeProposalCount(firstCount(
+              item.totalApplicants,
               item.applicants,
               item.applicantCount,
-              item.numberOfProposals,
               item.proposalCount,
-              item.totalApplicants,
+              item.proposals,
+              item.numberOfProposals,
               item.bidCount,
               item.bids,
-            ),
+            )),
             interviewingCount: firstCount(item.interviewing, item.interviewingCount, item.interviews) ?? 0,
             hiresCount: firstCount(item.hires, item.totalHired, item.hiresCount, item.hired) ?? 0,
             postedAt: postedDate,
@@ -164,27 +153,6 @@ export class ApifyUpworkProvider implements JobProvider {
             connections: connects || 0,
             isNew: true,
           };
-
-          const isTarget = String(job.id).includes('2087571653922326079') || normalizedUrl.includes('2087571653922326079');
-          if (lastProposalDebug.length < 12 || isTarget) {
-            lastProposalDebug.push({
-              id: job.id,
-              isTarget,
-              keys: Object.keys(item),
-              candidates: {
-                proposals: item.proposals,
-                applicants: item.applicants,
-                applicantCount: item.applicantCount,
-                numberOfProposals: item.numberOfProposals,
-                proposalCount: item.proposalCount,
-                totalApplicants: item.totalApplicants,
-                bidCount: item.bidCount,
-                bids: item.bids,
-                activity: item.activity,
-                competition: item.competition,
-              },
-            });
-          }
 
           results.push(job);
         }

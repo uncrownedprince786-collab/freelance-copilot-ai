@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { JobPipeline } from '../../../providers/JobPipeline';
-import { lastProposalDebug } from '../../../providers/ApifyUpworkProvider';
 import { prisma } from '@/lib/db';
 import { isAdminRequest } from '@/lib/adminAuth';
 import { getSyncCooldownMs } from '@/lib/syncSchedule';
@@ -150,7 +149,6 @@ async function runSync(req: NextRequest) {
         newJobs,
         jobs,
         sessionsCleaned,
-        debugProposals: lastProposalDebug,
       });
     } finally {
       await releaseSyncLock();
