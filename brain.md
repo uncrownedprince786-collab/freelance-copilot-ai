@@ -48,6 +48,7 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
    - Upwork competition bands ("50+", "0 to 5", "5 to 10") are parsed accurately: `"50+"` normalizes to `50` (floor), preserving high-competition signals without coercing to `0`. `0` represents zero competition.
    - Saturation filter (`JobPipeline.applyHardFilters` Rule 4) now treats `proposalCount >= 50` as high/saturated competition and rejects it from new ingestion (previously `> 50` was unreachable because normalization already caps at 50).
    - Visibility: `ActiveJobRefresher` refresh runs are now recorded in `cronLog` (consumed by the `/cron-logs` page), so 15-minute competition-refresh ticks are observable instead of invisible.
+
 3. **Platform Scope Separation**:
    - Supported platforms: `Upwork` (default) and `Freelancer`. No generic/unfiltered platform scopes. Switching platform clears all scope-dependent filters (Country, Connections, Budget).
 4. **Per-Job AI Assessment & Proposal**:
@@ -81,4 +82,5 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
 - Audit complete: All 12 production audit areas verified.
 - P0 hotfix deployed: AI proposals grounded in the current job only (`eaaa3b8`, pushed to GitHub `main`, deployed to Vercel production).
 - Proposal sync fix (`0040318`, pushed to GitHub `main`, deployed to Vercel production): `ActiveJobRefresher` now logs each run to `cronLog` (visible in `/cron-logs`), and `JobPipeline` Rule 4 rejects saturated `>= 50` proposal counts from new ingestion.
+- Job feed ranking (`0f1a9db`, pushed to GitHub `main`, deployed to Vercel production): `compareOpportunities` (`src/lib/opportunityRanking.ts`) now ranks by a freshness-weighted combined score (`freshness + proposalCount + assessment score`) instead of hard freshness tiers, so a 1–5 minute age gap affects order while a 2-hour gap always dominates proposal/score. Recomputed on every read from current DB fields (tests in `scripts/test-ranking.ts`).
 - Code matches `brain.md`, GitHub `main`, and Vercel production deployment.
