@@ -44,11 +44,19 @@ export class ApifyUpworkProvider implements JobProvider {
   // contiguous slices and each slice is ALWAYS served by the same account, so
   // free-tier usage is spread evenly and one account is never exhausted while
   // the other sits idle. With a single token configured, every query uses it.
-  // If the assigned account is usage-limited (non-2xx / error), that query is
-  // retried once on the other available account instead of being dropped; a
-  // query is never run on both accounts for a single fetch.
+  //
+  // SMART FAILOVER (per run): when the assigned account fails with a
+  // usage-limit / auth / quota error (e.g. free tier exceeded), that query is
+  // retried once on the other account, and the failing account is remembered as
+  // unavailable for the REST of this run so subsequent queries skip it instead
+  // of wasting calls on an exhausted account. The switch works in both
+  // directions (whichever account errors out is bypassed). A query is never run
+  // on both accounts for a single fetch. The memory is per-instance (per
+  // sync/refresh request), so the next run re-tries both accounts normally.
   private tokens: string[] = [process.env.APIFY_TOKEN, process.env.APIFY_TOKEN2]
     .filter((t): t is string => Boolean(t && t.trim()));
+
+  private unavailableTokens = new Set<string>();
 
   // `opts` is only used by the Active Job Refresh flow, which fetches a wider
   // recency window to catch older-but-still-active listings. The new-job sync
@@ -89,8 +97,20 @@ export class ApifyUpworkProvider implements JobProvider {
 
       let rawItems: any[] | null = null; // eslint-disable-line @typescript-eslint/no-explicit-any
       for (const token of tokenOrder) {
-        rawItems = await this.runQuery(query, token, maxResults);
-        if (rawItems !== null) break;
+        // Skip an account already confirmed unavailable (usage limit / auth /
+        // quota) earlier in this run; with no alternative (single token) keep
+        // trying so a transient failure still gets a chance.
+        if (this.tokens.length > 1 && this.unavailableTokens.has(token)) continue;
+
+        const res = await this.runQuery(query, token, maxResults);
+        if (res.exhausted) {
+          this.unavailableTokens.add(token);
+          console.warn(`[ApifyUpworkProvider] Account ...${token.slice(-4)} unavailable for the rest of this run; switching accounts.`);
+        }
+        if (res.items !== null) {
+          rawItems = res.items;
+          break;
+        }
       }
       if (rawItems === null || rawItems.length === 0) continue;
 
@@ -179,12 +199,19 @@ export class ApifyUpworkProvider implements JobProvider {
     return results;
   }
 
-  // Runs one Upwork query against one Apify account. Returns the raw item list,
-  // or null when the account failed (usage limit / network / API error) so the
-  // caller can fail over to the other account. An empty array is a valid result
-  // (the query matched nothing) and is NOT treated as a failure.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async runQuery(query: string, token: string, maxResults: number): Promise<any[] | null> {
+  // Runs one Upwork query against one Apify account. Returns the raw item list
+  // (or null when the account failed) plus whether the account is UNAVAILABLE
+  // for the remainder of the run (usage limit exceeded / auth / quota — retrying
+  // it would keep failing). An empty array is a valid result (the query matched
+  // nothing) and is NOT treated as a failure. A transient server/network error
+  // (5xx / fetch failure) returns items=null with exhausted=false so the caller
+  // fails over for that query but keeps the account for later queries.
+  private async runQuery(
+    query: string,
+    token: string,
+    maxResults: number
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): Promise<{ items: any[] | null; exhausted: boolean }> {
     const endpoint = `https://api.apify.com/v2/actors/blackfalcondata~upwork-scraper/run-sync-get-dataset-items?token=${token}`;
     try {
       console.log(`[ApifyUpworkProvider] Fetching Upwork jobs for: "${query}" (account ...${token.slice(-4)})...`);
@@ -200,14 +227,21 @@ export class ApifyUpworkProvider implements JobProvider {
 
       if (!res.ok) {
         console.warn(`[ApifyUpworkProvider] Apify request failed with status: ${res.status}`);
-        return null;
+        let exhausted = res.status === 401 || res.status === 402 || res.status === 403 || res.status === 429;
+        try {
+          const body = await res.text();
+          if (/usage|limit|quota|exceed|billing|forbidden|invalid token|unauthorized/i.test(body)) {
+            exhausted = true;
+          }
+        } catch { /* non-fatal */ }
+        return { items: null, exhausted };
       }
 
       const rawItems = await res.json();
-      return Array.isArray(rawItems) ? rawItems : [];
+      return { items: Array.isArray(rawItems) ? rawItems : [], exhausted: false };
     } catch (err) {
       console.error('[ApifyUpworkProvider] Error fetching:', err instanceof Error ? err.message : err);
-      return null;
+      return { items: null, exhausted: false };
     }
   }
 
