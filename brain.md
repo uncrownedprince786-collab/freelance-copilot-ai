@@ -1,32 +1,73 @@
-# Freelance Copilot AI - Brain Document
+# Lead Hunter (Freelance Copilot AI) - Brain Document
 
 ## Project Overview
-Freelance Copilot AI is a Next.js application that aggregates freelance job opportunities from multiple platforms (Upwork, Freelancer, WeWorkRemotely, etc.), stores them in a local SQLite/PostgreSQL database via Prisma, and uses Google Gemini AI to analyze jobs and generate tailored proposals.
+Lead Hunter is a production Next.js application that aggregates freelance job opportunities from Upwork and Freelancer, stores them in PostgreSQL / SQLite via Prisma, enriches them with real marketplace signals (competition, client spend, repeat-client activity, connects cost, proposal counts), and uses AI (Gemini 2.5 Flash / MultiAI) to generate per-job assessments, tailored proposals, and market intelligence.
 
 ## Tech Stack
-- **Framework**: Next.js (App Router)
-- **Database**: Prisma (currently set up for PostgreSQL in `schema.prisma`)
-- **UI**: Tailwind CSS, lucide-react icons, shadcn/ui components (like Button, Card, Badge)
-- **AI**: `@google/generative-ai` (Gemini 2.5 Flash)
+- **Framework**: Next.js 16 (App Router, React 19)
+- **Database**: Prisma Client (`postgresql` in production, `sqlite` dev adapter fallback)
+- **UI & Styling**: Vanilla CSS design system tokens + custom UI components (`lucide-react`)
+- **AI Engine**: `@google/generative-ai` (Gemini 2.5 Flash) with `MultiAI` fallback (OpenAI, Grok, DeepSeek, deterministic ground-truth fallback)
+- **Data Providers**: Apify Upwork Scraper (`ApifyUpworkProvider`), Freelancer API (`FreelancerProvider`)
 
-## Key Directories & Files
-- `prisma/schema.prisma`: Defines the data models (`Opportunity`, `Analysis`, `ProjectTracking`).
-- `src/collectors/`: Scripts that scrape/fetch jobs from various platforms (`UpworkCollector.ts`, `FreelancerCollector.ts`, etc.).
-- `src/services/ai/gemini.ts`: Handles the prompt and integration with Gemini AI.
-- `src/app/`: Next.js frontend pages and components (`Dashboard.tsx`, `page.tsx`, `job/[id]/page.tsx` or `opportunities/[id]/page.tsx`).
-- `src/app/actions/opportunity-actions.ts`: Server actions for fetching data, triggering syncs, and running AI analysis.
-- `scripts/`: Cron and background scripts (`sync.ts`, `check-quota.ts`).
+## Architecture & Data Flow
 
-## Features to Implement
-1. **Country & Connections Data**: Add `country` and `connections` fields to `Opportunity`. Fetch these dynamically from platforms.
-2. **AI Proposal Enhancement**: Generate one single, highly professional, humanized template without buzzwords. Include the client's name if possible. Remove options to regenerate short/standard/detailed proposals.
-3. **Enhanced Job Details**: Show all details (reviews, client spend, country, connections) on the job detail page and dashboard.
-4. **Authenticity & Status Filtering**: Only show open/winnable jobs. Close jobs immediately if they are in interview or closed state.
-5. **Time Filter**: Do not show jobs older than 7 days.
-6. **Deduplication**: Enhance duplicate detection so only the original job is fetched.
-7. **Cron Optimization**: Ensure the hourly cron works correctly for Upwork and Freelancer without exhausting API quotas or getting stuck in loops.
+```
+[ Providers (Apify Upwork / Freelancer API) ]
+                   │
+                   ▼
+  ┌─────────────────────────────────┐
+  │         Sync & Refresh          │
+  │  - /api/sync (New Job Pipeline) │
+  │  - /api/sync/refresh (Active)   │
+  └────────────────┬────────────────┘
+                   │
+                   ▼
+  ┌─────────────────────────────────┐
+  │       Prisma DB Storage         │
+  │ (Opportunity, MarketFact, etc.) │
+  └────────────────┬────────────────┘
+                   │
+                   ▼
+  ┌─────────────────────────────────┐
+  │  Job Feed & Market Intelligence │
+  │ (/api/jobs, /api/trends, Feed)  │
+  └────────────────┬────────────────┘
+                   │
+    ┌──────────────┴──────────────┐
+    ▼                             ▼
+ [ UI Dashboard & Job Detail ]  [ Copilot Agent Panel ]
+ (Per-job Assessment & Props)   (Natural Language Q&A)
+```
 
-## Development Notes
-- Upwork Collector uses SerpApi (`google_jobs` engine) and public Upwork search as a fallback. Token limits apply.
-- Freelancer Collector uses the public active projects API.
-- Re-run `npx prisma db push` or `npx prisma migrate dev` after schema changes.
+### Key Data Pipeline Guarantees
+1. **Sync & Refresh Separation**:
+   - `JobPipeline`: Ingests new jobs, applies 7-day filter, hard spam/hires filters, score calculations, deduplication, and `MarketFact` aggregate recording.
+   - `ActiveJobRefresher`: Bounded batch cursor refresh (`REFRESH_BATCH = 30`) that updates mutable competition signals (`proposalCount`, `interviewingCount`, `hiresCount`) on existing active jobs without creating duplicates or overwriting valid data with null.
+2. **Proposal Count Accuracy**:
+   - Upwork competition bands ("50+", "0 to 5", "5 to 10") are parsed accurately: `"50+"` normalizes to `50` (floor), preserving high-competition signals without coercing to `0`. `0` represents zero competition.
+3. **Platform Scope Separation**:
+   - Supported platforms: `Upwork` (default) and `Freelancer`. No generic/unfiltered platform scopes. Switching platform clears all scope-dependent filters (Country, Connections, Budget).
+4. **Per-Job AI Assessment & Proposal**:
+   - `POST /api/analyze` evaluates the selected job's specific title, description, skills, budget, client signals, and competition. Cached per `opportunityId` in `SystemKv`.
+5. **Market Intelligence**:
+   - Derived 100% from real database listings and `MarketFact` daily aggregates.
+
+## Key Files & Directories
+- `prisma/schema.prisma`: Data models (`Opportunity`, `Analysis`, `ProjectTracking`, `UserSession`, `CronLog`, `SystemKv`, `MarketFact`).
+- `src/providers/`: Data ingestion pipeline (`JobPipeline.ts`, `ActiveJobRefresher.ts`, `ApifyUpworkProvider.ts`, `FreelancerProvider.ts`).
+- `src/lib/jobFeed.ts`: Enriched job feed builder used by jobs API and AI Agent.
+- `src/lib/marketIntelligence.ts` & `marketFacts.ts`: Real marketplace trends, distribution, and historical tracking.
+- `src/services/ai/`: AI reasoning layer (`MultiAI.ts`, `gemini.ts`, `agentChat.ts`, `analyzer.ts`).
+- `src/app/`: App Router pages (`page.tsx` Dashboard, `job/[id]/page.tsx` Job Detail, `trends/page.tsx` Market Trends, `cron-logs/page.tsx`).
+- `src/app/api/`: REST endpoints (`jobs`, `sync`, `sync/refresh`, `sync/status`, `analyze`, `agent`, `trends`, `search`).
+
+## Operational Commands
+- **Type Check**: `npx tsc --noEmit`
+- **Lint**: `npm run lint`
+- **Build**: `npm run build`
+- **Sync**: `npm run sync`
+
+## Status & Audit Verification
+- Audit complete: All 12 production audit areas verified.
+- Code matches `brain.md`, GitHub `main`, and Vercel production deployment.
