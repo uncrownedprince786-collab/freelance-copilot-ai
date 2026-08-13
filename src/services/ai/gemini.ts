@@ -1,4 +1,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  ensureStartsWithWord,
+  extractVerificationWord,
+  generateGroundedProposal,
+  validateProposal,
+} from "@/lib/proposalGrounding";
 
 export interface AIAnalysisResult {
   score: number;
@@ -92,7 +98,10 @@ Make sure the proposal:
 - Sounds like a real, experienced human developer/freelancer.
 - Does NOT use typical AI jargon, generic greetings, or long fluff.
 - Starts directly by addressing the client's problem.
+- Is grounded ONLY in the Job Details above. Never reference anything not present in the listing.
+- Does NOT claim any of the freelancer's own experience, past projects, portfolio, tools they have used, results, or qualifications — no freelancer profile exists.
 - Includes a clear call to action to discuss details.
+${(() => { const vw = extractVerificationWord(description); return vw ? `- The "proposal" value MUST begin with exactly the word "${vw}" as its very first characters (no greeting or other word before it). Example: "${vw}\\n\\n<proposal>".` : ''; })()}
 `;
 
   try {
@@ -132,6 +141,17 @@ Make sure the proposal:
         throw new Error("Invalid schema structure returned from Gemini");
       }
 
+      // Grounding gate: never surface a proposal that leaks another job's
+      // context, uses a canned template, invents candidate claims, or misses the
+      // listing's required opening word. When it fails, fall back to the shared
+      // deterministic generator, which is grounded in this listing by construction.
+      const verificationWord = extractVerificationWord(description);
+      const valid = validateProposal(parsed.proposal, { title, description }, verificationWord);
+      if (!valid.ok) {
+        parsed.proposal = generateGroundedProposal(title, description, { clientName, verificationWord });
+      }
+      parsed.proposal = ensureStartsWithWord(parsed.proposal, verificationWord);
+
       return parsed;
     });
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -166,7 +186,7 @@ function getFallbackAnalysis(
   if (words > 100) score += 10;
   score = Math.min(score, 85);
 
-  const greeting = clientName && clientName !== "Client" && clientName !== "Upwork Client" && clientName !== "Freelancer Client" ? `Hi ${clientName},` : "Hi,";
+  const verificationWord = extractVerificationWord(description);
 
   return {
     score,
@@ -200,6 +220,6 @@ function getFallbackAnalysis(
       "Do you have a design system or wireframes ready?",
       "What level of post-deployment support do you expect?"
     ],
-    proposal: `${greeting}\n\nI am writing in response to your project post seeking support for "${title}". Based on your description, you need someone who can jump in and handle features like core integrations and code organization.\n\nHere is how I would approach it:\n1. Requirements sync & architecture outline\n2. Iterative feature development with regular demos\n3. Verification, optimization, and deployment.\n\nLet's schedule a call to clarify details.\n\nSincerely,\nFreelancer`,
+    proposal: generateGroundedProposal(title, description, { clientName, verificationWord }),
   };
 }

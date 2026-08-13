@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { MultiAI } from '../../../services/ai/MultiAI';
+import { MultiAI, JobAnalysis } from '../../../services/ai/MultiAI';
 import { prisma } from '@/lib/db';
 import { isAuthenticatedRequest } from '@/lib/adminAuth';
 import { clientKeyOf } from '@/lib/marketFacts';
 import { getRawJobs } from '@/lib/jobsCache';
+import {
+  ensureStartsWithWord,
+  extractVerificationWord,
+  jobFingerprint,
+  GroundingJob,
+  validateProposal,
+} from '@/lib/proposalGrounding';
 
 // In-memory 24h cache (L1) so repeated analyses within a warm instance avoid a
 // DB round-trip. The persistent SystemKv cache (L2) survives serverless cold
@@ -41,6 +48,22 @@ function cacheKey(opportunityId: string): string {
 
 function isCacheValid(ts: number): boolean {
   return Date.now() - ts < CACHE_TTL_MS;
+}
+
+// A cached analysis is only usable when it still belongs to the CURRENT job and
+// its proposal passes the same pre-display validation as a fresh one. Anything
+// stale, mismatched, or ungrounded is treated as a miss so it gets regenerated.
+function isAnalysisUsable(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any,
+  job: GroundingJob,
+  verificationWord: string,
+  fp: string,
+): boolean {
+  if (!data || typeof data !== 'object') return false;
+  if (typeof data.proposal !== 'string' || !data.proposal.trim()) return false;
+  if (typeof data._jobFp === 'string' && data._jobFp !== fp) return false;
+  return validateProposal(data.proposal, job, verificationWord).ok;
 }
 
 async function readPersistentCache(key: string): Promise<{ data: unknown; ts: number } | null> {
@@ -176,15 +199,19 @@ export async function POST(request: NextRequest) {
   const safeExperienceLevel = sanitize(experienceLevel, 40);
   const safeDuration = sanitize(duration, 40);
 
-  // Cache lookup keyed by opportunity id (when available).
+  // Cache lookup keyed by opportunity id (when available). A cached analysis is
+  // only reused when it belongs to this exact job and passes validation.
   if (safeOpportunityId) {
     const key = cacheKey(safeOpportunityId);
+    const groundingJob: GroundingJob = { title: safeTitle, skills: safeSkills, description: safeDesc };
+    const vw = extractVerificationWord(safeDesc);
+    const fp = jobFingerprint(safeTitle, safeSkills);
     const memHit = memCache.get(key);
-    if (memHit && isCacheValid(memHit.ts)) {
+    if (memHit && isCacheValid(memHit.ts) && isAnalysisUsable(memHit.data, groundingJob, vw, fp)) {
       return NextResponse.json({ ...(memHit.data as Record<string, unknown>) }, { headers: secureHeaders });
     }
     const persisted = await readPersistentCache(key);
-    if (persisted) {
+    if (persisted && isAnalysisUsable(persisted.data, groundingJob, vw, fp)) {
       memCache.set(key, persisted);
       return NextResponse.json({ ...(persisted.data as Record<string, unknown>) }, { headers: secureHeaders });
     }
@@ -194,7 +221,7 @@ export async function POST(request: NextRequest) {
     // Server-verified repeat-client context (only when we know the listing).
     const repeat = safeOpportunityId ? await detectRepeatClient(safeOpportunityId) : { repeatClient: false, clientJobsCount: 0 };
 
-    const analysis = await new MultiAI().analyze(safeTitle, safeDesc, {
+    const baseOptions = {
       platform: safePlatform,
       budget: safeBudget,
       clientName: safeClientName,
@@ -214,15 +241,54 @@ export async function POST(request: NextRequest) {
       paymentVerified: paymentVerified === true,
       repeatClient: repeat.repeatClient,
       clientJobsCount: repeat.clientJobsCount,
-    });
+    };
+
+    // Grounding inputs used both to steer generation and to gate the result
+    // before it reaches the client. Never return a proposal that contradicts
+    // the listing or leaks another job's context.
+    const groundingJob: GroundingJob = { title: safeTitle, skills: safeSkills, description: safeDesc };
+    const verificationWord = extractVerificationWord(safeDesc);
+    const fp = jobFingerprint(safeTitle, safeSkills);
+
+    let analysis: JobAnalysis | null = null;
+    let issues: string[] = [];
+    const MAX_ATTEMPTS = 2;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const regenerationNote =
+        attempt > 0 && issues.length > 0
+          ? `The previous proposal was rejected for: ${issues.join('; ')}. Rewrite it strictly using the Title and Description above — do not repeat those problems.`
+          : undefined;
+      analysis = await new MultiAI().analyze(safeTitle, safeDesc, {
+        ...baseOptions,
+        verificationWord,
+        ...(regenerationNote ? { regenerationNote } : {}),
+      });
+      const v = validateProposal(analysis.proposal, groundingJob, verificationWord);
+      if (v.ok) break;
+      issues = v.issues;
+    }
+
+    if (!analysis) {
+      return NextResponse.json({ error: 'Analysis service temporarily unavailable.' }, { status: 503, headers: secureHeaders });
+    }
+
+    // Best effort: if every attempt failed validation, mechanically enforce the
+    // listing's required opening word so the surfaced proposal never violates it.
+    analysis.proposal = ensureStartsWithWord(analysis.proposal, verificationWord);
 
     const cleaned = scrubAnalysis(analysis);
-    const responseData = { ...cleaned, repeatClient: repeat.repeatClient, clientJobsCount: repeat.clientJobsCount };
+    const responseData = {
+      ...cleaned,
+      repeatClient: repeat.repeatClient,
+      clientJobsCount: repeat.clientJobsCount,
+      verificationWord,
+    };
 
     if (safeOpportunityId) {
       const key = cacheKey(safeOpportunityId);
-      memCache.set(key, { data: cleaned, ts: Date.now() });
-      void writePersistentCache(key, cleaned);
+      const cachePayload = { ...cleaned, _jobFp: fp };
+      memCache.set(key, { data: cachePayload, ts: Date.now() });
+      void writePersistentCache(key, cachePayload);
     }
 
     return NextResponse.json(responseData, { headers: secureHeaders });

@@ -51,6 +51,7 @@ interface Analysis {
   bidAmount: string;
   questions: string[];
   proposal: string;
+  verificationWord?: string;
   originalBudget?: string;
   originalTimeline?: string;
   technicalBlockers?: string[];
@@ -212,9 +213,18 @@ export default function JobDetailPage() {
       setAnalysis(data);
       setBidAmount(data.bidAmount ?? '');
       let finalProposal = data.proposal ?? '';
-      const client = jobData.clientName && !jobData.clientName.toLowerCase().includes('client') ? jobData.clientName : 'there';
-      if (!finalProposal.toLowerCase().startsWith('hi ') && !finalProposal.toLowerCase().startsWith('dear ')) {
-        finalProposal = `Hi ${client},\n\n${finalProposal}`;
+      const vw = data.verificationWord?.trim();
+      if (vw) {
+        // The listing requires the proposal to begin with this word — the server
+        // already enforces it, so never prepend a greeting that would break it.
+        if (!finalProposal.toLowerCase().startsWith(vw.toLowerCase())) {
+          finalProposal = `${vw}\n\n${finalProposal}`;
+        }
+      } else {
+        const client = jobData.clientName && !jobData.clientName.toLowerCase().includes('client') ? jobData.clientName : 'there';
+        if (!finalProposal.toLowerCase().startsWith('hi ') && !finalProposal.toLowerCase().startsWith('dear ')) {
+          finalProposal = `Hi ${client},\n\n${finalProposal}`;
+        }
       }
       setProposalDraft(finalProposal);
     } catch {

@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
+import { ensureStartsWithWord, extractVerificationWord, generateGroundedProposal } from '@/lib/proposalGrounding';
 
 export interface JobAnalysis {
   summary: string;
@@ -15,6 +16,8 @@ export interface JobAnalysis {
   technicalBlockers?: string[];
   blockerSolutions?: string[];
   suggestedEta?: string;
+  /** Word the listing requires the proposal to open with ('' when none). */
+  verificationWord?: string;
 }
 
 interface AnalysisOptions {
@@ -40,15 +43,25 @@ interface AnalysisOptions {
   // Repeat-client signal — an active buyer with multiple open listings.
   repeatClient?: boolean;
   clientJobsCount?: number;
+  // Required opening word extracted from the listing (e.g. "SMILE").
+  verificationWord?: string;
+  // Corrective guidance from a rejected attempt, appended to the prompt.
+  regenerationNote?: string;
 }
 
 export class MultiAI {
   async analyze(title: string, description: string, options: AnalysisOptions = {}): Promise<JobAnalysis> {
+    // Resolve the required opening word from the listing once, so every provider
+    // and the fallback both see it (explicit option wins over re-extraction).
+    const effectiveOptions: AnalysisOptions = {
+      ...options,
+      verificationWord: options.verificationWord || extractVerificationWord(description),
+    };
     const providerOrder = [
-      { name: 'Gemini', runner: () => this.callGemini(title, description, options) },
-      { name: 'OpenAI', runner: () => this.callOpenAI(title, description, options) },
-      { name: 'Grok', runner: () => this.callGrok(title, description, options) },
-      { name: 'DeepSeek', runner: () => this.callDeepSeek(title, description, options) }
+      { name: 'Gemini', runner: () => this.callGemini(title, description, effectiveOptions) },
+      { name: 'OpenAI', runner: () => this.callOpenAI(title, description, effectiveOptions) },
+      { name: 'Grok', runner: () => this.callGrok(title, description, effectiveOptions) },
+      { name: 'DeepSeek', runner: () => this.callDeepSeek(title, description, effectiveOptions) },
     ];
 
     for (const provider of providerOrder) {
@@ -56,7 +69,7 @@ export class MultiAI {
         try {
           const result = await provider.runner();
           if (result) {
-            return result;
+            return this.finalize(result, effectiveOptions);
           }
         } catch (error) {
           console.warn(`[AI] ${provider.name} failed:`, error);
@@ -64,7 +77,18 @@ export class MultiAI {
       }
     }
 
-    return this.fallbackAnalysis(title, description, options);
+    return this.finalize(this.fallbackAnalysis(title, description, effectiveOptions), effectiveOptions);
+  }
+
+  /** Post-process any provider result so the proposal always honors the
+   *  listing's required opening word before it is surfaced. */
+  private finalize(result: JobAnalysis, options: AnalysisOptions): JobAnalysis {
+    const required = options.verificationWord || '';
+    if (required) {
+      result.proposal = ensureStartsWithWord(result.proposal, required);
+    }
+    result.verificationWord = required;
+    return result;
   }
 
   async analyzeJob(title: string, description: string): Promise<JobAnalysis> {
@@ -218,8 +242,10 @@ PROPOSAL (1-3 short paragraphs, written as a real freelancer speaking directly t
 - Open by showing you understood the client's actual problem in your own words (one sentence).
 - Then give a concise, relevant approach tied to what the listing actually describes — do NOT invent features, deliverables, or technologies that were not mentioned.
 - Do NOT use generic filler or boilerplate such as "clean, maintainable code", "transparent communication", "fast turnaround and high quality", "I am available to discuss your scope", or "schedule a quick chat".
+- Do NOT claim any of your own experience, past projects, portfolio, tools you have used, results you achieved, or qualifications — none of that information exists.
 - End with a natural, specific call to action (e.g. ask for a missing detail the listing did not provide, like budget, timeline, or access to existing code/designs).
-- If the description is thin, say what you would need from the client to proceed — never fabricate specifics.\n\n
+- If the description is thin, say what you would need from the client to proceed — never fabricate specifics.
+${options.verificationWord ? `\nMANDATORY OPENING (strictly enforced):\n- The "proposal" value MUST begin with exactly the word "${options.verificationWord}" — it must be the very first characters of the proposal text, with no greeting, name, or any other word before it. Do not put it in quotes, brackets, or punctuation. Example: "${options.verificationWord}\\n\\n<rest of proposal>".` : ''}\n
 Return JSON with these exact keys:
 {
   "summary": "A short, clear summary of why the project is attractive and what matters most",
@@ -235,7 +261,8 @@ Return JSON with these exact keys:
   "blockerSolutions": ["how to address blocker 1", "how to address blocker 2"],
   "suggestedEta": "A realistic ETA estimate in days or weeks",
   "proposal": "A polished 1-2 paragraph proposal tailored to this project, written as if from a top freelancer speaking directly to the client"
-}`;
+}
+${options.regenerationNote ? `\nCORRECTIVE GUIDANCE (from a rejected previous attempt — address every point):\n${options.regenerationNote}\n` : ''}`;
   }
 
   private parseProviderResponse(text: string, title: string, description: string, options: AnalysisOptions): JobAnalysis | null {
@@ -249,7 +276,11 @@ Return JSON with these exact keys:
         reasons: Array.isArray(payload.reasons) ? payload.reasons : ['Review requirements carefully'],
         bidAmount: payload.bidAmount || '$100-200',
         questions: Array.isArray(payload.questions) ? payload.questions : [],
-        proposal: payload.proposal || this.generateProposal(title, description, options.clientName, options),
+        proposal: payload.proposal || generateGroundedProposal(title, description, {
+          clientName: options.clientName,
+          skills: options.skills,
+          verificationWord: options.verificationWord,
+        }),
         originalBudget: payload.originalBudget || this.extractBudgetText(description, options),
         originalTimeline: payload.originalTimeline || this.extractTimeline(description),
         clientDetails: payload.clientDetails || this.extractClientDetails(title, description),
@@ -348,7 +379,11 @@ Return JSON with these exact keys:
       reasons: reasons.slice(0, 4),
       bidAmount,
       questions,
-      proposal: this.generateProposal(title, description, options.clientName, options),
+      proposal: generateGroundedProposal(title, description, {
+        clientName: options.clientName,
+        skills: options.skills,
+        verificationWord: options.verificationWord,
+      }),
       originalBudget: this.extractBudgetText(description, options),
       originalTimeline: this.extractTimeline(description),
       clientDetails: this.extractClientDetails(title, description),
@@ -464,173 +499,5 @@ Return JSON with these exact keys:
     if (score >= 60) return isComplex ? '$1200-$2500' : '$800-$1800';
     if (isSimple) return '$300-$900';
     return '$500-$1500';
-  }
-
-  private generateProposal(title: string, description: string, rawClientName?: string, options?: AnalysisOptions): string {
-    const desc = (description || '').trim();
-    const text = `${title || ''} ${desc}`.toLowerCase();
-
-    // 1. Optional secret-word passthrough (keeps anti-prompt-injection tests working)
-    let secretWordLine = '';
-    const secretMatch = desc.match(/(?:start|begin|include|type|write|code|keyword|phrase)[^.\n]*["']([a-zA-Z0-9 _-]+)["']/i) ||
-                        desc.match(/(?:start your proposal with|use the word|secret word is)\s*[:\-]?\s*([a-zA-Z0-9_-]+)/i);
-    if (secretMatch?.[1]) secretWordLine = `[Verification Word: ${secretMatch[1].trim()}]\n\n`;
-
-    // 2. Greeting — only use a real name, never a generic country/client label
-    let greeting = 'Hi,';
-    if (rawClientName && !rawClientName.toLowerCase().includes('client') && !rawClientName.toLowerCase().includes('remote')) {
-      greeting = `Hi ${rawClientName.trim()},`;
-    }
-
-    // 3. Detect technologies/requirements that are ACTUALLY present in the listing only
-    const techPatterns: [RegExp, string][] = [
-      [/\breact native\b/i, 'React Native'],
-      [/\bnext\.?js\b/i, 'Next.js'],
-      [/\breact\b/i, 'React'],
-      [/\bvue\.?js\b/i, 'Vue'],
-      [/\bangular\b/i, 'Angular'],
-      [/\btypescript\b/i, 'TypeScript'],
-      [/\bjavascript\b/i, 'JavaScript'],
-      [/\bpython\b/i, 'Python'],
-      [/\bdjango\b/i, 'Django'],
-      [/\bflask\b/i, 'Flask'],
-      [/\bc#\b/i, 'C#'],
-      [/\b\.net\b/i, '.NET'],
-      [/\bphp\b/i, 'PHP'],
-      [/\blaravel\b/i, 'Laravel'],
-      [/\bwordpress\b/i, 'WordPress'],
-      [/\bgraphql\b/i, 'GraphQL'],
-      [/\brest\b|\brestful\b|\brest api\b/i, 'REST APIs'],
-      [/\bapi\b|\bintegration\b|\bwebhook\b|\bendpoint\b/i, 'APIs'],
-      [/\bdatabase\b/i, 'databases'],
-      [/\bpostgres(ql)?\b/i, 'PostgreSQL'],
-      [/\bmysql\b/i, 'MySQL'],
-      [/\bmongo(db)?\b/i, 'MongoDB'],
-      [/\bfirebase\b/i, 'Firebase'],
-      [/\baws\b/i, 'AWS'],
-      [/\bazure\b/i, 'Azure'],
-      [/\bdocker\b/i, 'Docker'],
-      [/\bkubernetes\b/i, 'Kubernetes'],
-      [/\bios\b/i, 'iOS'],
-      [/\bandroid\b/i, 'Android'],
-      [/\bflutter\b/i, 'Flutter'],
-      [/\bswift\b/i, 'Swift'],
-      [/\bkotlin\b/i, 'Kotlin'],
-      [/\bmachine learning\b/i, 'machine learning'],
-      [/\bopenai\b/i, 'OpenAI'],
-      [/\be-?commerce\b/i, 'e-commerce'],
-      [/\bshopify\b/i, 'Shopify'],
-      [/\bstripe\b/i, 'Stripe'],
-      [/\bpayment\b/i, 'payment integrations'],
-      [/\btailwind\b/i, 'Tailwind'],
-      [/\bbootstrap\b/i, 'Bootstrap'],
-      [/\bredux\b/i, 'Redux'],
-      [/\bcharts?\b/i, 'charts'],
-      [/\bdashboard\b/i, 'dashboards'],
-      [/\bpandas\b/i, 'pandas'],
-      [/\bexcel\b|\bxlsx\b/i, 'Excel data handling'],
-      [/\bwoocommerce\b/i, 'WooCommerce'],
-      [/\bcach(e|ing)\b/i, 'caching'],
-      [/\boptimiz/i, 'performance optimization'],
-      [/\be?mail\b/i, 'email'],
-      [/\bseo\b/i, 'SEO'],
-    ];
-    const detected = new Set<string>();
-    for (const [re, label] of techPatterns) {
-      if (re.test(text)) detected.add(label);
-    }
-    if (options?.skills && Array.isArray(options.skills)) {
-      options.skills.forEach((sk) => { if (sk && typeof sk === 'string') detected.add(sk); });
-    }
-    const techList = Array.from(detected).slice(0, 6);
-    const techPhrase = techList.length === 1
-      ? techList[0]
-      : techList.length > 1
-        ? `${techList.slice(0, -1).join(', ')} and ${techList[techList.length - 1]}`
-        : '';
-
-    // 4. One sentence that shows we understood the client's ACTUAL problem
-    const projectName = title && title.trim() ? `"${title.trim()}"` : 'this project';
-    let understand: string;
-    if (/\bbug|fix|debug|broken|not working|glitch|error|issue|defect/i.test(text)) {
-      understand = `You need the issues you described fixed and the system stabilized — not a rewrite.`;
-    } else if (/api|integration|webhook|endpoint|third-?party/i.test(text)) {
-      understand = `You need the integration layer built out reliably against your existing systems.`;
-    } else if (/mobile|ios|android|react native|flutter|swift|kotlin/i.test(text)) {
-      understand = `You need a mobile experience that holds up on real devices, not just in theory.`;
-    } else if (/e-?commerce|shopify|store|cart|checkout|payment/i.test(text)) {
-      understand = `You need a dependable storefront and checkout flow built to your specification.`;
-    } else if (/full[ -]?stack|frontend|front-end|backend|back-end|admin|dashboard/i.test(text)) {
-      understand = `You need the front end and back end connected so the workflow you described runs end to end.`;
-    } else if (/design|ui|ux|figma|wireframe/i.test(text)) {
-      understand = `You need the design direction turned into a clean, usable interface that matches the brief.`;
-    } else if (/optimiz|performance|speed|slow|latency|load time/i.test(text)) {
-      understand = `You need the performance problem you described fixed at the root, with a measurable improvement.`;
-    } else if (/excel|\bxlsx\b|csv|data import|pandas|spreadsheet/i.test(text)) {
-      understand = `You need the data workflow you described handled reliably end to end, at your real data volume.`;
-    } else {
-      understand = `You need the scope from your post delivered as a clear, working result.`;
-    }
-
-    // 5. Approach bullets derived ONLY from signals present in the listing
-    const bullets: string[] = [];
-    if (/\bbug|fix|debug|broken|not working|glitch|error|issue/i.test(text)) {
-      bullets.push('Reproduce the reported behaviour, isolate the root cause, then apply a targeted fix with regression checks.');
-    }
-    if (/api|integration|webhook|endpoint|third-?party/i.test(text)) {
-      bullets.push('Design clean integration boundaries with validated contracts before building features on top of them.');
-    }
-    if (/mobile|ios|android|react native|flutter|swift|kotlin/i.test(text)) {
-      bullets.push('Verify the experience on real devices with platform-specific QA rather than assumptions.');
-    }
-    if (/full[ -]?stack|frontend|front-end|backend|back-end|admin|dashboard/i.test(text)) {
-      bullets.push('Tie the front end and back end together so the workflow functions end to end.');
-    }
-    if (/e-?commerce|shopify|store|cart|checkout|payment|stripe/i.test(text)) {
-      bullets.push('Focus on a reliable purchase/checkout path and the payment integration you specified.');
-    }
-    if (/design|ui|ux|figma|wireframe/i.test(text)) {
-      bullets.push('Translate the design direction into a clean, usable interface that matches the brief.');
-    }
-    if (/optimiz|performance|speed|slow|latency|load time/i.test(text)) {
-      bullets.push('Profile the current bottlenecks first, then apply targeted optimizations (caching, queries, payloads) and report before/after metrics.');
-    }
-    if (/excel|\bxlsx\b|csv|pandas|spreadsheet|data import/i.test(text)) {
-      bullets.push('Build a robust import/export path that handles your real data volumes without crashing or silently dropping rows.');
-    }
-    if (bullets.length === 0) {
-      bullets.push('Break the scope into a clear plan, confirm priorities with you, then deliver in reviewable increments.');
-    }
-
-    // 6. Relevance — only when we can point to specific stack from the listing
-    const relevance = techPhrase
-      ? `This lines up with hands-on work I do in ${techPhrase}.`
-      : '';
-
-    // 7. Context-aware call to action (ask for the relevant missing detail)
-    let cta: string;
-    if (/\b(api|integration|database|existing|current codebase|legacy)\b/i.test(text)) {
-      cta = 'If you can share access to the current codebase, API docs, or sample data, I can review it and propose the most efficient path forward.';
-    } else if (/design|figma|wireframe/i.test(text)) {
-      cta = 'If you can share the design files or a link to the current build, I can review them and confirm the best way to proceed.';
-    } else if (!/budget/i.test(text)) {
-      cta = 'If you can share the budget range and any hard deadlines, I can map out the right plan and get started.';
-    } else {
-      cta = 'If you can share a bit more about your timeline and must-have features, I can confirm the best way to get started.';
-    }
-
-    // 8. Assemble — every part is grounded in the actual listing
-    const lines: string[] = [];
-    if (secretWordLine) lines.push(secretWordLine.trimEnd());
-    lines.push(`${greeting}\n\nI went through your listing for ${projectName}. ${understand}`);
-    if (techPhrase) {
-      lines.push(`Based on what you described, the work centres on ${techPhrase}, and I can take it from where things are now.`);
-    }
-    lines.push('Here is how I would approach it:');
-    lines.push(bullets.map((b, i) => `${i + 1}. ${b}`).join('\n'));
-    if (relevance) lines.push(relevance);
-    lines.push(cta);
-    lines.push('Best,');
-    return lines.join('\n\n');
   }
 }
