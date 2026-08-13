@@ -1,5 +1,6 @@
 import { getRawJobs, getAppliedSet } from './jobsCache';
 import { clientKeyOf } from './marketFacts';
+import { compareOpportunities } from './opportunityRanking';
 
 /**
  * FRESHNESS MODEL (single source of truth for timestamps):
@@ -200,5 +201,8 @@ export async function buildJobFeed(): Promise<JobFeedItem[]> {
     };
   });
 
-  return jobs;
+  // Canonical ranking: freshest jobs first, lower known competition within a
+  // comparable-freshness tier, then existing opportunity signals. Every
+  // consumer (dashboard, filters, pagination, AI agent) inherits the same order.
+  return jobs.sort(compareOpportunities);
 }

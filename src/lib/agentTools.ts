@@ -1,5 +1,6 @@
 import { buildJobFeed, JobFeedItem } from './jobFeed';
 import { getRawJobs } from './jobsCache';
+import { compareOpportunities } from './opportunityRanking';
 import { parseSmartSearch, SmartSearchResult } from '@/app/api/search/route';
 import { computeMarketIntelligence } from './marketIntelligence';
 import { getHistoricalTrends } from './marketFacts';
@@ -207,16 +208,10 @@ export async function runJobSearch(rawText: string, limit = 8): Promise<AgentSea
   const feed = await buildJobFeed();
   const parsed = parseSmartSearch(rawText);
   const filtered = feed.filter(j => applySmartFilters(j, parsed));
-  // Mirrors the dashboard's "Recommended" default: lowest KNOWN competition
-  // first (unknown proposal counts go last), then strongest score, then freshest.
-  const comp = (j: JobFeedItem) => (typeof j.proposalCount === 'number' ? j.proposalCount : Number.POSITIVE_INFINITY);
-  const age = (j: JobFeedItem) => new Date(j.postedAt || 0).getTime();
-  const sorted = [...filtered].sort((a, b) => {
-    const ca = comp(a), cb = comp(b);
-    if (ca !== cb) return ca - cb;
-    if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
-    return age(b) - age(a);
-  });
+  // Same underlying opportunity intelligence as the main product: freshest
+  // first, lower known competition within a comparable-freshness tier, then
+  // existing opportunity signals (see src/lib/opportunityRanking.ts).
+  const sorted = [...filtered].sort(compareOpportunities);
   return {
     jobs: sorted.slice(0, limit).map(shapeJobCard),
     total: sorted.length,

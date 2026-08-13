@@ -8,6 +8,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { Logo } from '@/components/Logo';
 import { IconTrend, IconShield, IconMapPin } from '@/components/icons';
 import { timeAgo } from '@/lib/format';
+import { compareOpportunities } from '@/lib/opportunityRanking';
 
 const FILTERS_KEY = 'lh_jobs_filters';
 
@@ -167,17 +168,23 @@ function buildBudgetBuckets(vals: number[]): BudgetBucket[] {
 }
 
 /**
- * Default "Recommended" ranking (also used by the explicit "Lowest proposals"
- * sort). Deterministic priority:
- *   1. Lowest KNOWN competition first; unknown competition last.
- *   2. Stronger opportunity score.
- *   3. Fresher posting.
- *   4. Act-fast signal.
- *   5. Healthier budget.
- *   6. Repeat-client signal.
- *   7. Stable job-id tie-breaker (no randomness / insertion order).
+ * Default "Recommended" ranking — shared with the jobs feed and the AI agent
+ * (see src/lib/opportunityRanking.ts). Freshness-first: freshest jobs lead,
+ * then within comparable freshness lower known competition, then the existing
+ * opportunity signals. A confirmed 0 proposals is a real low-competition
+ * signal; unknown proposal counts are NOT treated as 0 and go last.
  */
 function recommendedComparator(a: Job, b: Job): number {
+  return compareOpportunities(a, b);
+}
+
+/**
+ * Explicit "Lowest competition" sort — proposals-first on purpose: known counts
+ * ascending (unknown last, never treated as 0), then score, then freshness,
+ * then the remaining signals. This is the user choosing competition over
+ * freshness; the default Recommended ranking stays freshness-first.
+ */
+function competitionComparator(a: Job, b: Job): number {
   const ca = compValue(a), cb = compValue(b);
   if (ca !== cb) return ca - cb;
   if (b.score !== a.score) return b.score - a.score;
@@ -362,11 +369,10 @@ function HomeContent() {
   const filteredJobs = useMemo(() => {
     const result = scopeJobs.filter(j => passes(f, j, undefined, budgetBuckets));
 
-    if (sortBy === 'recommended' || sortBy === 'competition') {
-      // Recommended and Lowest competition both use the canonical comparator:
-      // lowest KNOWN competition first (unknown proposals go last, never zero),
-      // then stronger score, freshness, act-fast, budget, repeat-client.
+    if (sortBy === 'recommended') {
       result.sort(recommendedComparator);
+    } else if (sortBy === 'competition') {
+      result.sort(competitionComparator);
     } else if (sortBy === 'date') result.sort((a, b) => postedTimeOf(b) - postedTimeOf(a));
     else if (sortBy === 'budget') result.sort((a, b) => budgetNumber(b.budget) - budgetNumber(a.budget));
 
