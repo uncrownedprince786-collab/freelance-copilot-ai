@@ -222,7 +222,7 @@ export default function JobDetailPage() {
         }
       } else {
         const client = jobData.clientName && !jobData.clientName.toLowerCase().includes('client') ? jobData.clientName : 'there';
-        if (!finalProposal.toLowerCase().startsWith('hi ') && !finalProposal.toLowerCase().startsWith('dear ')) {
+        if (!/^(hi|hello|hey|dear|good\s+(morning|afternoon|evening))\b/i.test(finalProposal.trim())) {
           finalProposal = `Hi ${client},\n\n${finalProposal}`;
         }
       }
