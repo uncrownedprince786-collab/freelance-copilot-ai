@@ -127,9 +127,12 @@ export class ActiveJobRefresher {
 
       const data: Record<string, unknown> = {};
       // proposalCount: a real number (incl. genuine 0) is usable; null means the
-      // provider had no count, so we keep the stored value.
+      // provider had no count, so we keep the stored value. Cap at 50 to match
+      // the pipeline's competition convention (Upwork "50+" normalizes to 50,
+      // and the sync's hard filter rejects raw counts > 50), so the refresh
+      // writer can never diverge from the sync writer for the same listing.
       if (typeof fresh.proposalCount === "number") {
-        data.proposalCount = fresh.proposalCount;
+        data.proposalCount = Math.min(fresh.proposalCount, 50);
       }
       // interviewingCount / hiresCount: only patch positive signals so the
       // provider's `?? 0` default never clobbers a stored real value.

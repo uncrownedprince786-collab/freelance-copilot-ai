@@ -2,6 +2,28 @@ import { getRawJobs, getAppliedSet } from './jobsCache';
 import { clientKeyOf } from './marketFacts';
 
 /**
+ * FRESHNESS MODEL (single source of truth for timestamps):
+ *
+ * - postedAt   = the SOURCE's posting time for the listing (provider
+ *   publishTime / submitdate), clamped to never be in the future. When the
+ *   source omits it, the row records its first-seen time. Persisted as
+ *   Opportunity.createdAt at insert time and never rewritten on update, so a
+ *   listing's age is stable for its lifetime.
+ * - fetchedAt  = the provider fetch time for that listing. Currently computed
+ *   per fetch but NOT persisted; used only during a single pipeline run.
+ * - updatedAt  = NOT persisted on Opportunity (schema has no such column).
+ *   Because of this, API/UI code must never treat createdAt as "last updated":
+ *   a 5-hour-old postedAt does not imply its competition data is 5 h stale.
+ * - lastSyncedAt = time of the last successful, non-skipped /api/sync fetch,
+ *   stored in SystemKv 'last_sync_successful' and exposed by /api/sync/status.
+ *
+ * Competition signals (proposalCount / interviewingCount / hiresCount) are the
+ * only mutable fields. They are written only when the provider returns a usable
+ * value; a missing value never overwrites a stored one (see JobPipeline and
+ * ActiveJobRefresher).
+ */
+
+/**
  * Enriched job feed shared by the jobs API and the AI agent. Both consumers get
  * the exact same signals (repeat-client, act-fast, budget formatting, etc.) so
  * the agent never reasons over data the dashboard doesn't show.

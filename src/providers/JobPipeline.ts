@@ -45,15 +45,17 @@ export class JobPipeline {
     // Refresh volatile competition signals on already-stored jobs so corrected
     // parse values (e.g. Upwork "50+") propagate on the next sync instead of
     // waiting for the listing to be re-discovered. This only updates counts;
-    // it does not change filtering or scoring inputs.
+    // it does not change filtering or scoring inputs. A field is only written
+    // when the provider returned a usable value — a missing count must never
+    // clobber a valid stored count (mirrors ActiveJobRefresher).
     const storeByUrl = new Map<string, Job>();
     activeStore.forEach(j => { if (j.url) storeByUrl.set(j.url, j); });
     for (const f of validFetched) {
       const ex = f.url ? storeByUrl.get(f.url) : undefined;
       if (ex) {
-        ex.proposalCount = f.proposalCount;
-        ex.interviewingCount = f.interviewingCount;
-        ex.hiresCount = f.hiresCount;
+        if (typeof f.proposalCount === 'number') ex.proposalCount = f.proposalCount;
+        if (typeof f.interviewingCount === 'number' && f.interviewingCount > 0) ex.interviewingCount = f.interviewingCount;
+        if (typeof f.hiresCount === 'number' && f.hiresCount > 0) ex.hiresCount = f.hiresCount;
       }
     }
 
@@ -90,6 +92,23 @@ export class JobPipeline {
 
     // Save back to database
     await this.saveStore(finalCollection);
+
+    // Enforce the intended 7-day active window at the database level. The
+    // in-memory purge above only drops records from the working set; without
+    // this, stale unapplied rows linger in the feed for up to 40 days with
+    // frozen competition data. Applied jobs are preserved (40-day retention).
+    try {
+      const purgeCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const purged = await prisma.opportunity.deleteMany({
+        where: { createdAt: { lt: purgeCutoff }, applied: false },
+      });
+      if (purged.count > 0) {
+        console.log(`[JobPipeline] Purged ${purged.count} unapplied rows older than 7 days.`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[JobPipeline] DB purge skipped (non-fatal):', msg);
+    }
 
     // Persist per-day aggregate facts so market intelligence survives the
     // 7-day raw listing retention. Non-fatal if the table is not present yet.
@@ -178,9 +197,12 @@ export class JobPipeline {
             experienceLevel: job.experienceLevel || '',
             duration: job.duration || '',
             skills: skillsStr,
-            proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
-            interviewingCount: job.interviewingCount || 0,
-            hiresCount: job.hiresCount || 0,
+            // Preserve stored competition signals when the fetched record has
+            // no usable value: `undefined` tells Prisma to leave the column
+            // untouched instead of overwriting a valid count with null/0.
+            proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : undefined,
+            interviewingCount: typeof job.interviewingCount === 'number' ? job.interviewingCount : undefined,
+            hiresCount: typeof job.hiresCount === 'number' ? job.hiresCount : undefined,
             paymentVerified: clientObj.paymentVerified === true,
             clientRating: clientObj.rating ? String(clientObj.rating) : '',
             jobsPosted: clientObj.jobsPosted ?? null,

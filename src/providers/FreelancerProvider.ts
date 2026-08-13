@@ -15,6 +15,11 @@ export class FreelancerProvider implements JobProvider {
         const clientCountry = raw.country || raw.location || 'Remote';
         const clientName = raw.company && !/^freelancer client$/i.test(raw.company) ? raw.company : null;
         const detailSkills = Array.isArray(raw.skills) ? raw.skills : [];
+        // Never persist a posting time in the future (provider clock skew):
+        // future timestamps pin records at the top of the feed and exempt them
+        // from age-based purging. Fall back to first-seen time.
+        const rawPostedMs = raw.postedAt ? new Date(raw.postedAt).getTime() : NaN;
+        const postedAt = Number.isFinite(rawPostedMs) && rawPostedMs > 0 ? new Date(Math.min(rawPostedMs, Date.now())) : new Date();
 
         return {
           id: 'fl-' + (raw.url ? raw.url.split('/').pop()?.replace(/[^a-zA-Z0-9_-]/g, '') : Math.random().toString(36).substring(7)),
@@ -37,7 +42,7 @@ export class FreelancerProvider implements JobProvider {
           proposalCount: raw.proposalCount ?? null,
           interviewingCount: raw.interviewingCount ?? 0,
           hiresCount: raw.hiresCount ?? 0,
-          postedAt: raw.postedAt ? new Date(raw.postedAt) : new Date(),
+          postedAt,
           client: {
             name: clientName,
             country: clientCountry,

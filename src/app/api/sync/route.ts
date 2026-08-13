@@ -11,9 +11,9 @@ const LOCK_TTL_MS = 15 * 60 * 1000; // 15 minutes; release-on-finally plus TTL s
 
 // Cooldown between production sync fetches is adaptive: ~20 minutes during
 // real peak posting hours and ~4 hours otherwise (see lib/syncSchedule).
-// The Vercel cron fires once daily (vercel.json: "0 8 * * *") and GitHub
-// Actions fires every 20 minutes; the cooldown decides whether a tick
-// actually fetches from the sources or is skipped.
+// GitHub Actions is the single authoritative scheduler: cron-sync.yml fires
+// every 20 minutes; the cooldown decides whether a tick actually fetches from
+// the sources or is skipped. force=true is reserved for the admin UI.
 const SYNC_TS_KEY = 'last_sync_successful';
 
 function timingSafeSecretEqual(a: string, b: string): boolean {
@@ -22,9 +22,9 @@ function timingSafeSecretEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aHash, bHash);
 }
 
-// Prevent overlapping sync runs (GitHub Actions every 4h can coincide with the
-// daily Vercel cron). Uses SystemKv with a TTL so a crashed run cannot wedge
-// the pipeline permanently.
+// Prevent overlapping sync runs (scheduled ticks and admin-triggered runs all
+// share this lock). Uses SystemKv with a TTL so a crashed run cannot wedge the
+// pipeline permanently.
 async function acquireSyncLock(): Promise<boolean> {
   try {
     const now = Date.now();

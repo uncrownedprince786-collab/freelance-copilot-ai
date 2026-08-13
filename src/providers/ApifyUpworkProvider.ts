@@ -37,18 +37,28 @@ function normalizeProposalCount(v: number | null): number | null {
 
 export class ApifyUpworkProvider implements JobProvider {
   name = "ApifyUpwork";
-  private token = process.env.APIFY_TOKEN;
+
+  // Two authorized Apify accounts are available (APIFY_TOKEN + APIFY_TOKEN2).
+  // The query workload is split deterministically between them — no per-run
+  // rotation. With both tokens present, the query list is partitioned into
+  // contiguous slices and each slice is ALWAYS served by the same account, so
+  // free-tier usage is spread evenly and one account is never exhausted while
+  // the other sits idle. With a single token configured, every query uses it.
+  // If the assigned account is usage-limited (non-2xx / error), that query is
+  // retried once on the other available account instead of being dropped; a
+  // query is never run on both accounts for a single fetch.
+  private tokens: string[] = [process.env.APIFY_TOKEN, process.env.APIFY_TOKEN2]
+    .filter((t): t is string => Boolean(t && t.trim()));
 
   // `opts` is only used by the Active Job Refresh flow, which fetches a wider
   // recency window to catch older-but-still-active listings. The new-job sync
   // calls fetchJobs() with no args, so its behavior is unchanged (12 / 60).
   async fetchJobs(opts?: { maxResults?: number; totalCap?: number }): Promise<Job[]> {
-    if (!this.token) {
-      console.warn('[ApifyUpworkProvider] APIFY_TOKEN is missing in environment.');
+    if (this.tokens.length === 0) {
+      console.warn('[ApifyUpworkProvider] APIFY_TOKEN / APIFY_TOKEN2 are missing in environment.');
       return [];
     }
 
-    const endpoint = `https://api.apify.com/v2/actors/blackfalcondata~upwork-scraper/run-sync-get-dataset-items?token=${this.token}`;
     const queries = [
       "client growth manager",
       "telehealth growth manager",
@@ -63,113 +73,142 @@ export class ApifyUpworkProvider implements JobProvider {
 
     const maxResults = opts?.maxResults ?? 12;
     const totalCap = opts?.totalCap ?? 60;
+    // One contiguous slice per account: 2 tokens -> each serves half the query
+    // list (deterministic); 1 token -> one slice serves everything.
+    const slice = Math.max(1, Math.ceil(queries.length / this.tokens.length));
 
-    for (const query of queries) {
+    for (let qi = 0; qi < queries.length; qi++) {
       if (results.length >= totalCap) break;
+      const query = queries[qi];
 
-      try {
-        console.log(`[ApifyUpworkProvider] Fetching Upwork jobs for: "${query}"...`);
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-            query,
-            maxResults,
-            sort: "recency",
-          }),
-        });
+      const primaryIdx = Math.min(Math.floor(qi / slice), this.tokens.length - 1);
+      const tokenOrder =
+        this.tokens.length === 1
+          ? [this.tokens[0]]
+          : [this.tokens[primaryIdx], this.tokens[primaryIdx === 0 ? 1 : 0]];
 
-        if (!res.ok) {
-          console.warn(`[ApifyUpworkProvider] Apify request failed with status: ${res.status}`);
-          continue;
+      let rawItems: any[] | null = null; // eslint-disable-line @typescript-eslint/no-explicit-any
+      for (const token of tokenOrder) {
+        rawItems = await this.runQuery(query, token, maxResults);
+        if (rawItems !== null) break;
+      }
+      if (rawItems === null || rawItems.length === 0) continue;
+
+      for (const item of rawItems) {
+        if (!item.title || !item.url) continue;
+
+        const normalizedUrl = String(item.url || item.portalUrl || '').trim();
+        const dedupeKey = normalizedUrl || `${item.title}|${item.clientName || item.contactName || 'unknown'}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+
+        const rawPostedMs = item.publishTime ? new Date(item.publishTime).getTime() : (item.createTime ? new Date(item.createTime).getTime() : NaN);
+        // Never persist a posting time in the future (e.g. provider clock
+        // skew): a future timestamp would pin the record at the top of the
+        // feed and exempt it from age-based purging. Fall back to first-seen.
+        const postedDate = Number.isFinite(rawPostedMs) && rawPostedMs > 0 ? new Date(Math.min(rawPostedMs, Date.now())) : new Date();
+        const country = this.cleanText(item.clientCountry || item.country || item.location || 'Remote');
+        const rawContactName = item.contactName || item.clientName || item.companyName || null;
+        const clientName = rawContactName && !/client$/i.test(String(rawContactName).trim()) ? String(rawContactName).trim() : null;
+        const spentVal = item.clientTotalSpent ? `$${Number(item.clientTotalSpent).toLocaleString()}` : '';
+        const description = this.cleanText(item.descriptionMarkdown || item.description || item.summary || item.jobDescription || '');
+
+        let connects = item.connectsRequired ?? null;
+        if (connects == null && item.budgetAmount) {
+          connects = item.budgetAmount >= 1000 ? 16 : (item.budgetAmount >= 500 ? 12 : 8);
+        } else if (connects == null && item.jobType === 'HOURLY') {
+          connects = 12;
         }
 
-        const rawItems = await res.json();
-        if (!Array.isArray(rawItems)) continue;
-
-        for (const item of rawItems) {
-          if (!item.title || !item.url) continue;
-
-          const normalizedUrl = String(item.url || item.portalUrl || '').trim();
-          const dedupeKey = normalizedUrl || `${item.title}|${item.clientName || item.contactName || 'unknown'}`;
-          if (seen.has(dedupeKey)) continue;
-          seen.add(dedupeKey);
-
-          const postedDate = item.publishTime ? new Date(item.publishTime) : (item.createTime ? new Date(item.createTime) : new Date());
-          const country = this.cleanText(item.clientCountry || item.country || item.location || 'Remote');
-          const rawContactName = item.contactName || item.clientName || item.companyName || null;
-          const clientName = rawContactName && !/client$/i.test(String(rawContactName).trim()) ? String(rawContactName).trim() : null;
-          const spentVal = item.clientTotalSpent ? `$${Number(item.clientTotalSpent).toLocaleString()}` : '';
-          const description = this.cleanText(item.descriptionMarkdown || item.description || item.summary || item.jobDescription || '');
-
-          let connects = item.connectsRequired ?? null;
-          if (connects == null && item.budgetAmount) {
-            connects = item.budgetAmount >= 1000 ? 16 : (item.budgetAmount >= 500 ? 12 : 8);
-          } else if (connects == null && item.jobType === 'HOURLY') {
-            connects = 12;
-          }
-
-          const job: Job = {
-            id: item.jobId || item.contentHash || normalizedUrl,
-            url: normalizedUrl,
-            title: this.cleanText(item.title),
-            description,
+        const job: Job = {
+          id: item.jobId || item.contentHash || normalizedUrl,
+          url: normalizedUrl,
+          title: this.cleanText(item.title),
+          description,
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            skills: Array.isArray(item.skills) ? item.skills.map((skill: any) => this.cleanText(String(skill))).filter(Boolean) : [],
-            budget: {
-              type: item.jobType === 'HOURLY' || item.hourlyBudgetMin ? 'hourly' : 'fixed',
-              amount: item.budgetAmount ?? undefined,
-              min: item.hourlyBudgetMin ?? item.salaryMin ?? undefined,
-              max: item.hourlyBudgetMax ?? item.salaryMax ?? undefined,
-            },
-            experienceLevel: this.cleanText(item.experienceLevel || item.experience || '') || null,
-            duration: this.cleanText(item.engagementDuration || item.duration || '') || null,
-            connectsRequired: connects,
-            proposalCount: normalizeProposalCount(firstCount(
-              item.totalApplicants,
-              item.applicants,
-              item.applicantCount,
-              item.proposalCount,
-              item.proposals,
-              item.numberOfProposals,
-              item.bidCount,
-              item.bids,
-            )),
-            interviewingCount: firstCount(item.interviewing, item.interviewingCount, item.interviews) ?? 0,
-            hiresCount: firstCount(item.hires, item.totalHired, item.hiresCount, item.hired) ?? 0,
-            postedAt: postedDate,
-            client: {
-              name: clientName,
-              country: country === 'Remote' ? 'Remote' : country || 'Remote',
-              rating: typeof item.clientRating === 'number' ? item.clientRating : (typeof item.clientRating === 'string' ? Number(item.clientRating) || null : null),
-              totalSpent: typeof item.clientTotalSpent === 'number' ? item.clientTotalSpent : null,
-              jobsPosted: typeof item.clientReviewCount === 'number' ? item.clientReviewCount : null,
-              totalHires: typeof item.totalHires === 'number' ? item.totalHires : null,
-              paymentVerified: item.clientPaymentVerified ?? null,
-              lastActivityAt: item.lastActivityAt ? new Date(item.lastActivityAt) : null,
-              openJobs: typeof item.openJobs === 'number' ? item.openJobs : null,
-            },
-            source: 'upwork',
-            score: null,
-            fetchedAt: new Date(),
-            platform: 'Upwork',
+          skills: Array.isArray(item.skills) ? item.skills.map((skill: any) => this.cleanText(String(skill))).filter(Boolean) : [],
+          budget: {
+            type: item.jobType === 'HOURLY' || item.hourlyBudgetMin ? 'hourly' : 'fixed',
+            amount: item.budgetAmount ?? undefined,
+            min: item.hourlyBudgetMin ?? item.salaryMin ?? undefined,
+            max: item.hourlyBudgetMax ?? item.salaryMax ?? undefined,
+          },
+          experienceLevel: this.cleanText(item.experienceLevel || item.experience || '') || null,
+          duration: this.cleanText(item.engagementDuration || item.duration || '') || null,
+          connectsRequired: connects,
+          proposalCount: normalizeProposalCount(firstCount(
+            item.totalApplicants,
+            item.applicants,
+            item.applicantCount,
+            item.proposalCount,
+            item.proposals,
+            item.numberOfProposals,
+            item.bidCount,
+            item.bids,
+          )),
+          interviewingCount: firstCount(item.interviewing, item.interviewingCount, item.interviews) ?? 0,
+          hiresCount: firstCount(item.hires, item.totalHired, item.hiresCount, item.hired) ?? 0,
+          postedAt: postedDate,
+          client: {
+            name: clientName,
             country: country === 'Remote' ? 'Remote' : country || 'Remote',
-            clientName: clientName ?? undefined,
-            clientSpend: spentVal,
-            connections: connects || 0,
-            isNew: true,
-          };
+            rating: typeof item.clientRating === 'number' ? item.clientRating : (typeof item.clientRating === 'string' ? Number(item.clientRating) || null : null),
+            totalSpent: typeof item.clientTotalSpent === 'number' ? item.clientTotalSpent : null,
+            jobsPosted: typeof item.clientReviewCount === 'number' ? item.clientReviewCount : null,
+            totalHires: typeof item.totalHires === 'number' ? item.totalHires : null,
+            paymentVerified: item.clientPaymentVerified ?? null,
+            lastActivityAt: item.lastActivityAt ? new Date(item.lastActivityAt) : null,
+            openJobs: typeof item.openJobs === 'number' ? item.openJobs : null,
+          },
+          source: 'upwork',
+          score: null,
+          fetchedAt: new Date(),
+          platform: 'Upwork',
+          country: country === 'Remote' ? 'Remote' : country || 'Remote',
+          clientName: clientName ?? undefined,
+          clientSpend: spentVal,
+          connections: connects || 0,
+          isNew: true,
+        };
 
-          results.push(job);
-        }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (err: any) {
-        console.error('[ApifyUpworkProvider] Error fetching:', err.message);
+        results.push(job);
       }
     }
 
     console.log(`[ApifyUpworkProvider] Total jobs fetched: ${results.length}`);
     return results;
+  }
+
+  // Runs one Upwork query against one Apify account. Returns the raw item list,
+  // or null when the account failed (usage limit / network / API error) so the
+  // caller can fail over to the other account. An empty array is a valid result
+  // (the query matched nothing) and is NOT treated as a failure.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async runQuery(query: string, token: string, maxResults: number): Promise<any[] | null> {
+    const endpoint = `https://api.apify.com/v2/actors/blackfalcondata~upwork-scraper/run-sync-get-dataset-items?token=${token}`;
+    try {
+      console.log(`[ApifyUpworkProvider] Fetching Upwork jobs for: "${query}" (account ...${token.slice(-4)})...`);
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          maxResults,
+          sort: "recency",
+        }),
+      });
+
+      if (!res.ok) {
+        console.warn(`[ApifyUpworkProvider] Apify request failed with status: ${res.status}`);
+        return null;
+      }
+
+      const rawItems = await res.json();
+      return Array.isArray(rawItems) ? rawItems : [];
+    } catch (err) {
+      console.error('[ApifyUpworkProvider] Error fetching:', err instanceof Error ? err.message : err);
+      return null;
+    }
   }
 
   private cleanText(value: unknown): string {

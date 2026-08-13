@@ -1,9 +1,11 @@
 name: Active Job Refresh (15 min)
 
 # Separately keeps competition signals (proposals / interviewing / hires) fresh on
-# EXISTING active jobs. This is independent of the new-job sync (cron-proposals.yml):
-# it only patches already-stored listings, never ingests new ones. A 429 (another
-# refresh still in progress, or inside the cooldown) is a benign skip.
+# EXISTING active jobs. This is independent of the new-job sync (cron-sync.yml):
+# it only patches already-stored listings, never ingests new ones. No force flag:
+# the 15-minute tick already exceeds the endpoint's 10-minute cooldown, so the
+# cooldown (not force) paces runs. A 429 (another refresh still in progress) is a
+# benign skip.
 on:
   schedule:
     - cron: '*/15 * * * *'
@@ -13,12 +15,12 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Vercel Refresh Endpoint (force)
+      - name: Trigger Vercel Refresh Endpoint
         run: |
           HTTP_CODE=$(curl -s -o /tmp/refresh-response.json -w '%{http_code}' \
             -X POST \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.PROD_URL }}/api/sync/refresh?force=true")
+            "${{ secrets.PROD_URL }}/api/sync/refresh")
           echo "HTTP status: $HTTP_CODE"
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
             echo "Refresh succeeded."
