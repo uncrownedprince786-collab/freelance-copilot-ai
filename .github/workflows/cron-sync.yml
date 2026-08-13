@@ -20,7 +20,11 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "${{ secrets.PROD_URL }}/api/sync")
           echo "HTTP status: $HTTP_CODE"
-          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "Sync succeeded."
+          elif [ "$HTTP_CODE" -eq 429 ]; then
+            echo "Skipped: another sync is already in progress (benign)."
+          else
             echo "::error::Sync endpoint returned HTTP $HTTP_CODE"
             cat /tmp/sync-response.json
             exit 1
