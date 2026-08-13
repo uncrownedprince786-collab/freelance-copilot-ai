@@ -39,7 +39,10 @@ export class ApifyUpworkProvider implements JobProvider {
   name = "ApifyUpwork";
   private token = process.env.APIFY_TOKEN;
 
-  async fetchJobs(): Promise<Job[]> {
+  // `opts` is only used by the Active Job Refresh flow, which fetches a wider
+  // recency window to catch older-but-still-active listings. The new-job sync
+  // calls fetchJobs() with no args, so its behavior is unchanged (12 / 60).
+  async fetchJobs(opts?: { maxResults?: number; totalCap?: number }): Promise<Job[]> {
     if (!this.token) {
       console.warn('[ApifyUpworkProvider] APIFY_TOKEN is missing in environment.');
       return [];
@@ -58,17 +61,20 @@ export class ApifyUpworkProvider implements JobProvider {
     const results: Job[] = [];
     const seen = new Set<string>();
 
+    const maxResults = opts?.maxResults ?? 12;
+    const totalCap = opts?.totalCap ?? 60;
+
     for (const query of queries) {
-      if (results.length >= 60) break;
+      if (results.length >= totalCap) break;
 
       try {
         console.log(`[ApifyUpworkProvider] Fetching Upwork jobs for: "${query}"...`);
         const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+            body: JSON.stringify({
             query,
-            maxResults: 12,
+            maxResults,
             sort: "recency",
           }),
         });
