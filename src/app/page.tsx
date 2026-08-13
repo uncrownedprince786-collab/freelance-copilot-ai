@@ -324,12 +324,15 @@ function HomeContent() {
     [platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter]
   );
 
+  // Stats are always scoped to the current dataset (the selected platform).
+  // "new" only counts genuinely-new listings (posted within the last 24 h,
+  // as derived by the server feed), never merely-unviewed ones.
   const stats = useMemo(() => ({
-    total: jobs.length,
-    new: jobs.filter(j => !j.viewed && !j.applied).length,
-    hot: jobs.filter(j => j.score >= 70).length,
-    applied: jobs.filter(j => j.applied).length,
-  }), [jobs]);
+    total: scopeJobs.length,
+    new: scopeJobs.filter(j => j.isNew).length,
+    hot: scopeJobs.filter(j => j.score >= 70).length,
+    applied: scopeJobs.filter(j => j.applied).length,
+  }), [scopeJobs]);
 
   // Faceted counts — every option count is recomputed from jobs that match all
   // OTHER active filters, so counts stay honest as the user changes anything.
@@ -594,13 +597,23 @@ function HomeContent() {
         )}
 
         {/* ── STATS (display only) ── */}
-        <div style={styles.statsRow}>
-          {[
-            { label: 'Total', value: stats.total },
-            { label: 'New', value: stats.new },
-            { label: 'Hot (70+)', value: stats.hot },
-            { label: 'Applied', value: stats.applied },
-          ].map(s => (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span className="lh-h" style={{ fontSize: 13, fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                {platform === 'all' ? 'All Platforms' : platform} metrics
+              </span>
+              <span className="lh-muted" style={{ fontSize: 12, color: '#94a3b8' }}>
+                from {scopeJobs.length} available {platform === 'all' ? 'listings' : `${platform.toLowerCase()} listings`} in the current feed
+              </span>
+            </div>
+          </div>
+          <div style={styles.statsRow}>
+            {[
+              { label: 'Listings', value: stats.total },
+              { label: 'New (24h)', value: stats.new },
+              { label: 'Hot (70+)', value: stats.hot },
+              { label: 'Applied', value: stats.applied },
+            ].map(s => (
             <div key={s.label} className="lh-surface" style={styles.statCard}>
               <div className="lh-h" style={styles.statNum}>{s.value}</div>
               <div className="lh-muted" style={styles.statLabel}>{s.label}</div>
@@ -696,7 +709,9 @@ function HomeContent() {
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <div className="lh-muted" style={{ fontSize: 12, color: '#94a3b8' }}>
-              Showing {Math.min((page - 1) * PER_PAGE + 1, filteredJobs.length)}–{Math.min(page * PER_PAGE, filteredJobs.length)} of {filteredJobs.length} jobs{filteredJobs.length !== scopeJobs.length ? ` (from ${scopeJobs.length} in ${platform === 'all' ? 'all platforms' : platform})` : ''}
+              {filteredJobs.length === 0
+                ? `No listings match the current filters across ${platform === 'all' ? 'all platforms' : platform}`
+                : `Showing ${Math.min((page - 1) * PER_PAGE + 1, filteredJobs.length)}–${Math.min(page * PER_PAGE, filteredJobs.length)} of ${filteredJobs.length} ${platform === 'all' ? '' : `${platform} `}listing${filteredJobs.length === 1 ? '' : 's'}${filteredJobs.length !== scopeJobs.length ? ` (filtered from ${scopeJobs.length} available)` : ''}`}
             </div>
           </div>
         </div>
@@ -736,10 +751,6 @@ function HomeContent() {
                       </span>
                     )}
                     {job.isNew && <span style={{ ...styles.badge, background: '#22c55e' }}>New</span>}
-                     {job.score >= 70 && <span style={{ ...styles.badge, background: '#f59e0b' }}>Hot</span>}
-                     {job.score >= 70 && !job.applied && <span style={{ ...styles.badge, background: '#16a34a' }}>Suggested</span>}
-                    {typeof job.proposalCount === 'number' && job.proposalCount === 0 && <span style={{ ...styles.badge, background: '#16a34a' }}>No competition</span>}
-                    {typeof job.proposalCount === 'number' && job.proposalCount > 0 && job.proposalCount <= 5 && <span style={{ ...styles.badge, background: '#16a34a' }}>Low competition</span>}
                     {job.applied && <span style={{ ...styles.badge, background: '#3b82f6' }}>Applied</span>}
                     {job.viewed && !job.applied && <span style={{ ...styles.badge, background: '#94a3b8' }}>Viewed</span>}
                     <span className="lh-muted" style={{ marginLeft: 'auto', fontSize: 11, color: '#94a3b8' }}>{timeAgo(job.postedAt)}</span>
