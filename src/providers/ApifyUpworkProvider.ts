@@ -27,6 +27,9 @@ function firstCount(...vals: unknown[]): number | null {
   return null;
 }
 
+// TEMP DEBUG — expose raw candidate fields so we can learn the real schema.
+export const lastProposalDebug: { id: string; isTarget: boolean; keys: string[]; candidates: Record<string, unknown> }[] = [];
+
 export class ApifyUpworkProvider implements JobProvider {
   name = "ApifyUpwork";
   private token = process.env.APIFY_TOKEN;
@@ -49,6 +52,7 @@ export class ApifyUpworkProvider implements JobProvider {
 
     const results: Job[] = [];
     const seen = new Set<string>();
+    lastProposalDebug.length = 0;
 
     for (const query of queries) {
       if (results.length >= 60) break;
@@ -160,6 +164,27 @@ export class ApifyUpworkProvider implements JobProvider {
             connections: connects || 0,
             isNew: true,
           };
+
+          const isTarget = String(job.id).includes('2087571653922326079') || normalizedUrl.includes('2087571653922326079');
+          if (lastProposalDebug.length < 12 || isTarget) {
+            lastProposalDebug.push({
+              id: job.id,
+              isTarget,
+              keys: Object.keys(item),
+              candidates: {
+                proposals: item.proposals,
+                applicants: item.applicants,
+                applicantCount: item.applicantCount,
+                numberOfProposals: item.numberOfProposals,
+                proposalCount: item.proposalCount,
+                totalApplicants: item.totalApplicants,
+                bidCount: item.bidCount,
+                bids: item.bids,
+                activity: item.activity,
+                competition: item.competition,
+              },
+            });
+          }
 
           results.push(job);
         }
