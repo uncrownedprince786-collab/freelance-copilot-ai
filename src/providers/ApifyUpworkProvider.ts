@@ -1,37 +1,27 @@
 import { JobProvider } from "./JobProvider";
 import { Job } from "../types/job";
 
-// Upwork reports competition as an exact number, a ceiling band ("50+"), range
-// bands ("0 to 5", "5 to 10", "20 to 50"), or phrases like "Be the first to
-// apply". Range bands are UNKNOWN-exact and must never be coerced to a floor
-// (never to 0), so they return null and fall through to a more precise
-// candidate field. "50+" → 50, range bands → null, "Be the first to apply" → null.
-// A pure numeric value (a literal 0 = zero proposals) is treated as exact.
-function parseUpworkerCount(v: unknown): number | null {
-  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+// Upwork reports competition as text bands ("50+", "0 to 5", "5 to 10",
+// "20 to 50") or phrases like "Be the first to apply". Normalize to a numeric
+// floor so the real value is preserved (never coerced to 0) and stored
+// consistently. "50+" → 50, "0 to 5" → 0, "5 to 10" → 5. Returns null only when
+// there is genuinely no count (e.g. "Be the first to apply").
+function parseUpworkCount(v: unknown): number | null {
+  if (typeof v === "number") return v;
   if (v == null) return null;
   const s = String(v).trim();
   if (!s) return null;
-  // Upwork's ceiling band "50+" is a confirmed high-competition signal -> 50.
-  const plus = s.match(/^(\d+)\s*\+\s*$/);
-  if (plus) return parseInt(plus[1], 10);
-  // Range bands (e.g. "0 to 5", "5 to 10") are unknown-exact: never coerce to a
-  // floor (especially not 0) and never let them override a precise count in a
-  // later candidate field.
-  if (/\d+\s*to\s*\d+/i.test(s)) return null;
-  // A pure numeric value is exact (a literal 0 means zero proposals).
-  if (/^-?\d+$/.test(s)) return parseInt(s, 10);
-  // Anything else (e.g. "Be the first to apply") carries no exact count.
-  return null;
+  const m = s.match(/\d+/);
+  if (!m) return null;
+  return parseInt(m[0], 10);
 }
 
 // Upwork's Apify scraper names the competition fields inconsistently across
-// actor versions, so try every known candidate and take the first precise value.
-// Range bands return null (so a precise count in a later field wins);
-// "50+" → 50, "Be the first to apply" → null.
+// actor versions, so try every known candidate and take the first usable value.
+// "50+" → 50, "0 to 5" → 0, "Be the first to apply" → null.
 function firstCount(...vals: unknown[]): number | null {
   for (const v of vals) {
-    const n = parseUpworkerCount(v);
+    const n = parseUpworkCount(v);
     if (n !== null) return n;
   }
   return null;

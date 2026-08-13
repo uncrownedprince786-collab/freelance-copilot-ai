@@ -134,6 +134,16 @@ async function runSync(req: NextRequest) {
       // Clear trends cache so next visit gets fresh AI analysis
       await prisma.systemKv.delete({ where: { key: 'trends_cache' } }).catch(() => {});
 
+      // Retention: delete non-applied opportunities older than 40 days.
+      // Runs here (the cron/sync path) instead of on every public jobs GET.
+      const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+      await prisma.opportunity.deleteMany({
+        where: {
+          createdAt: { lt: fortyDaysAgo },
+          applied: false,
+        },
+      }).catch(() => {});
+
       return NextResponse.json({
         success: true,
         newJobs,
