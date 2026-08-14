@@ -806,16 +806,17 @@ const s: Record<string, React.CSSProperties> = {
   badge: { color: '#fff', borderRadius: 4, padding: '3px 8px', fontSize: 11, fontWeight: 600 },
   timeAgo: { fontSize: 12, color: '#9ca3af' },
   // Two-column layout that grows with content — the page itself scrolls.
-  layout: { display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'start' },
+  // Right panel (AI Assessment) gets slightly more width for better readability.
+  layout: { display: 'grid', gridTemplateColumns: '1fr 1.25fr', alignItems: 'start' },
 
   /* LEFT */
   leftPanel: {
-    padding: '20px 24px',
+    padding: '24px 28px',
     borderRight: '1px solid #e5e7eb',
     background: '#fff',
     display: 'flex',
     flexDirection: 'column',
-    gap: 16,
+    gap: 20,
   },
   title: { fontSize: 22, fontWeight: 700, color: '#111827', lineHeight: 1.35, margin: 0 },
   metaLine: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280' },
@@ -875,8 +876,8 @@ const s: Record<string, React.CSSProperties> = {
   btnApplied: { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 
   /* RIGHT */
-  rightPanel: { padding: '16px', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 12 },
-  card: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '16px' },
+  rightPanel: { padding: '20px', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 16 },
+  card: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '20px' },
 
   // Single scroll container for the whole AI Assessment — keeps the page from
   // growing unbounded while the Proposal Draft (auto-sized textarea) flows
@@ -885,7 +886,7 @@ const s: Record<string, React.CSSProperties> = {
     background: '#fff',
     border: '1px solid #e5e7eb',
     borderRadius: 12,
-    maxHeight: '74vh',
+    maxHeight: '88vh',
     overflowY: 'auto',
     WebkitOverflowScrolling: 'touch',
     display: 'flex',
@@ -896,13 +897,13 @@ const s: Record<string, React.CSSProperties> = {
     top: 0,
     background: '#fff',
     zIndex: 2,
-    padding: '14px 18px',
+    padding: '16px 20px',
     fontSize: 16,
     fontWeight: 800,
     color: '#0f172a',
     borderBottom: '1px solid #eef2f7',
   },
-  assessmentBody: { display: 'flex', flexDirection: 'column', gap: 12, padding: 16 },
+  assessmentBody: { display: 'flex', flexDirection: 'column', gap: 16, padding: 20 },
 
   verdictGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100px,100%),1fr))', gap: 8, marginTop: 12, textAlign: 'center' },
   verdictCell: { background: '#f9fafb', borderRadius: 8, padding: '10px 4px' },

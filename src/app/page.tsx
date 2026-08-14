@@ -571,10 +571,13 @@ function HomeContent() {
           </div>
           <div style={styles.headerRight}>
             <ThemeToggle />
-            <button onClick={() => router.push('/about')} style={styles.btnGhost}>
+            <button onClick={() => router.push('/trading')} style={styles.btnGhost} className="lh-field">
+              Trading
+            </button>
+            <button onClick={() => router.push('/about')} style={styles.btnGhost} className="lh-field">
               About
             </button>
-            <button onClick={() => router.push('/trends')} style={styles.btnCron}>
+            <button onClick={() => router.push('/trends')} style={styles.btnCron} className="lh-field">
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <IconTrend size={14} color="#fff" />
                 Market Trends
@@ -583,10 +586,10 @@ function HomeContent() {
 
             {adminMode && (
               <>
-                <button onClick={() => router.push('/cron-logs')} style={styles.btnCron}>
+                <button onClick={() => router.push('/cron-logs')} style={styles.btnCron} className="lh-field">
                   Cron Logs
                 </button>
-                <button onClick={() => router.push('/admin/sessions')} style={{ ...styles.btnCron, background: '#1e3a8a', color: '#fff', borderColor: '#1e3a8a' }}>
+                <button onClick={() => router.push('/admin/sessions')} style={{ ...styles.btnCron, background: '#1e3a8a', color: '#fff', borderColor: '#1e3a8a' }} className="lh-field">
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                     <IconShield size={14} color="#fff" />
                     Sessions

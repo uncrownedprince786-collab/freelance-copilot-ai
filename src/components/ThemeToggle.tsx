@@ -68,15 +68,12 @@ export function ThemeToggle({ size = 16 }: ThemeToggleProps) {
       onClick={toggle}
       title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      className="lh-field"
       style={{
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
         gap: 6,
-        background: isDark ? '#0b1220' : '#fff',
-        color: isDark ? '#e2e8f0' : '#334155',
-        border: '1px solid #dbe2ea',
-        borderRadius: 999,
         padding: '8px 12px',
         fontSize: 13,
         fontWeight: 600,
