@@ -24,6 +24,7 @@ interface FilterState {
   countryFilter: string;
   connectionFilter: string;
   budgetFilter: string;
+  searchQuery: string;
 }
 
 const DEFAULT_FILTERS: FilterState = {
@@ -34,6 +35,7 @@ const DEFAULT_FILTERS: FilterState = {
   countryFilter: 'all',
   connectionFilter: 'all',
   budgetFilter: 'all',
+  searchQuery: '',
 };
 
 function loadFilters(): FilterState {
@@ -211,7 +213,24 @@ function inBudgetBucket(job: Job, b: BudgetBucket | undefined): boolean {
   return b.inclusiveMax ? n >= b.min && n <= b.max : n >= b.min && n < b.max;
 }
 
+/**
+ * Simple keyword search over the real job feed. Every whitespace-separated
+ * token must appear in the listing's title, description, skills, category,
+ * client name, or country (case-insensitive). Multi-word phrases match as a
+ * whole. This runs client-side over the already-fetched feed — no extra API,
+ * no fabricated results.
+ */
+function matchesSearchQuery(job: Job, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const hay = `${job.title || ''} ${job.description || ''} ${(job.skills || []).join(' ')} ${job.category || ''} ${job.clientName || ''} ${job.country || ''}`.toLowerCase();
+  return q.split(/\s+/).filter(Boolean).every(t => hay.includes(t));
+}
+
 function passes(f: FilterState, job: Job, except?: string, budgetBuckets?: BudgetBucket[]): boolean {
+  if (except !== 'search') {
+    if (f.searchQuery && !matchesSearchQuery(job, f.searchQuery)) return false;
+  }
   if (except !== 'jobType') {
     if (f.jobTypeFilter !== 'all') {
       const bt = (job.budgetType || '').toLowerCase();
@@ -280,12 +299,13 @@ function HomeContent() {
   const [countryFilter, setCountryFilter] = useState<string>(() => loadFilters().countryFilter || 'all');
   const [connectionFilter, setConnectionFilter] = useState<string>(() => loadFilters().connectionFilter || 'all');
   const [budgetFilter, setBudgetFilter] = useState<string>(() => loadFilters().budgetFilter || 'all');
+  const [searchQuery, setSearchQuery] = useState<string>(() => loadFilters().searchQuery || '');
   const [page, setPage] = useState(1);
 
   // Persist filter state across navigation/refresh (per-tab sessionStorage).
   useEffect(() => {
-    saveFilters({ platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter });
-  }, [platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter]);
+    saveFilters({ platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter, searchQuery });
+  }, [platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter, searchQuery]);
 
   const PER_PAGE = 24;
 
@@ -327,8 +347,8 @@ function HomeContent() {
 
   // Bundle the active filters so the pure filter/count helpers can read them.
   const f = useMemo<FilterState>(
-    () => ({ platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter }),
-    [platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter]
+    () => ({ platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter, searchQuery }),
+    [platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter, searchQuery]
   );
 
   // Stats are always scoped to the current dataset (the selected platform).
@@ -509,6 +529,7 @@ function HomeContent() {
     setCountryFilter('all');
     setConnectionFilter('all');
     setBudgetFilter('all');
+    setSearchQuery('');
     setPage(1);
   };
 
@@ -524,6 +545,7 @@ function HomeContent() {
   const anyFilterActive =
     platform !== DEFAULT_FILTERS.platform || jobTypeFilter !== 'all' || opportunityFilter !== 'all' ||
     countryFilter !== 'all' || connectionFilter !== 'all' || budgetFilter !== 'all' ||
+    searchQuery.trim() !== '' ||
     sortBy !== 'recommended';
 
   return (
@@ -630,6 +652,32 @@ function HomeContent() {
         {/* ── FILTERS ── */}
         <div style={styles.filtersBox} className="lh-surface">
 
+          {/* Row 0 — Keyword search (simple, over the real feed) */}
+          <div style={styles.filterRow}>
+            <span className="lh-muted" style={styles.filterLabel}>Search</span>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
+              placeholder={`Search ${platform === 'all' ? 'all' : platform} listings — e.g. react, api, flutter…`}
+              aria-label="Search jobs"
+              style={{
+                ...styles.searchInput,
+                borderColor: searchQuery ? '#2563eb' : '#dbe2ea',
+                background: searchQuery ? '#eff6ff' : '#f8fafc',
+              }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => { setSearchQuery(''); setPage(1); }}
+                style={styles.clearBtn}
+                aria-label="Clear search"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
           {/* Row 1 — Platform + Sort */}
           <div style={styles.filterRow}>
             <span className="lh-muted" style={styles.filterLabel}>Platform</span>
@@ -716,7 +764,7 @@ function HomeContent() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <div className="lh-muted" style={{ fontSize: 12, color: '#94a3b8' }}>
               {filteredJobs.length === 0
-                ? `No listings match the current filters across ${platform === 'all' ? 'all platforms' : platform}`
+                ? `No listings match the current ${searchQuery.trim() ? 'search' : 'filters'} across ${platform === 'all' ? 'all platforms' : platform}`
                 : `Showing ${Math.min((page - 1) * PER_PAGE + 1, filteredJobs.length)}–${Math.min(page * PER_PAGE, filteredJobs.length)} of ${filteredJobs.length} ${platform === 'all' ? '' : `${platform} `}listing${filteredJobs.length === 1 ? '' : 's'}${filteredJobs.length !== scopeJobs.length ? ` (filtered from ${scopeJobs.length} available)` : ''}`}
             </div>
           </div>
@@ -725,8 +773,8 @@ function HomeContent() {
         {/* ── JOB GRID ── */}
         {paginatedJobs.length === 0 ? (
           <div style={styles.emptyBox} className="lh-surface">
-            <p className="lh-h" style={{ fontWeight: 700, fontSize: 18, color: '#0f172a' }}>No jobs match these filters</p>
-            <p className="lh-body" style={{ color: '#64748b', marginBottom: 16 }}>Try widening the filters or clearing them, then run a fresh sync.</p>
+            <p className="lh-h" style={{ fontWeight: 700, fontSize: 18, color: '#0f172a' }}>No jobs match {searchQuery.trim() ? 'your search' : 'these filters'}</p>
+            <p className="lh-body" style={{ color: '#64748b', marginBottom: 16 }}>Try different keywords, widening the filters, or clearing everything, then run a fresh sync.</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               {anyFilterActive && <button onClick={clearAll} style={styles.btnPrimary}>Clear all filters</button>}
               {adminMode && <button onClick={handleSync} style={styles.btnPrimary}>Sync Now</button>}
