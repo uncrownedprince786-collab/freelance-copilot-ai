@@ -35,6 +35,15 @@ export interface PlatformMix {
   otherPct: number;
 }
 
+export interface RemoteShare {
+  remote: number;
+  onsite: number;
+  unknown: number;
+  remotePct: number;
+  onsitePct: number;
+  unknownPct: number;
+}
+
 export interface HourPoint {
   hour: number;   // 0..23 UTC
   label: string;  // "8 AM UTC"
@@ -51,6 +60,7 @@ export interface MarketIntelligence {
   marketDirectionPct: number | null;
   marketDirectionReason: string;
   platform: PlatformMix;
+  remoteShare: RemoteShare;
   mostActiveSkills: { skill: string; count: number }[];
   fastGrowingSkills: SkillGrowth[];
   competition: {
@@ -108,7 +118,7 @@ function fmt(n: number): string {
 /** Numeric USD budget value (midpoint/ceiling) for trend charts. Mixed
  *  currencies are excluded so the average stays meaningful. Exported so the
  *  intelligence API can compute real per-skill budget averages. */
-export function usdBudgetMidpoint(job: RawJob): number | null {
+export function usdBudgetMidpoint(job: Pick<RawJob, 'budget'>): number | null {
   const b = job.budget;
   if (!b || typeof b !== 'object') return null;
   const sym = b.currency ? String(b.currency) : '';
@@ -135,6 +145,23 @@ export function usdBudgetMidpoint(job: RawJob): number | null {
   if (hasLo) return lo;
   if (hasAmt) return amt;
   return null;
+}
+
+/** Classify a listing as remote / on-site / unknown using the country and
+ *  location fields the collectors actually store. Collectors default missing
+ *  location info to "Remote" (Upwork, Freelancer) or "Unknown", so a real
+ *  country value means the client listed a physical location. Exported so the
+ *  persisted market facts can record the same classification per day. */
+export function classifyRemote(job: { country?: string; location?: string; client?: { country?: unknown; location?: unknown } }): 'remote' | 'onsite' | 'unknown' {
+  const vals = [
+    job.country,
+    job.location,
+    job.client?.country,
+    job.client?.location,
+  ].map(v => (v ? String(v).trim().toLowerCase() : ''));
+  if (vals.some(v => v === 'remote')) return 'remote';
+  if (vals.some(v => v && v !== 'unknown' && v !== 'n/a' && v !== 'remote/unspecified')) return 'onsite';
+  return 'unknown';
 }
 
 /** Classify a listing into hourly / fixed / unknown using the real budget. */
@@ -287,6 +314,19 @@ export function computeMarketIntelligence(jobs: RawJob[]): MarketIntelligence {
     otherPct: Math.round(platform.other / totalDenom * 100),
   };
 
+  // ── Remote vs on-site share ───────────────────────────────────────────
+  const remote = { remote: 0, onsite: 0, unknown: 0 };
+  for (const p of valid) remote[classifyRemote(p.job)]++;
+  const remoteDenom = Math.max(1, remote.remote + remote.onsite + remote.unknown);
+  const remoteShare: RemoteShare = {
+    remote: remote.remote,
+    onsite: remote.onsite,
+    unknown: remote.unknown,
+    remotePct: Math.round(remote.remote / remoteDenom * 100),
+    onsitePct: Math.round(remote.onsite / remoteDenom * 100),
+    unknownPct: Math.round(remote.unknown / remoteDenom * 100),
+  };
+
   // ── Skills ───────────────────────────────────────────────────────────
   const counts = skillCounts(valid.map(p => p.job));
   const mostActiveSkills = Object.entries(counts)
@@ -419,6 +459,7 @@ export function computeMarketIntelligence(jobs: RawJob[]): MarketIntelligence {
     marketDirectionPct,
     marketDirectionReason: dirReason,
     platform: platformMix,
+    remoteShare,
     mostActiveSkills,
     fastGrowingSkills,
     competition: {

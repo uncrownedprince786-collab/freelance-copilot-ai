@@ -219,8 +219,63 @@ export function BudgetTrendChart({ data, height = 150 }: { data: { label: string
   );
 }
 
-/** Simple horizontal distribution bars (e.g. fixed vs hourly split). */
-export function SplitBars({ items, total }: { items: { label: string; value: number; pct: number; color: string }[]; total: number }) {  return (
+/** Generic dependency-free line chart for percentage / count trends over a
+ *  day window. Gaps (null values) break the line so days without data are
+ *  never implied. Reuses the same palette and grid as the other charts. */
+export function LineTrendChart({ data, height = 140, color = UPWORK, yFmt }: { data: { label: string; value: number | null }[]; height?: number; color?: string; yFmt?: (v: number) => string }) {
+  const W = 800;
+  const H = height;
+  const PAD = { top: 16, right: 14, bottom: 26, left: 40 };
+  const innerW = W - PAD.left - PAD.right;
+  const innerH = H - PAD.top - PAD.bottom;
+  const band = innerW / Math.max(data.length, 1);
+  const values = data.map(d => d.value).filter((v): v is number => v != null);
+  const max = Math.max(...values, 1);
+  const y = (v: number) => PAD.top + innerH - (v / max) * innerH;
+  const ticks = 3;
+  const fmt = yFmt ?? ((v: number) => String(Math.round(v * 10) / 10));
+  const points = data.map((d, i) => ({
+    x: PAD.left + i * band + band / 2,
+    y: d.value == null ? null : y(d.value),
+  }));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="Trend line chart">
+      {Array.from({ length: ticks + 1 }, (_, i) => {
+        const v = (max / ticks) * i;
+        const yy = y(v);
+        return (
+          <g key={i}>
+            <line x1={PAD.left} x2={W - PAD.right} y1={yy} y2={yy} stroke={GRID} strokeWidth={1} />
+            <text x={PAD.left - 6} y={yy + 4} textAnchor="end" fontSize={10} fill={TEXT}>{fmt(v)}</text>
+          </g>
+        );
+      })}
+      <polygon
+        points={`${PAD.left},${PAD.top + innerH} ${points.filter(p => p.y != null).map(p => `${p.x},${p.y}`).join(' ')} ${W - PAD.right},${PAD.top + innerH}`}
+        fill={color}
+        opacity={0.1}
+      />
+      <polyline
+        points={points.filter(p => p.y != null).map(p => `${p.x},${p.y}`).join(' ')}
+        fill="none"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {points.map((p, i) =>
+        p.y != null ? <circle key={i} cx={p.x} cy={p.y} r={2.5} fill={color} /> : null
+      )}
+      {data.map((d, i) => {
+        if (data.length > 14 && i % 4 !== 0) return null;
+        return <text key={i} x={points[i].x} y={H - 8} textAnchor="middle" fontSize={9.5} fill={TEXT}>{d.label}</text>;
+      })}
+    </svg>
+  );
+}
+
+/** Simple horizontal distribution bars (e.g. fixed vs hourly split). */export function SplitBars({ items, total }: { items: { label: string; value: number; pct: number; color: string }[]; total: number }) {  return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {items.map(it => (
         <div key={it.label}>
@@ -266,7 +321,7 @@ export function HistoryChart({ data, height = 200 }: { data: HistPoint[]; height
   }));
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="21 day volume and competition history">
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="30 day volume and competition history">
       {Array.from({ length: ticks + 1 }, (_, i) => {
         const v = (maxCount / ticks) * i;
         const yy = yC(v);

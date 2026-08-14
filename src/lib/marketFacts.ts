@@ -1,5 +1,5 @@
 import { prisma } from './db';
-import { SKILL_KEYWORDS } from './marketIntelligence';
+import { SKILL_KEYWORDS, classifyRemote, usdBudgetMidpoint } from './marketIntelligence';
 
 /**
  * Historical market facts.
@@ -28,9 +28,11 @@ export interface FactJob {
   postedAt?: string | Date;
   title?: string;
   description?: string;
+  country?: string;
+  location?: string;
 }
 
-const HISTORY_WINDOW_DAYS = 21;
+const HISTORY_WINDOW_DAYS = 30;
 const FACT_RETENTION_DAYS = 45;
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -132,6 +134,18 @@ export async function recordMarketFacts(jobs: FactJob[]): Promise<{ recorded: nu
       const eng = typeof job.budget === 'object' && job.budget?.type === 'hourly' ? 'hourly' : bucket === 'Hourly' ? 'hourly' : bucket && bucket !== 'Negotiable' ? 'fixed' : 'unknown';
       if (eng !== 'unknown') facts.push({ date, dimension: 'engagement', key: eng, value: 1 });
 
+      // Remote vs on-site — persisted so the 30-day remote share survives the
+      // 7-day listing retention. Uses the same classification as intelligence.
+      facts.push({ date, dimension: 'remote', key: classifyRemote(job), value: 1 });
+
+      // USD budget midpoint (sum + count so a daily average is derivable) —
+      // mirrors the proposals pattern below.
+      const usd = usdBudgetMidpoint(job);
+      if (usd != null) {
+        facts.push({ date, dimension: 'budgetusd', key: 'sum', value: usd });
+        facts.push({ date, dimension: 'budgetusd', key: 'count', value: 1 });
+      }
+
       // Competition + proposals (sum + count so a daily average is derivable)
       const compCount = typeof job.proposalCount === 'number' ? job.proposalCount : typeof job.proposalCount === 'string' ? Number(job.proposalCount) : null;
       const comp = competitionLevel(Number.isFinite(compCount as number) ? compCount : null);
@@ -177,14 +191,32 @@ export async function recordMarketFacts(jobs: FactJob[]): Promise<{ recorded: nu
   }
 }
 
+export interface RemoteDayPoint {
+  date: string;
+  label: string;
+  remote: number;
+  onsite: number;
+  unknown: number;
+  total: number;
+  pct: number | null; // remote / total, null when no remote facts that day
+}
+
+export interface SkillDailyPoint {
+  date: string;
+  label: string;
+  count: number;
+}
+
 export interface HistoricalTrends {
   available: boolean;
-  days: { date: string; label: string; count: number; avgProposals: number | null }[];
+  days: { date: string; label: string; count: number; avgProposals: number | null; avgBudgetUsd: number | null }[];
   avgProposalsOverall: number | null;
   peakHours: { hour: number; count: number }[];
   topSkills: { skill: string; count: number }[];
   platformSplit: { platform: string; count: number }[];
   weekdaySplit: { day: string; count: number }[];
+  remoteShare: RemoteDayPoint[];
+  skillSeries: { skill: string; daily: SkillDailyPoint[] }[];
   note: string;
 }
 
@@ -208,21 +240,51 @@ export async function getHistoricalTrends(days: number = HISTORY_WINDOW_DAYS): P
       byDay.get(r.date)!.set(`${r.dimension}:${r.key}`, r.value);
     }
 
-    // Build the ordered 21-day series, zero-filling days with no recorded volume.
+    // Per-day remote and USD-budget aggregates (parallel to the proposals split).
+    const remoteByDay = new Map<string, { remote: number; onsite: number; unknown: number }>();
+    const budgetByDay = new Map<string, { sum: number; count: number }>();
+    for (const r of rows) {
+      if (r.dimension === 'remote') {
+        const cell = remoteByDay.get(r.date) || { remote: 0, onsite: 0, unknown: 0 };
+        if (r.key === 'remote' || r.key === 'onsite' || r.key === 'unknown') cell[r.key] += r.value;
+        remoteByDay.set(r.date, cell);
+      } else if (r.dimension === 'budgetusd' && (r.key === 'sum' || r.key === 'count')) {
+        const cell = budgetByDay.get(r.date) || { sum: 0, count: 0 };
+        cell[r.key] += r.value;
+        budgetByDay.set(r.date, cell);
+      }
+    }
+
+    // Build the ordered 30-day series, zero-filling days with no recorded volume.
     const daysArr: HistoricalTrends['days'] = [];
+    const remoteShare: RemoteDayPoint[] = [];
     const now = new Date();
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(now.getTime() - i * 86400000);
       const key = utcDayKey(d);
+      const label = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()}`;
       const cell = byDay.get(key);
       const count = cell?.get('volume:all') ?? 0;
       const propSum = cell?.get('proposals:sum') ?? 0;
       const propCount = cell?.get('proposals:count') ?? 0;
+      const bCell = budgetByDay.get(key);
       daysArr.push({
         date: key,
-        label: `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()}`,
+        label,
         count,
         avgProposals: propCount > 0 ? Math.round((propSum / propCount) * 10) / 10 : null,
+        avgBudgetUsd: bCell && bCell.count > 0 ? Math.round(bCell.sum / bCell.count) : null,
+      });
+      const rCell = remoteByDay.get(key);
+      const remoteTotal = rCell ? rCell.remote + rCell.onsite + rCell.unknown : 0;
+      remoteShare.push({
+        date: key,
+        label,
+        remote: rCell?.remote ?? 0,
+        onsite: rCell?.onsite ?? 0,
+        unknown: rCell?.unknown ?? 0,
+        total: remoteTotal,
+        pct: remoteTotal > 0 ? Math.round((rCell!.remote / remoteTotal) * 100) : null,
       });
     }
 
@@ -245,6 +307,15 @@ export async function getHistoricalTrends(days: number = HISTORY_WINDOW_DAYS): P
 
     const totalVol = daysArr.reduce((a, b) => a + b.count, 0);
 
+    // Per-day frequency for the top 5 skills in the window (real demand curve).
+    const skillSeries: HistoricalTrends['skillSeries'] = [...skillMap.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([skill]) => ({
+        skill,
+        daily: daysArr.map(d => ({ date: d.date, label: d.label, count: byDay.get(d.date)?.get(`skill:${skill}`) ?? 0 })),
+      }));
+
     return {
       available: true,
       days: daysArr,
@@ -266,6 +337,8 @@ export async function getHistoricalTrends(days: number = HISTORY_WINDOW_DAYS): P
         .map(day => ({ day, count: weekdayMap.get(day) || 0 }))
         .filter(d => d.count > 0)
         .sort((a, b) => b.count - a.count),
+      remoteShare,
+      skillSeries,
       note: `Aggregated from ${totalVol} listings across the last ${days} days. Raw listings expire after 7 days, so older days in this view come from persisted aggregates — history grows the longer the monitor runs.`,
     };
   } catch (err) {
