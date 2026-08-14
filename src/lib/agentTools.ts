@@ -55,6 +55,10 @@ const STOPWORDS = new Set([
   'a', 'an', 'the', 'and', 'or', 'for', 'from', 'of', 'to', 'in', 'on', 'at', 'with',
   'find', 'show', 'me', 'get', 'jobs', 'job', 'recent', 'recently', 'postings', 'posting',
   'list', 'listings', 'any', 'some', 'remote', 'only', 'just', 'please', 'looking', 'for',
+  'actually', 'well', 'ok', 'okay', 'hmm', 'um', 'so', 'now', 'want', 'wants', 'need',
+  'needs', 'something', 'some', 'but', 'care', 'anymore', 'anything', 'today', 'there',
+  'here', 'really', 'would', 'could', 'should', 'which', 'what', 'why', 'how', 'about',
+  'like', 'best', 'top', 'one', 'two', 'first', 'second', 'better', 'good', 'great',
 ]);
 
 export function shapeJobCard(job: JobFeedItem): AgentJobCard {
@@ -130,7 +134,8 @@ export function classifyIntent(text: string, workingCount: number, hasPriorSets 
     return 'compare';
   }
 
-  if (workingCount > 0 && /^(only|just|narrow|refine|show (me )?only|keep|exclude|drop|also|under |over |above |higher (than|budget)|lower|cheaper|expensive|filter|forget (the|about|budget|date|country|platform|skills|filter)|ignore (the|budget|date|country|platform)|stop (looking|filtering|showing|using)|clear (the|all)|remove|never mind|skip|ditch|trim|tighten|limit)/i.test(lower)) {
+  const stripped = lower.replace(/^(actually|well,|ok|okay|hmm|um|so|now|just)\b[,.!;]*\s*/i, '');
+  if (workingCount > 0 && /^(only|just|narrow|refine|show (me )?only|keep|exclude|drop|also|under |over |above |higher (than|budget)|lower|cheaper|expensive|filter|forget (the|about|budget|date|country|platform|skills|filter)|ignore (the|budget|date|country|platform)|stop (looking|filtering|showing|using)|clear (the|all)|remove|never mind|skip|ditch|trim|tighten|limit)/i.test(stripped)) {
     return 'refine';
   }
 
@@ -373,13 +378,16 @@ export function isProposalAsk(text: string): boolean {
   return PROPOSAL_ASK.test(text);
 }
 
-export type ProposalEdit = 'shorter' | 'longer' | 'professional' | 'rewrite' | 'generic';
+export type ProposalEdit = 'shorter' | 'longer' | 'professional' | 'rewrite' | 'trimEnd' | 'add' | 'tone' | 'generic';
 
 export function detectProposalEdit(text: string): ProposalEdit | null {
   const t = text.toLowerCase();
   if (/(shorter|shorten|brief|briefer|condense|concise|tighten|trim|cut down|too long|make it (shorter|briefer|concise))/i.test(t)) return 'shorter';
   if (/(longer|expand|elaborate|add more|more detail|more detailed|make it (longer|more detailed|more in-depth))/i.test(t)) return 'longer';
+  if (/(remove|delete|drop|cut)\b.{0,30}\b(sentence|line|paragraph|last|closing)|remove that (last )?sentence|take out/i.test(t)) return 'trimEnd';
+  if (/(add|include|mention|highlight|emphasize)\b/i.test(t)) return 'add';
   if (/(more professional|more formal|professional|formal|polish|tone)/i.test(t)) return 'professional';
+  if (/(more natural|sound natural|natural|human|casual|less formal|friendlier|conversational)/i.test(t)) return 'tone';
   if (/(rewrite|start over|regenerate|redo|try again|fresh|another version)/i.test(t)) return 'rewrite';
   if (/(edit|change|update|tweak|adjust|modify|revise|improve|make it)/i.test(t)) return 'generic';
   return null;
@@ -408,6 +416,10 @@ export function resolveProposalTarget(text: string, cards: AgentJobCard[]): Agen
   const numMatch = t.match(/#\s*(\d+)|(?:job|one|number|#)\s*(\d+)\b/);
   const n = numMatch ? parseInt(numMatch[1] || numMatch[2] || '', 10) : NaN;
   if (Number.isFinite(n) && n >= 1 && n <= cards.length) return cards[n - 1] ?? null;
+
+  // pronoun reference ("it", "that one", "this one", "the job") → the strongest
+  // current opportunity, named in the reply so the user can redirect if needed.
+  if (/(\bit\b|that one|this one|the (job|one|listing|opportunit)\b)/.test(t)) return ranked[0] ?? null;
 
   // title substring (only when the card title is long enough to be specific)
   const byTitle = cards.find(c => {
@@ -450,6 +462,13 @@ export function applyProposalEdit(draft: AgentProposalDraft, edit: ProposalEdit)
     const tail = sentences.length > 2 ? sentences[sentences.length - 1].trim() : '';
     const text = tail ? `${head} ${tail}` : head;
     return { ...draft, text };
+  }
+  if (edit === 'trimEnd') {
+    const sentences = draft.text.split(/(?<=[.!?])\s+/).filter(s => s.trim());
+    if (sentences.length > 1) {
+      return { ...draft, text: sentences.slice(0, -1).join(' ').trim() };
+    }
+    return { ...draft };
   }
   return { ...draft };
 }

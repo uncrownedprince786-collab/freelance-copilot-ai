@@ -218,9 +218,14 @@ export async function POST(request: NextRequest) {
       const edit = activeProposal ? detectProposalEdit(cappedContent) : null;
 
       if (activeProposal && edit) {
-        if (edit === 'longer' || edit === 'professional') {
+        if (edit === 'longer' || edit === 'professional' || edit === 'add' || edit === 'tone') {
+          const why = edit === 'add'
+            ? 'adding experience, projects, or qualifications would be invented — no candidate profile exists'
+            : edit === 'tone'
+              ? 'every line already follows the listing\'s own tone and instructions'
+              : 'padding it with invented detail would hurt your credibility with the client';
           return NextResponse.json({
-            reply: `I've kept your draft for "${activeProposal.title}" as-is. I only state facts from the listing itself, so I can't pad it with invented experience or qualifications — unsupported claims would hurt your credibility with the client.\n\nIf you want, I can make it shorter or generate a fresh version.`,
+            reply: `I've kept your draft for "${activeProposal.title}" as-is because ${why}. Single-line polish isn't worth weakening the proposal — I can make it shorter or start a fresh version if you'd like.`,
             tool: 'proposal',
             proposal: activeProposal,
             suggestions: ['Make it shorter', 'New proposal for the top job', 'Compare the top opportunities'],

@@ -187,6 +187,9 @@ const STOPWORDS = new Set([
   'over', 'above', 'at', 'least', 'minimum', 'min', 'more', 'than', 'fewer', 'maximum', 'most', 'within', 'no', 'not', 'without',
   'except', 'instead', 'other', 'exclude', 'excluding', 'avoid', 'ignore', 'forget', 'remove', 'clear', 'stop', 'drop', 'filter',
   'competition', 'competitive', 'competitors', 'proposal', 'proposals', 'bids', 'applicants', 'submissions', 'paying', 'offer', 'offers',
+  'want', 'wants', 'need', 'needs', 'something', 'some', 'but', 'care', 'anymore', 'anything', 'today', 'actually', 'well', 'ok', 'okay',
+  'hmm', 'um', 'really', 'would', 'could', 'should', 'which', 'what', 'why', 'how', 'about', 'like', 'best', 'top', 'one', 'first',
+  'second', 'better', 'good', 'great', 'means', 'looking', 'around', 'thought',
 ]);
 
 export function parseSmartSearch(raw: string): SmartSearchResult {
