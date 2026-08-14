@@ -1202,7 +1202,7 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: '0 1px 3px rgba(15,23,42,0.05)',
   },
 
-  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, marginTop: 32 },
+  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginTop: 32 },
   pageBtn: {
     borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
     background: '#fff', borderRadius: 999, padding: '8px 16px',
