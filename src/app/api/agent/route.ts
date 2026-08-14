@@ -57,12 +57,15 @@ const API_ERROR =
 
 // Ground-truth fallback when no AI provider is configured/available. Never
 // fabricates: it only restates the data the tools actually retrieved.
-function fallbackReply(intent: AgentIntent, lastMsg: string, cards: AgentJobCard[], snapshotText: string): string {
+function fallbackReply(intent: AgentIntent, lastMsg: string, cards: AgentJobCard[], snapshotText: string, hasSets = false): string {
   if (intent === 'greeting') return AGENT_GREETING;
   if (intent === 'injection') return INJECTION_REDIRECT;
   if (intent === 'guidance') return AGENT_GUIDANCE;
   if (intent === 'trends') return snapshotText || 'Market intelligence is still being computed — check back after the next sync.';
-  if (intent === 'compare' && cards.length === 0) return COMPARE_NO_CONTEXT;
+  if (intent === 'compare' && cards.length === 0 && !hasSets) return COMPARE_NO_CONTEXT;
+  if (intent === 'compare' && cards.length === 0) {
+    return `I don't have a fresh list to rank on this turn, but I did show you earlier result sets — tell me which list or job you'd like me to compare (e.g. "the first list").`;
+  }
 
   if (cards.length === 0) return NO_RESULTS(lastMsg.slice(0, 60));
 
@@ -163,7 +166,9 @@ export async function POST(request: NextRequest) {
 
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) {
-    return NextResponse.json({ error: 'A user message is required.' }, { status: 400, headers: secureHeaders });
+    // No usable text (empty body, whitespace-only, or entirely sanitized away)
+    // → a gentle nudge, not a 400, so chat clients recover gracefully.
+    return NextResponse.json({ reply: EMPTY_INPUT, tool: 'greeting', suggestions: AGENT_SUGGESTIONS }, { headers: secureHeaders });
   }
 
   // Handle empty/whitespace input
@@ -290,7 +295,7 @@ export async function POST(request: NextRequest) {
         const dataCtx = serializeJobsForLLM(cards, MAX_JOBS);
         const countNote = `Returned ${cards.length} matching opportunit${cards.length === 1 ? 'y' : 'ies'}, shown as cards below.`;
         reply = await reasonOverJobs('compare', cappedContent, cards, dataCtx, `Filters: ${result.filtersNote}. ${countNote}`, resultSets);
-        if (!reply) reply = fallbackReply('compare', cappedContent, cards, '');
+        if (!reply) reply = fallbackReply('compare', cappedContent, cards, '', resultSets.length > 0);
       } else {
         reply = COMPARE_NO_CONTEXT;
       }
@@ -312,7 +317,7 @@ export async function POST(request: NextRequest) {
       // Reason over the current working set (jobs from the last search).
       if (cards.length > 0 || resultSets.length > 0) {
         reply = await reasonOverJobs('compare', cappedContent, cards, undefined, undefined, resultSets);
-        if (!reply) reply = fallbackReply(intent, cappedContent, cards, '');
+        if (!reply) reply = fallbackReply(intent, cappedContent, cards, '', resultSets.length > 0);
       } else {
         reply = COMPARE_NO_CONTEXT;
       }

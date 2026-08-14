@@ -59,6 +59,11 @@ const STOPWORDS = new Set([
   'needs', 'something', 'some', 'but', 'care', 'anymore', 'anything', 'today', 'there',
   'here', 'really', 'would', 'could', 'should', 'which', 'what', 'why', 'how', 'about',
   'like', 'best', 'top', 'one', 'two', 'first', 'second', 'better', 'good', 'great',
+  'think', 'thought', 'opinion', 'choice', 'prefer', 'preference', 'pick', 'choose',
+  'value', 'decide', 'decision', 'fit', 'worth', 'interesting', 'thanks', 'thank',
+  'look', 'looks', 'sound', 'sounds', 'focus', 'recommend', 'prioritize', 'prioritized',
+  'strong', 'stronger', 'strongest', 'experience', 'skills', 'skill', 'budget', 'client',
+  'proposals', 'competition', 'competitive', 'platform', 'hourly', 'fixed', 'remote',
 ]);
 
 export function shapeJobCard(job: JobFeedItem): AgentJobCard {
@@ -130,13 +135,21 @@ export function classifyIntent(text: string, workingCount: number, hasPriorSets 
     return 'trends';
   }
 
-  if ((workingCount > 0 || hasPriorSets) && /(compare|versus|vs\.?|rank(ed|ing)?|best|better|recommend|prioritize|strong(est|er)?|top (pick|choice|opportunit)|should i (apply|bid|take|focus|pick|go)|why (this|is|that|are|would)|explain|analy|review (these|them)|these two|the (first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|next|last|previous|other|one that|top|one)\b|which (one|of these|of the|would|is (the|a)|job|opportunit)|(what|how) about (the|that|them|it)|go (back to|with)\b|this (one|job|opportunit)|that (one|job|opportunit)|more like th(?:is|at|ose)|another one like|(the|that|this) (previous|earlier|first|last) (list|search|set)|from (the )?(previous|earlier|first|last) (list|search|set)|the (marketing|upwork|freelancer|trends?) list)/i.test(lower)) {
+  if ((workingCount > 0 || hasPriorSets) && /(compare|versus|vs\.?|rank(ed|ing)?|best|better|recommend|prioritize|strong(est|er)?|top (pick|choice|opportunit)|should i (apply|bid|take|focus|pick|go)|would you (pick|choose|apply|bid|take|go|prioritize|consider)|what would you|why (this|is|that|are|would)|explain|analy|review (these|them)|these two|the (first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|next|last|previous|other|one that|top|one)\b|which (one|of these|of the|would|is (the|a)|job|opportunit)|(what|how) about (the|that|them|it)|go (back to|with)\b|this (one|job|opportunit)|that (one|job|opportunit)|more like th(?:is|at|ose)|another (one like|option|one|choice|alternative|opportunity)|(the|that|this) (previous|earlier|first|last) (list|search|set)|from (the )?(previous|earlier|first|last) (list|search|set)|the (marketing|upwork|freelancer|trends?) list|worth (it|applying|applied|a try|my time|while)|is (this|it|that) worth|apply(?:ing)? to (it|this|that|the|\d|which)|a good fit|good fit|least (competition|proposals|budget|competitive)|most (proposals|competitive))/i.test(lower)) {
     return 'compare';
   }
 
   const stripped = lower.replace(/^(actually|well,|ok|okay|hmm|um|so|now|just)\b[,.!;]*\s*/i, '');
   if (workingCount > 0 && /^(only|just|narrow|refine|show (me )?only|keep|exclude|drop|also|under |over |above |higher (than|budget)|lower|cheaper|expensive|filter|forget (the|about|budget|date|country|platform|skills|filter)|ignore (the|budget|date|country|platform)|stop (looking|filtering|showing|using)|clear (the|all)|remove|never mind|skip|ditch|trim|tighten|limit)/i.test(stripped)) {
     return 'refine';
+  }
+
+  // No search signal at all ("What do you think?", "Worth it?", "Anything
+  // interesting?") but a working set exists → treat as advice/compare over that
+  // set rather than a keyword search that would return NO_RESULTS.
+  if (workingCount > 0) {
+    const kw = lower.split(/\s+/).filter(w => w && !STOPWORDS.has(w) && !/[\d$€£%]/.test(w)).length;
+    if (kw === 0) return 'compare';
   }
 
   if (/(help|how (do|can|to|should)|what can you|what do you do|features?|guide|get started|where (can|do|should)|about (this|the) platform|navigate|use the (platform|app|dashboard)|learn more about)/i.test(lower)) {
