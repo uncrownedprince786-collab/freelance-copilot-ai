@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { JobsPerDayChart, HistoryChart, SplitBars, CompetitionVolumeChart } from '@/components/charts';
+import { JobsPerDayChart, HistoryChart, SplitBars, CompetitionVolumeChart, BudgetTrendChart, LineTrendChart } from '@/components/charts';
 
 interface CategoryTrend {
   category: string;
@@ -30,6 +30,7 @@ interface MarketIntelligenceData {
   marketDirectionPct: number | null;
   marketDirectionReason: string;
   platform: { upwork: number; freelancer: number; other: number; upworkPct: number; freelancerPct: number; otherPct: number };
+  remoteShare: { remote: number; onsite: number; unknown: number; remotePct: number; onsitePct: number; unknownPct: number };
   mostActiveSkills: { skill: string; count: number }[];
   fastGrowingSkills: { skill: string; count: number; firstHalf: number; secondHalf: number; growthPct: number | null; status: 'growing' | 'new' | 'declining' | 'stable' }[];
   competition: { daily: { date: string; label: string; avgProposals: number | null; jobs: number }[]; direction: string; directionReason: string };
@@ -43,12 +44,14 @@ interface MarketIntelligenceData {
 
 interface HistoryData {
   available: boolean;
-  days: { date: string; label: string; count: number; avgProposals: number | null }[];
+  days: { date: string; label: string; count: number; avgProposals: number | null; avgBudgetUsd: number | null }[];
   avgProposalsOverall: number | null;
   peakHours: { hour: number; count: number }[];
   topSkills: { skill: string; count: number }[];
   platformSplit: { platform: string; count: number }[];
   weekdaySplit: { day: string; count: number }[];
+  remoteShare: { date: string; label: string; remote: number; onsite: number; unknown: number; total: number; pct: number | null }[];
+  skillSeries: { skill: string; daily: { date: string; label: string; count: number }[] }[];
   note: string;
 }
 
@@ -184,6 +187,22 @@ export default function TrendsPage() {
   const history = data?.history && data.history.available ? data.history : null;
   const historyChart = useMemo(() => (history?.days ?? []).map(d => ({ label: d.label, count: d.count, avgProposals: d.avgProposals })), [history]);
 
+  const budgetSeries = useMemo(() => (history?.days ?? []).map(d => ({ label: d.label, avgUsd: d.avgBudgetUsd })), [history]);
+
+  const remoteSeries = useMemo(() => (history?.remoteShare ?? []).map(d => ({ label: d.label, value: d.pct })), [history]);
+
+  const remoteSplit = useMemo(() => {
+    const agg = { remote: 0, onsite: 0, unknown: 0 };
+    for (const d of history?.remoteShare ?? []) { agg.remote += d.remote; agg.onsite += d.onsite; agg.unknown += d.unknown; }
+    const total = agg.remote + agg.onsite + agg.unknown;
+    if (total <= 0) return [];
+    return [
+      { label: 'Remote', value: agg.remote, pct: Math.round(agg.remote / total * 100), color: '#16a34a' },
+      { label: 'On-site', value: agg.onsite, pct: Math.round(agg.onsite / total * 100), color: '#2563eb' },
+      ...(agg.unknown > 0 ? [{ label: 'Not specified', value: agg.unknown, pct: Math.round(agg.unknown / total * 100), color: '#9ca3af' }] : []),
+    ];
+  }, [history]);
+
   if (loading) {
     return (
       <div style={s.page}>
@@ -262,6 +281,7 @@ export default function TrendsPage() {
             <span style={s.metaPill}>{fmt(intel.avgJobsPerDay7)}/day · 7d</span>
             <span style={s.metaPill}>{fmt(intel.avgJobsPerDay30)}/day · 30d</span>
             <span style={{ ...s.metaPill, color: dirMeta.color, background: dirMeta.bg, borderColor: dirMeta.border }}>Market {dirMeta.label}</span>
+            <span style={s.metaPill}>{intel.remoteShare?.remotePct ?? 0}% remote</span>
             <span style={s.metaPill}>Updated {timeAgo(data.generatedAt)}</span>
           </div>
         </div>
@@ -469,12 +489,12 @@ export default function TrendsPage() {
           <Tip>Set a daily check around the busiest hours above — even 30 minutes of early response time helps.</Tip>
         </Section>
 
-        {/* ── 9. 21-day window trends ── */}
+        {/* ── 9. 30-day window trends ── */}
         {history && (
           <Section
             id="history"
-            title="21-Day Window Trends"
-            subtitle="Volume and competition across the last 21 days (kept even after the 7-day listing window rolls off)."
+            title="30-Day Window Trends"
+            subtitle="Volume and competition across the last 30 days (kept even after the 7-day listing window rolls off)."
             note={history.note}
           >
             <div style={s.chartWrap}>
@@ -483,7 +503,7 @@ export default function TrendsPage() {
             <div style={s.histInsightRow}>
               {history.avgProposalsOverall != null && (
                 <div style={s.histInsight} className="lh-surface">
-                  <div className="lh-muted" style={s.histLabel}>Avg proposals (21d)</div>
+                  <div className="lh-muted" style={s.histLabel}>Avg proposals (30d)</div>
                   <span style={s.hourChip} className="lh-field">{fmt(history.avgProposalsOverall)} / listing</span>
                 </div>
               )}
@@ -515,6 +535,64 @@ export default function TrendsPage() {
                   </div>
                 </div>
               )}
+            </div>
+          </Section>
+        )}
+
+        {/* ── 9b. 30-day average budget ── */}
+        {history && budgetSeries.some(d => d.avgUsd != null) && (
+          <Section
+            id="budget-trend"
+            title="Average Budget Over 30 Days"
+            subtitle="The average USD budget of listings each day (where a real dollar budget is listed). Tells you whether rates are drifting up or down."
+            note="Only listings with a clear USD price are averaged; hourly rates and non-USD budgets are excluded so the number stays meaningful."
+          >
+            <div style={s.chartWrap}>
+              <BudgetTrendChart data={budgetSeries} height={180} />
+            </div>
+          </Section>
+        )}
+
+        {/* ── 9c. Remote vs on-site ── */}
+        {history && (
+          <Section
+            id="remote"
+            title="Remote vs On-Site"
+            subtitle="How listings split between fully remote, on-site, and unspecified — from the location/remote fields the collectors actually store."
+            note="“Remote” is taken from the listing’s own remote/location value. Older days fill in as the monitor accumulates 30 days of history."
+          >
+            {remoteSplit.length ? (
+              <>
+                <SplitBars items={remoteSplit} total={remoteSplit.reduce((a, b) => a + b.value, 0)} />
+                <div style={{ marginTop: 18 }}>
+                  <LineTrendChart data={remoteSeries} height={160} color="#16a34a" yFmt={(v) => `${Math.round(v)}%`} />
+                </div>
+              </>
+            ) : (
+              <p className="lh-muted" style={s.emptyNote}>Remote data will appear after the next sync.</p>
+            )}
+            <Tip>If the remote share is high for your niche, position your profile and proposals around remote-first experience.</Tip>
+          </Section>
+        )}
+
+        {/* ── 9d. Skill frequency over 30 days ── */}
+        {history && (history.skillSeries?.length ?? 0) > 0 && (
+          <Section
+            id="skill-trend"
+            title="Skill Frequency Over 30 Days"
+            subtitle="Daily demand curve for the five most-mentioned skills in the window — watch for rising or fading signals."
+            note="Each skill is counted once per job per day, straight from the collected listings."
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(260px,100%),1fr))', gap: 14 }}>
+              {history.skillSeries.map(sk => (
+                <div key={sk.skill} style={s.skillCard} className="lh-surface">
+                  <div style={s.skillCardHead}>
+                    <span className="lh-h" style={{ fontWeight: 700, color: '#111827', fontSize: 13 }}>{sk.skill}</span>
+                    <span className="lh-muted" style={{ fontSize: 11, color: '#6b7280' }}>{sk.daily.reduce((a, b) => a + b.count, 0)} in window</span>
+                  </div>
+                  <LineTrendChart data={sk.daily.map(p => ({ label: p.label, value: p.count }))} height={110} />
+                </div>
+              ))}
             </div>
           </Section>
         )}
@@ -667,6 +745,9 @@ const s: Record<string, React.CSSProperties> = {
   histInsightRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(220px,100%),1fr))', gap: 10, marginTop: 14 },
   histInsight: { background: '#fafafa', border: '1px solid #eef1f5', borderRadius: 8, padding: '10px 12px' },
   histLabel: { fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#9ca3af', marginBottom: 6 },
+
+  skillCard: { background: '#fff', border: '1px solid #eef1f5', borderRadius: 10, padding: '12px 14px' },
+  skillCardHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 },
 
   insightCard: { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 14px' },
   learnCard: { borderRadius: 8, padding: '14px 16px' },

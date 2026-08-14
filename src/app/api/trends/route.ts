@@ -7,9 +7,13 @@ import { getHistoricalTrends, HistoricalTrends } from '@/lib/marketFacts';
 export const dynamic = 'force-dynamic';
 
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+// Bump when the payload shape changes so stale pre-change caches are dropped
+// instead of being served to a newer frontend that expects new fields.
+const CACHE_VERSION = 2;
 
 interface TrendsCache {
   generatedAt: string;
+  version: number;
   trends: MarketTrends;
 }
 
@@ -30,6 +34,7 @@ async function readCache(): Promise<TrendsCache | null> {
     const record = await prisma.systemKv.findUnique({ where: { key: 'trends_cache' } });
     if (!record) return null;
     const data: TrendsCache = JSON.parse(record.value);
+    if (data.version !== CACHE_VERSION) return null;
     if (Date.now() - new Date(data.generatedAt).getTime() < CACHE_TTL_MS) return data;
     return null;
   } catch { return null; }
@@ -162,7 +167,7 @@ export async function GET() {
   // Market Intelligence — every figure derived from the actual listings.
   const intelligence = computeMarketIntelligence(rawJobsList);
 
-  // 21-day history from persisted aggregates (survives the 7-day retention).
+  // 30-day history from persisted aggregates (survives the 7-day retention).
   const history = await getHistoricalTrends();
 
   const { skills, categories, budgets, titles } = await analyzeJobsLocally();
@@ -264,7 +269,7 @@ Respond with this exact JSON (no markdown, pure JSON):
   };
 
   // Cache
-  const cacheData: TrendsCache = { generatedAt: new Date().toISOString(), trends };
+  const cacheData: TrendsCache = { generatedAt: new Date().toISOString(), version: CACHE_VERSION, trends };
   await writeCache(cacheData);
 
   return NextResponse.json({ ...trends, cached: false, generatedAt: cacheData.generatedAt });
