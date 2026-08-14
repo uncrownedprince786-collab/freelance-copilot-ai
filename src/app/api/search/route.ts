@@ -215,6 +215,8 @@ export function parseSmartSearch(raw: string): SmartSearchResult {
   if (propCap) {
     const n = parseInt(propCap[1], 10);
     if (Number.isFinite(n) && n >= 0) result.maxProposals = n;
+    // Remove the matched phrase so "under 10 proposals" also doesn't set maxBid.
+    working = working.replace(propCap[0], ' ').replace(/\s+/g, ' ').trim();
   }
 
   // Money floor ("at least $500", "minimum 300") then cap ("under $500", "$300").
