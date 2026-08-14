@@ -177,15 +177,33 @@ export async function POST(request: NextRequest) {
   try {
     const intent: AgentIntent = classifyIntent(cappedContent, workingJobs.length);
 
-    // "which is best?" with nothing to compare yet → ask for a search first.
-    if (intent === 'search' && workingJobs.length === 0 && /(which (is|one)|best|compare|recommend|prioritize)/i.test(cappedContent) && cappedContent.length < 60) {
-      return NextResponse.json({ reply: COMPARE_NO_CONTEXT, tool: 'compare', suggestions: AGENT_SUGGESTIONS }, { headers: secureHeaders });
-    }
-
     let reply = '';
     let cards: AgentJobCard[] = workingJobs;
     let snapshotText = '';
     let tool: string = intent;
+
+    // "which is the best job?" with nothing to compare yet → surface real
+    // ranked opportunities as structured cards (the UI renders `jobs`), not
+    // merely a sentence. Cards come only from the live feed — never invented.
+    if (intent === 'search' && workingJobs.length === 0 && /(which (is|one)|best|compare|recommend|prioritize)/i.test(cappedContent) && cappedContent.length < 60) {
+      const result = await runJobSearch(cappedContent, MAX_JOBS);
+      cards = result.jobs;
+      tool = 'compare';
+      if (cards.length > 0) {
+        const dataCtx = serializeJobsForLLM(cards, MAX_JOBS);
+        const countNote = `Returned ${cards.length} matching opportunit${cards.length === 1 ? 'y' : 'ies'}, shown as cards below.`;
+        reply = await reasonOverJobs('compare', cappedContent, cards, dataCtx, `Filters: ${result.filtersNote}. ${countNote}`);
+        if (!reply) reply = fallbackReply('compare', cappedContent, cards, '');
+      } else {
+        reply = COMPARE_NO_CONTEXT;
+      }
+      return NextResponse.json({
+        reply,
+        tool,
+        jobs: cards.length ? cards : undefined,
+        suggestions: followUpSuggestions('compare', cards),
+      }, { headers: secureHeaders });
+    }
 
     if (intent === 'greeting' || intent === 'injection' || intent === 'guidance') {
       reply = fallbackReply(intent, cappedContent, cards, '');
