@@ -475,7 +475,7 @@ export default function IntelligencePage() {
               <p className="lh-muted" style={s.cardSub}>Jump back to the dashboard and hit the freshest opportunities while they&apos;re still cheap to bid on.</p>
               <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
                 <button onClick={() => router.push(data.browseJobsUrl)} style={s.ctaBtn}>Browse live jobs →</button>
-                <button onClick={() => router.push('/trends')} style={s.backBtn} className="lh-field">Trends & history</button>
+                <button onClick={() => router.push('/trading')} style={s.backBtn} className="lh-field">Trends & history</button>
               </div>
             </div>
 

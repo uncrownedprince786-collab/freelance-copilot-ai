@@ -577,7 +577,7 @@ function HomeContent() {
             <button onClick={() => router.push('/about')} style={styles.btnGhost} className="lh-field">
               About
             </button>
-            <button onClick={() => router.push('/trends')} style={styles.btnCron} className="lh-field">
+            <button onClick={() => router.push('/trading')} style={styles.btnCron} className="lh-field">
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <IconTrend size={14} color="#fff" />
                 Market Trends

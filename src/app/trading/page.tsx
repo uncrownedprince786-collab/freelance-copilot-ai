@@ -210,7 +210,7 @@ export default function TradingPage() {
           </p>
           <div style={styles.ctaRow}>
             <Link href="/" style={styles.btnPrimary}>Explore Jobs</Link>
-            <Link href="/trends" style={styles.btnSecondary}>View Trends</Link>
+            <Link href="/trading" style={styles.btnSecondary}>View Trends</Link>
           </div>
         </section>
 
@@ -363,7 +363,7 @@ export default function TradingPage() {
           </p>
           <div style={{ ...styles.ctaRow, justifyContent: "center" }}>
             <Link href="/" style={styles.btnPrimary}>Explore Jobs</Link>
-            <Link href="/trends" style={styles.btnSecondary}>View Trends</Link>
+            <Link href="/trading" style={styles.btnSecondary}>View Trends</Link>
           </div>
         </section>
 
