@@ -1,11 +1,35 @@
 import { JobProvider } from "./JobProvider";
 import { Job } from "../types/job";
 
-// Upwork reports competition as text bands ("50+", "0 to 5", "5 to 10",
-// "20 to 50") or phrases like "Be the first to apply". Normalize to a numeric
-// floor so the real value is preserved (never coerced to 0) and stored
-// consistently. "50+" → 50, "0 to 5" → 0, "5 to 10" → 5. Returns null only when
-// there is genuinely no count (e.g. "Be the first to apply").
+// Upwork reports competition as an exact number, a ceiling band ("50+"), range
+// bands ("0 to 5", "5 to 10", "20 to 50"), or phrases like "Be the first to
+// apply". Range bands carry no exact value: coercing them to their numeric floor
+// is an estimate, and "0 to 5" would become a false literal 0. For PROPOSAL
+// counts they therefore resolve to null (unknown-exact), so a false/estimated
+// value is never stored, displayed, or allowed to overwrite a stored positive
+// count. "50+" resolves to 50 (a confirmed high-competition signal); a pure
+// numeric value, including a literal 0, is treated as exact.
+function parseUpworkProposalCount(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  // Upwork's ceiling band "50+" is a confirmed high-competition signal -> 50.
+  const plus = s.match(/^(\d+)\s*\+\s*$/);
+  if (plus) return parseInt(plus[1], 10);
+  // Range bands (e.g. "0 to 5", "5 to 10", "20 to 50") are unknown-exact: never
+  // coerce to a floor (especially not 0) and never let them override a precise
+  // count in a later candidate field.
+  if (/\d+\s*(?:to|-|–|—)\s*\d+/i.test(s)) return null;
+  // A pure numeric value is exact (a literal 0 means zero proposals).
+  if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+  // Anything else (e.g. "Be the first to apply") carries no exact count.
+  return null;
+}
+
+// For interview/hires competition signals keep the numeric floor of a band
+// ("5 to 10" -> 5) so their existing display is unchanged; range-aware parsing
+// applies only to proposal counts, where a false 0 must never be stored.
 function parseUpworkCount(v: unknown): number | null {
   if (typeof v === "number") return v;
   if (v == null) return null;
@@ -18,10 +42,11 @@ function parseUpworkCount(v: unknown): number | null {
 
 // Upwork's Apify scraper names the competition fields inconsistently across
 // actor versions, so try every known candidate and take the first usable value.
-// "50+" → 50, "0 to 5" → 0, "Be the first to apply" → null.
-function firstCount(...vals: unknown[]): number | null {
+// The parser decides whether a value is precise ("50+" -> 50, literal counts)
+// or unknown (range bands / "Be the first to apply" -> null).
+function firstCount(parse: (v: unknown) => number | null, ...vals: unknown[]): number | null {
   for (const v of vals) {
-    const n = parseUpworkCount(v);
+    const n = parse(v);
     if (n !== null) return n;
   }
   return null;
@@ -157,6 +182,7 @@ export class ApifyUpworkProvider implements JobProvider {
           duration: this.cleanText(item.engagementDuration || item.duration || '') || null,
           connectsRequired: connects,
           proposalCount: normalizeProposalCount(firstCount(
+            parseUpworkProposalCount,
             item.totalApplicants,
             item.applicants,
             item.applicantCount,
@@ -166,8 +192,8 @@ export class ApifyUpworkProvider implements JobProvider {
             item.bidCount,
             item.bids,
           )),
-          interviewingCount: firstCount(item.interviewing, item.interviewingCount, item.interviews) ?? 0,
-          hiresCount: firstCount(item.hires, item.totalHired, item.hiresCount, item.hired) ?? 0,
+          interviewingCount: firstCount(parseUpworkCount, item.interviewing, item.interviewingCount, item.interviews) ?? 0,
+          hiresCount: firstCount(parseUpworkCount, item.hires, item.totalHired, item.hiresCount, item.hired) ?? 0,
           postedAt: postedDate,
           client: {
             name: clientName,

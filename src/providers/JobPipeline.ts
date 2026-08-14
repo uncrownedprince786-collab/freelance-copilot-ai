@@ -53,7 +53,10 @@ export class JobPipeline {
     for (const f of validFetched) {
       const ex = f.url ? storeByUrl.get(f.url) : undefined;
       if (ex) {
-        if (typeof f.proposalCount === 'number') ex.proposalCount = f.proposalCount;
+        // Proposal counts are monotonic non-decreasing: only advance on a
+        // confirmed positive count. A provider 0/null is ambiguous (range band,
+        // scrape fallback) and must never overwrite a stored positive count.
+        if (typeof f.proposalCount === 'number' && f.proposalCount > 0) ex.proposalCount = f.proposalCount;
         if (typeof f.interviewingCount === 'number' && f.interviewingCount > 0) ex.interviewingCount = f.interviewingCount;
         if (typeof f.hiresCount === 'number' && f.hiresCount > 0) ex.hiresCount = f.hiresCount;
       }
@@ -208,10 +211,14 @@ export class JobPipeline {
             skills: skillsStr,
             // Preserve stored competition signals when the fetched record has
             // no usable value: `undefined` tells Prisma to leave the column
-            // untouched instead of overwriting a valid count with null/0.
-            proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : undefined,
-            interviewingCount: typeof job.interviewingCount === 'number' ? job.interviewingCount : undefined,
-            hiresCount: typeof job.hiresCount === 'number' ? job.hiresCount : undefined,
+            // untouched instead of overwriting a valid count. Proposal counts
+            // are monotonic non-decreasing, so only positive advances are
+            // written on update; a genuine 0 is only stored at CREATE for a new
+            // job. Interview/hires counts patch positive signals only, so the
+            // provider's `?? 0` default never clobbers a stored real value.
+            proposalCount: typeof job.proposalCount === 'number' && job.proposalCount > 0 ? job.proposalCount : undefined,
+            interviewingCount: typeof job.interviewingCount === 'number' && job.interviewingCount > 0 ? job.interviewingCount : undefined,
+            hiresCount: typeof job.hiresCount === 'number' && job.hiresCount > 0 ? job.hiresCount : undefined,
             paymentVerified: clientObj.paymentVerified === true,
             clientRating: clientObj.rating ? String(clientObj.rating) : '',
             jobsPosted: clientObj.jobsPosted ?? null,
