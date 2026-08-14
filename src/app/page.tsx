@@ -571,17 +571,14 @@ function HomeContent() {
           </div>
           <div style={styles.headerRight}>
             <ThemeToggle />
-            <button onClick={() => router.push('/trading')} style={styles.btnGhost} className="lh-field">
-              Trading
-            </button>
-            <button onClick={() => router.push('/about')} style={styles.btnGhost} className="lh-field">
-              About
-            </button>
             <button onClick={() => router.push('/trading')} style={styles.btnCron} className="lh-field">
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <IconTrend size={14} color="#fff" />
-                Market Trends
+                Market Trending
               </span>
+            </button>
+            <button onClick={() => router.push('/about')} style={styles.btnGhost} className="lh-field">
+              About
             </button>
 
             {adminMode && (
