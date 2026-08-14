@@ -150,6 +150,26 @@ html[data-theme='dark'] .lh-muted {
   color: #8b99ad !important;
 }
 
+/* Dark mode text visibility — override inline text colors that are hard to read on #0b1220 */
+html[data-theme='dark'] .lh-page {
+  color: #c7d0dc !important;
+}
+html[data-theme='dark'] .lh-page h1,
+html[data-theme='dark'] .lh-page h2,
+html[data-theme='dark'] .lh-page h3,
+html[data-theme='dark'] .lh-page h4 {
+  color: #f1f5f9 !important;
+}
+html[data-theme='dark'] .lh-body {
+  color: #c7d0dc !important;
+}
+html[data-theme='dark'] .lh-muted {
+  color: #8b99ad !important;
+}
+html[data-theme='dark'] .lh-h {
+  color: #f1f5f9 !important;
+}
+
 /* Modal "or" divider pill matches the modal surface */
 html[data-theme='dark'] .lh-divider-or {
   background: #131c2e !important;
