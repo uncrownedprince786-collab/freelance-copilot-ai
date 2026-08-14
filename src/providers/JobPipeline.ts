@@ -93,17 +93,26 @@ export class JobPipeline {
     // Save back to database
     await this.saveStore(finalCollection);
 
-    // Enforce the intended 7-day active window at the database level. The
-    // in-memory purge above only drops records from the working set; without
-    // this, stale unapplied rows linger in the feed for up to 40 days with
-    // frozen competition data. Applied jobs are preserved (40-day retention).
+    // Enforce the active-job window at the database level AFTER upserting the
+    // working set. Only rows NOT re-saved by saveStore() can match: unapplied
+    // jobs older than 7 days and applied jobs older than 40 days (40-day
+    // applied retention). saveStore() re-upserts every row in finalCollection,
+    // all of which pass the in-memory 7d/40d filter, so a row we just wrote is
+    // never deleted by this query.
     try {
-      const purgeCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const now = Date.now();
+      const unappliedCutoff = new Date(now - 7 * 24 * 60 * 60 * 1000);
+      const appliedCutoff = new Date(now - 40 * 24 * 60 * 60 * 1000);
       const purged = await prisma.opportunity.deleteMany({
-        where: { createdAt: { lt: purgeCutoff }, applied: false },
+        where: {
+          OR: [
+            { createdAt: { lt: unappliedCutoff }, applied: false },
+            { createdAt: { lt: appliedCutoff }, applied: true },
+          ],
+        },
       });
       if (purged.count > 0) {
-        console.log(`[JobPipeline] Purged ${purged.count} unapplied rows older than 7 days.`);
+        console.log(`[JobPipeline] Purged ${purged.count} rows outside the active window (7d unapplied / 40d applied).`);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
