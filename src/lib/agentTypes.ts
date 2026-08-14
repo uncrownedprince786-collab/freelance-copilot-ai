@@ -37,3 +37,18 @@ export const AGENT_SUGGESTIONS = [
   'Compare the top opportunities',
   'How can I find better opportunities?',
 ];
+
+/** A labeled result set the agent can reference later ("the first list"). */
+export interface AgentResultSet {
+  label: string;
+  jobs: AgentJobCard[];
+}
+
+/** A grounded proposal draft the agent produced for a specific job. */
+export interface AgentProposalDraft {
+  jobId: string;
+  title: string;
+  text: string;
+  verified: boolean;
+  note?: string;
+}

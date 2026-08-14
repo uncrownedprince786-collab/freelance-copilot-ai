@@ -24,8 +24,12 @@ export interface SmartSearchResult {
   jobType: 'fixed' | 'hourly' | null;
   posted: '24h' | '3d' | '7d' | null;
   maxBid: number | null;
+  minBid: number | null;
+  maxProposals: number | null;
+  lowCompetition: boolean | null;
   country: string | null;
   client: string | null;
+  exclude: string[];
 }
 
 const EMPTY: SmartSearchResult = {
@@ -35,8 +39,12 @@ const EMPTY: SmartSearchResult = {
   jobType: null,
   posted: null,
   maxBid: null,
+  minBid: null,
+  maxProposals: null,
+  lowCompetition: null,
   country: null,
   client: null,
+  exclude: [],
 };
 
 const WORDS = {
@@ -176,6 +184,9 @@ const STOPWORDS = new Set([
   'me', 'mere', 'my', 'from', 'the', 'of', 'and', 'or',
   'last', 'past', 'next', 'posted', 'recientes', 'ultimas', 'ultimos', 'recientes', 'jours', 'semaine', 'woche',
   'client', 'cliente', 'budget', 'presupuesto', 'menos', 'mas', 'max', 'maximo', 'hasta', 'under', 'below', 'sous', 'moins', 'unter', 'bis',
+  'over', 'above', 'at', 'least', 'minimum', 'min', 'more', 'than', 'fewer', 'maximum', 'most', 'within', 'no', 'not', 'without',
+  'except', 'instead', 'other', 'exclude', 'excluding', 'avoid', 'ignore', 'forget', 'remove', 'clear', 'stop', 'drop', 'filter',
+  'competition', 'competitive', 'competitors', 'proposal', 'proposals', 'bids', 'applicants', 'submissions', 'paying', 'offer', 'offers',
 ]);
 
 export function parseSmartSearch(raw: string): SmartSearchResult {
@@ -190,24 +201,67 @@ export function parseSmartSearch(raw: string): SmartSearchResult {
     .sort((a, b) => b.phrase.length - a.phrase.length)
     .find(p => input.includes(normalize(p.phrase)));
   if (timeMatch) result.posted = timeMatch.window;
-  const working = timeMatch ? input.replace(normalize(timeMatch.phrase), ' ').replace(/\s+/g, ' ').trim() : input;
+  let working = timeMatch ? input.replace(normalize(timeMatch.phrase), ' ').replace(/\s+/g, ' ').trim() : input;
 
-  // Money cap: "under $500", "hasta 300", "$300", "300 usd".
+  // Competition level: "low competition", "very competitive", etc.
+  const lowComp = /(low|less|minimal|little|lowest|scarce|no|without)\s*(?:competition|contention|rivalry|competitors?)\b/i.test(working)
+    || /(not (many|much))\s*(competitors?|bids?|proposals?)\b/i.test(working);
+  const highComp = /(high|heavy|fierce|strong|saturated|lots of)\s*(?:competition|contenders?|rivalry)\b/i.test(working);
+  if (lowComp) result.lowCompetition = true;
+  else if (highComp) result.lowCompetition = false;
+
+  // Proposal-count cap: "under 10 proposals", "fewer than 5 bids".
+  const propCap = working.match(/(?:under|below|less than|fewer than|max(?:imum)?|at most|under)\s*(\d{1,3})\s*(?:proposals?|bids?|applicants?|submissions?|competitors?)/i);
+  if (propCap) {
+    const n = parseInt(propCap[1], 10);
+    if (Number.isFinite(n) && n >= 0) result.maxProposals = n;
+  }
+
+  // Money floor ("at least $500", "minimum 300") then cap ("under $500", "$300").
+  const minMoney = working.match(/(?:minimum|at least|min\.?|over|more than|above)\s*([$€£]?\s*\d[\d,]*(?:\.\d+)?)/i);
+  if (minMoney) {
+    const num = parseInt(minMoney[1].replace(/[$€£\s,]/g, ''), 10);
+    if (Number.isFinite(num) && num > 0) result.minBid = num;
+    working = working.replace(minMoney[0], ' ').replace(/\s+/g, ' ').trim();
+  }
   const money = working.match(/(?:under|below|max|maximo|maximo|hasta|menos de|sous|moins de|unter|bis|less than|budget|presupuesto)\s*([$€£]?\s*\d[\d,]*(?:\.\d+)?)/i)
     || working.match(/([$€£]\s*\d[\d,]*(?:\.\d+)?)/);
   if (money) {
     const num = parseInt(money[1].replace(/[$€£\s,]/g, ''), 10);
     if (Number.isFinite(num) && num > 0) result.maxBid = num;
+    working = working.replace(money[0], ' ').replace(/\s+/g, ' ').trim();
   }
 
+  // Negation / exclusions: "no flutter", "without React", "exclude X".
+  const NEGATOR = /(?:^|\s)(?:without|excluding|exclude|avoid|no|not|don'?t|doesn'?t|minus|except|instead of|other than)\s+([a-z0-9][a-z0-9.\-+]*)(?:\s+([a-z0-9][a-z0-9.\-+]*))?/gi;
+  const NEGATION_NOISE = new Set([
+    'much', 'many', 'any', 'some', 'more', 'sure', 'idea', 'clue', 'way', 'money', 'time',
+    'where', 'about', 'really', 'very', 'just', 'want', 'need', 'longer', 'further',
+    'competition', 'competitors', 'results', 'experience', 'work', 'jobs',
+  ]);
+  const exclude: string[] = [];
+  for (const m of working.matchAll(NEGATOR)) {
+    for (const t of [m[1], m[2]]) {
+      if (t && !STOPWORDS.has(t) && !NEGATION_NOISE.has(t) && exclude.length < 3) exclude.push(t);
+    }
+  }
+  working = working.replace(NEGATOR, () => ' ').replace(/\s+/g, ' ').trim();
+  if (exclude.length) result.exclude = exclude;
+
   // Platforms / opportunity / job type — evaluated on the time-window-stripped
-  // text so "24 hours" never triggers the "hourly" keyword.
+  // text so "24 hours" never triggers the "hourly" keyword. When a competition
+  // level was detected, "low/weak"-style words are about competition, NOT the
+  // review opportunity tier, so they are excluded from the tier scan.
   const all = [WORDS.en, WORDS.es, WORDS.fr, WORDS.de, WORDS.hi];
+  const COMPETITION_WORDS = new Set(['low', 'weak', 'bajo', 'faible', 'niedrig', 'gering', 'kam', 'revisar', 'revoir']);
+  const tierAll = result.lowCompetition != null
+    ? all.map(lang => ({ ...lang, review: lang.review.filter(w => !COMPETITION_WORDS.has(w)) }))
+    : all;
   if (hasAny(working, all.flatMap(s => s.upwork))) result.platform = 'Upwork';
   else if (hasAny(working, all.flatMap(s => s.freelancer))) result.platform = 'Freelancer';
-  if (hasAny(working, all.flatMap(s => s.high))) result.opportunity = 'high';
-  else if (hasAny(working, all.flatMap(s => s.good))) result.opportunity = 'good';
-  else if (hasAny(working, all.flatMap(s => s.review))) result.opportunity = 'review';
+  if (hasAny(working, tierAll.flatMap(s => s.high))) result.opportunity = 'high';
+  else if (hasAny(working, tierAll.flatMap(s => s.good))) result.opportunity = 'good';
+  else if (hasAny(working, tierAll.flatMap(s => s.review))) result.opportunity = 'review';
   if (hasAny(working, all.flatMap(s => s.hourly))) result.jobType = 'hourly';
   else if (hasAny(working, all.flatMap(s => s.fixed))) result.jobType = 'fixed';
 

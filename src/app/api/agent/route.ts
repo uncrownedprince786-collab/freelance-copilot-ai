@@ -4,14 +4,22 @@ import { isAuthenticatedRequest } from '@/lib/adminAuth';
 import {
   AgentIntent,
   AgentJobCard,
+  AgentProposalDraft,
+  AgentResultSet,
   AGENT_GREETING,
   AGENT_GUIDANCE,
   AGENT_SUGGESTIONS,
+  applyProposalEdit,
   buildTrendsSnapshot,
   classifyIntent,
+  detectProposalEdit,
+  generateAgentProposal,
+  isProposalAsk,
   refineWorkingSet,
+  resolveProposalTarget,
   runJobSearch,
   serializeJobsForLLM,
+  serializeResultSetsForLLM,
 } from '@/lib/agentTools';
 import { runAssistantChat, ChatMessage } from '@/services/ai/agentChat';
 
@@ -174,8 +182,90 @@ export async function POST(request: NextRequest) {
     ? rawWorking.slice(0, MAX_JOBS).map(sanitizeJob).filter((j): j is AgentJobCard => j !== null)
     : [];
 
+  const rawResultSets = (body as Record<string, unknown>).resultSets;
+  const resultSets: AgentResultSet[] = Array.isArray(rawResultSets)
+    ? rawResultSets
+        .slice(-3)
+        .map(rs => {
+          if (!rs || typeof rs !== 'object') return null;
+          const r = rs as Record<string, unknown>;
+          const jobs = Array.isArray(r.jobs) ? r.jobs.slice(0, MAX_JOBS).map(sanitizeJob).filter((j): j is AgentJobCard => j !== null) : [];
+          const label = typeof r.label === 'string' ? r.label.slice(0, 60) : '';
+          return { label, jobs };
+        })
+        .filter((rs): rs is AgentResultSet => rs !== null)
+    : [];
+
+  const rawActiveProposal = (body as Record<string, unknown>).activeProposal;
+  const activeProposal: AgentProposalDraft | null =
+    rawActiveProposal && typeof rawActiveProposal === 'object'
+      ? (() => {
+          const p = rawActiveProposal as Record<string, unknown>;
+          const text = typeof p.text === 'string' ? p.text.trim().slice(0, 4000) : '';
+          const jobId = typeof p.jobId === 'string' ? p.jobId : '';
+          const title = typeof p.title === 'string' ? p.title : '';
+          if (!text || !jobId) return null;
+          return { jobId, title, text, verified: p.verified === true, note: undefined };
+        })()
+      : null;
+
   try {
-    const intent: AgentIntent = classifyIntent(cappedContent, workingJobs.length);
+    // ── Proposal tool ─────────────────────────────────────────────
+    // A request to write/tweak a proposal is handled before intent dispatch so
+    // it never degenerates into a keyword search. Drafts only repeat the job's
+    // real listing facts (see generateGroundedProposal).
+    if (isProposalAsk(cappedContent) || (activeProposal && detectProposalEdit(cappedContent))) {
+      const edit = activeProposal ? detectProposalEdit(cappedContent) : null;
+
+      if (activeProposal && edit) {
+        if (edit === 'longer' || edit === 'professional') {
+          return NextResponse.json({
+            reply: `I've kept your draft for "${activeProposal.title}" as-is. I only state facts from the listing itself, so I can't pad it with invented experience or qualifications — unsupported claims would hurt your credibility with the client.\n\nIf you want, I can make it shorter or generate a fresh version.`,
+            tool: 'proposal',
+            proposal: activeProposal,
+            suggestions: ['Make it shorter', 'New proposal for the top job', 'Compare the top opportunities'],
+          }, { headers: secureHeaders });
+        }
+        if (edit === 'generic') {
+          return NextResponse.json({
+            reply: `I can make it shorter or start over. Every line stays grounded in the listing — I can't add invented experience or portfolio claims. What would you like to change?\n\n${activeProposal.text}`,
+            tool: 'proposal',
+            proposal: activeProposal,
+            suggestions: ['Make it shorter', 'New proposal for the top job'],
+          }, { headers: secureHeaders });
+        }
+        const updated = applyProposalEdit(activeProposal, edit);
+        return NextResponse.json({
+          reply: `Here's the ${edit === 'shorter' ? 'shortened' : 'fresh'} draft for "${activeProposal.title}".`,
+          tool: 'proposal',
+          proposal: updated,
+          suggestions: ['Make it shorter', 'Compare the top opportunities', 'Find me recent React jobs'],
+        }, { headers: secureHeaders });
+      }
+
+      const target = resolveProposalTarget(cappedContent, workingJobs);
+      if (!target) {
+        return NextResponse.json({
+          reply: workingJobs.length
+            ? `I can write a tailored proposal for any job in the current list. Tell me which one — by number (e.g. "the first one" or "job #3") or by name.`
+            : `I need an opportunity to write a proposal for. Ask me to find jobs first (e.g. "Find me recent React jobs"), then tell me which one to draft for.`,
+          tool: 'proposal',
+          suggestions: workingJobs.length ? ['Proposal for the top job'] : AGENT_SUGGESTIONS,
+        }, { headers: secureHeaders });
+      }
+      const draft = await generateAgentProposal(target);
+      if (!draft.text) {
+        return NextResponse.json({ reply: draft.note || 'I could not generate a proposal for that listing right now.', tool: 'proposal' }, { headers: secureHeaders });
+      }
+      return NextResponse.json({
+        reply: `Here's a tailored proposal for "${target.title}". It's grounded only in the listing's real requirements${draft.verified ? '.' : ` (note: ${draft.note}).`}`,
+        tool: 'proposal',
+        proposal: draft,
+        suggestions: ['Make it shorter', 'More professional', 'Compare the top opportunities'],
+      }, { headers: secureHeaders });
+    }
+
+    const intent: AgentIntent = classifyIntent(cappedContent, workingJobs.length, resultSets.length > 0);
 
     let reply = '';
     let cards: AgentJobCard[] = workingJobs;
@@ -185,14 +275,16 @@ export async function POST(request: NextRequest) {
     // "which is the best job?" with nothing to compare yet → surface real
     // ranked opportunities as structured cards (the UI renders `jobs`), not
     // merely a sentence. Cards come only from the live feed — never invented.
-    if (intent === 'search' && workingJobs.length === 0 && /(which (is|one)|best|compare|recommend|prioritize)/i.test(cappedContent) && cappedContent.length < 60) {
-      const result = await runJobSearch(cappedContent, MAX_JOBS);
+    if (intent === 'search' && workingJobs.length === 0 && /(which (is|one|of|job)|best|strong(est|er)?|pick|choose|recommend|prioritize|compare|apply to|top (opportunit|pick|job)|should (i|we) (apply|bid|take|focus|pick|go|prioritize))/i.test(cappedContent) && cappedContent.length < 60) {
+      const FUZZY = /\b(which|is|the|one|best|better|strong|strongest|stronger|opportunit|opportunities|job|jobs|compare|recommend|prioritize|pick|choose|should|i|we|apply|to|look|looking|for|me|a|an|of|these|this|that|them|most|least|value|would|you|are|good|and)\b/gi;
+      const cleanQuery = cappedContent.replace(FUZZY, ' ').replace(/\s+/g, ' ').trim();
+      const result = await runJobSearch(cleanQuery, MAX_JOBS);
       cards = result.jobs;
       tool = 'compare';
       if (cards.length > 0) {
         const dataCtx = serializeJobsForLLM(cards, MAX_JOBS);
         const countNote = `Returned ${cards.length} matching opportunit${cards.length === 1 ? 'y' : 'ies'}, shown as cards below.`;
-        reply = await reasonOverJobs('compare', cappedContent, cards, dataCtx, `Filters: ${result.filtersNote}. ${countNote}`);
+        reply = await reasonOverJobs('compare', cappedContent, cards, dataCtx, `Filters: ${result.filtersNote}. ${countNote}`, resultSets);
         if (!reply) reply = fallbackReply('compare', cappedContent, cards, '');
       } else {
         reply = COMPARE_NO_CONTEXT;
@@ -213,8 +305,8 @@ export async function POST(request: NextRequest) {
       tool = 'trends';
     } else if (intent === 'compare') {
       // Reason over the current working set (jobs from the last search).
-      if (cards.length > 0) {
-        reply = await reasonOverJobs('compare', cappedContent, cards);
+      if (cards.length > 0 || resultSets.length > 0) {
+        reply = await reasonOverJobs('compare', cappedContent, cards, undefined, undefined, resultSets);
         if (!reply) reply = fallbackReply(intent, cappedContent, cards, '');
       } else {
         reply = COMPARE_NO_CONTEXT;
@@ -228,7 +320,7 @@ export async function POST(request: NextRequest) {
       const dataCtx = serializeJobsForLLM(cards, MAX_JOBS);
       const countNote = `Returned ${cards.length} matching opportunit${cards.length === 1 ? 'y' : 'ies'}, shown as cards below.`;
       if (cards.length > 0) {
-        reply = await reasonOverJobs(intent === 'refine' ? 'refine' : 'search', cappedContent, cards, dataCtx, `Filters: ${result.filtersNote}. ${countNote}`);
+        reply = await reasonOverJobs(intent === 'refine' ? 'refine' : 'search', cappedContent, cards, dataCtx, `Filters: ${result.filtersNote}. ${countNote}`, resultSets);
         if (!reply) reply = fallbackReply(intent, cappedContent, cards, '');
       } else {
         reply = NO_RESULTS(extractTermsForMessage(cappedContent));
@@ -303,8 +395,12 @@ async function reasonOverJobs(
   cards: AgentJobCard[],
   dataCtx = serializeJobsForLLM(cards, MAX_JOBS),
   extraNote = '',
+  resultSets: AgentResultSet[] = [],
 ): Promise<string> {
-  const system = systemPrompt(true, false).replace('{{JOBS}}', dataCtx);
+  const prevBlock = resultSets.length
+    ? `\n\nPREVIOUS RESULT SETS (from earlier in this conversation). Use them ONLY when the user is clearly referring to an earlier list, a previous search, or a job shown before the current list:\n${serializeResultSetsForLLM(resultSets, [], MAX_JOBS)}`
+    : '';
+  const system = systemPrompt(true, false).replace('{{JOBS}}', dataCtx + prevBlock);
   const task =
     kind === 'compare'
       ? 'Compare the listed opportunities and recommend which to prioritize first, with concrete reasons tied to the actual signals (score, proposals, recency, budget, client/repeat-client activity). Reference jobs by their #number. If data is missing, say so.'

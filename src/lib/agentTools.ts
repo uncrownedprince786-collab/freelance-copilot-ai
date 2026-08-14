@@ -5,6 +5,7 @@ import { parseSmartSearch, SmartSearchResult } from '@/app/api/search/route';
 import { computeMarketIntelligence } from './marketIntelligence';
 import { getHistoricalTrends } from './marketFacts';
 import { AGENT_GREETING, AGENT_SUGGESTIONS } from './agentTypes';
+import { generateGroundedProposal, validateProposal, extractJobInstructions } from './proposalGrounding';
 
 /**
  * Server-only types for the Agent tool layer.
@@ -82,14 +83,17 @@ export function shapeJobCard(job: JobFeedItem): AgentJobCard {
 // before any tool runs and redirected to the assistant's scope.
 
 const INJECTION_PATTERNS: RegExp[] = [
-  /ignore (your|the|all|any|previous|prior|above|earlier)/i,
-  /forget (your|the|all|any|previous|prior)/i,
+  // Only an instruction/system override is a hijack — "ignore the budget",
+  // "forget the platform filter" and similar constraint/removal phrases are
+  // legitimate conversational refinements and must NOT be flagged here.
+  /ignore (your|the|all|any|previous|prior|above|earlier).*(instructions?|rules?|guidelines?|prompts?|system)/i,
+  /forget (your|all|any|previous|prior).*(instructions?|rules?|guidelines?|prompts?|system)/i,
   /act as (an?|a)?\s*(unrestricted|unfiltered|another|different|rogue|free)\s*(ai|assistant|bot|gpt|model|chatbot)/i,
   /you are now (an?|a)?\s*(unrestricted|unfiltered|free|another)/i,
   /(show|reveal|print|display|tell).*(system prompt|hidden|internal|instructions|rules|guidelines|configuration)/i,
   /(your|the).*(system prompt|hidden instructions|internal rules|tool definitions|api keys?|credentials|secrets?|database)/i,
-  /never mind (the|your|all)/i,
-  /disregard (the|your|all|previous)/i,
+  /never mind (your|the|all|any|previous|prior).*(instructions?|rules?|guidelines?|prompts?|system)/i,
+  /disregard (your|the|all|any|previous|prior).*(instructions?|rules?|guidelines?|prompts?|system)/i,
   /jailbreak|developer mode|dan mode|do anything now|no limits/i,
   /role[ -]?play as (an?|a)? (unrestricted|other|different)/i,
   /simulate .*(bypass|override)/i,
@@ -108,7 +112,7 @@ export function looksLikeInjection(text: string): boolean {
 // the platform capabilities. "compare"/"refine" only make sense when a
 // working set of results already exists.
 
-export function classifyIntent(text: string, workingCount: number): AgentIntent {
+export function classifyIntent(text: string, workingCount: number, hasPriorSets = false): AgentIntent {
   const lower = text.toLowerCase().trim();
   const words = lower.split(/\s+/).filter(Boolean).length;
 
@@ -122,11 +126,11 @@ export function classifyIntent(text: string, workingCount: number): AgentIntent 
     return 'trends';
   }
 
-  if (workingCount > 0 && /(compare|which (one|is|job|of these|of the)|best|better|recommend|prioritize|top (pick|choice|opportunit)|rank(ed|ing)?|vs\.?|versus|should i (apply|bid|take|focus)|why (this|is|that|are)|explain|analy|review these|first two|last one)/i.test(lower)) {
+  if ((workingCount > 0 || hasPriorSets) && /(compare|versus|vs\.?|rank(ed|ing)?|best|better|recommend|prioritize|strong(est|er)?|top (pick|choice|opportunit)|should i (apply|bid|take|focus|pick|go)|why (this|is|that|are|would)|explain|analy|review (these|them)|these two|the (first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|next|last|previous|other|one that|top|one)\b|which (one|of these|of the|would|is (the|a)|job|opportunit)|(what|how) about (the|that|them|it)|go (back to|with)\b|this (one|job|opportunit)|that (one|job|opportunit)|more like th(?:is|at|ose)|another one like|(the|that|this) (previous|earlier|first|last) (list|search|set)|from (the )?(previous|earlier|first|last) (list|search|set)|the (marketing|upwork|freelancer|trends?) list)/i.test(lower)) {
     return 'compare';
   }
 
-  if (workingCount > 0 && /^(only|just|narrow|refine|show (me )?only|keep|exclude|drop|also|under |over |above |higher (than|budget)|lower|cheaper|expensive|filter)/i.test(lower)) {
+  if (workingCount > 0 && /^(only|just|narrow|refine|show (me )?only|keep|exclude|drop|also|under |over |above |higher (than|budget)|lower|cheaper|expensive|filter|forget (the|about|budget|date|country|platform|skills|filter)|ignore (the|budget|date|country|platform)|stop (looking|filtering|showing|using)|clear (the|all)|remove|never mind|skip|ditch|trim|tighten|limit)/i.test(lower)) {
     return 'refine';
   }
 
@@ -161,17 +165,35 @@ function postedMatches(postedAt: string, window: '24h' | '3d' | '7d' | null): bo
   return Date.now() - ms < hours * 60 * 60 * 1000;
 }
 
-function budgetMatches(job: JobFeedItem, jobType: 'fixed' | 'hourly' | null, maxBid: number | null): boolean {
+function parseBudgetAmount(budget: string): number | null {
+  const m = (budget || '').match(/\d[\d,]*/);
+  return m ? Number(m[0].replace(/,/g, '')) : null;
+}
+
+function budgetMatches(job: JobFeedItem, jobType: 'fixed' | 'hourly' | null, maxBid: number | null, minBid: number | null): boolean {
   if (jobType) {
     const bt = (job.budgetType || '').toLowerCase();
     if (jobType === 'hourly' && !bt.includes('hourly')) return false;
     if (jobType === 'fixed' && !bt.includes('fixed')) return false;
   }
-  if (maxBid != null) {
-    const num = job.budget.match(/\d[\d,]*/) ? Number(job.budget.match(/\d[\d,]*/)![0].replace(/,/g, '')) : null;
-    if (num != null && num > maxBid) return false;
-  }
+  const num = parseBudgetAmount(job.budget);
+  if (maxBid != null && num != null && num > maxBid) return false;
+  if (minBid != null && num != null && num < minBid) return false;
   return true;
+}
+
+function proposalCountMatches(job: JobFeedItem, maxProposals: number | null, lowCompetition: boolean | null): boolean {
+  const pc = job.proposalCount;
+  if (maxProposals != null && pc != null && pc > maxProposals) return false;
+  if (lowCompetition === true && pc != null && pc >= 10) return false;
+  if (lowCompetition === false && (pc == null || pc < 10)) return false;
+  return true;
+}
+
+function excludeMatches(job: JobFeedItem, exclude: string[]): boolean {
+  if (!exclude.length) return false;
+  const hay = `${job.title || ''} ${job.description || ''} ${(job.skills || []).join(' ')}`.toLowerCase();
+  return exclude.some(t => hay.includes(t));
 }
 
 function applySmartFilters(job: JobFeedItem, f: SmartSearchResult): boolean {
@@ -180,7 +202,9 @@ function applySmartFilters(job: JobFeedItem, f: SmartSearchResult): boolean {
   if (f.client && !(job.clientName || '').toLowerCase().includes(f.client.toLowerCase())) return false;
   if (!scoreMatches(job, f.opportunity)) return false;
   if (!postedMatches(job.postedAt, f.posted)) return false;
-  if (!budgetMatches(job, f.jobType, f.maxBid)) return false;
+  if (!budgetMatches(job, f.jobType, f.maxBid, f.minBid)) return false;
+  if (!proposalCountMatches(job, f.maxProposals, f.lowCompetition)) return false;
+  if (excludeMatches(job, f.exclude)) return false;
   if (!matchesKeywords(job, extractTerms(f.query))) return false;
   return true;
 }
@@ -196,8 +220,12 @@ export function describeFilters(f: SmartSearchResult, applied: boolean): string 
   if (f.jobType) parts.push(`${f.jobType} budget type`);
   if (f.posted) parts.push(`posted in the last ${f.posted.replace('24h', '24 hours').replace('3d', '3 days').replace('7d', '7 days')}`);
   if (f.maxBid != null) parts.push(`budget up to $${f.maxBid}`);
+  if (f.minBid != null) parts.push(`budget at least $${f.minBid}`);
+  if (f.maxProposals != null) parts.push(`under ${f.maxProposals} proposals`);
+  if (f.lowCompetition != null) parts.push(f.lowCompetition ? 'low competition' : 'high competition');
   if (f.country) parts.push(`country ${f.country}`);
   if (f.client) parts.push(`client ${f.client}`);
+  if (f.exclude.length) parts.push(`excluding ${f.exclude.join(', ')}`);
   const kw = extractTerms(f.query);
   if (kw.length) parts.push(`keywords: ${kw.join(', ')}`);
   return parts.length ? parts.join(' · ') : (applied ? 'current result set' : 'all current listings');
@@ -297,4 +325,131 @@ export function serializeJobsForLLM(cards: AgentJobCard[], max = 8): string {
     return parts.join(' | ');
   });
   return lines.join('\n');
+}
+
+// ── Result-set memory ──────────────────────────────────────────────────
+// The client keeps the last few labeled result sets so cross-set references
+// ("the second one from the marketing list", "the previous list") can be
+// resolved instead of failing as a fresh search.
+
+export interface AgentResultSet {
+  label: string;
+  jobs: AgentJobCard[];
+}
+
+export function serializeResultSetsForLLM(sets: AgentResultSet[], currentCards: AgentJobCard[], max = 8): string {
+  const blocks: string[] = [];
+  sets.slice(-3).forEach((set, i) => {
+    const label = set.label || `List ${i + 1}`;
+    const jobs = set.jobs.slice(0, max);
+    const lines = jobs.length
+      ? jobs.map((c, j) => `#${j + 1} "${c.title}" (${c.platform}, ${c.budget}, score=${c.score}, proposals=${c.proposalCount ?? 'n/a'})`)
+      : ['(empty)'];
+    blocks.push(`LIST "${label}":\n${lines.join('\n')}`);
+  });
+  if (currentCards.length) {
+    blocks.push(`CURRENT WORKING LIST (most recent):\n${serializeJobsForLLM(currentCards, max)}`);
+  }
+  return blocks.join('\n\n');
+}
+
+// ── Proposal tool ──────────────────────────────────────────────────────
+// Drafts a grounded cover letter for a resolved job and supports a small set
+// of deterministic edits. Proposals are ONLY ever grounded in the job's real
+// listing data — never fabricated candidate experience.
+
+export interface AgentProposalDraft {
+  jobId: string;
+  title: string;
+  text: string;
+  verified: boolean;
+  note?: string;
+}
+
+const PROPOSAL_ASK =
+  /(write|draft|create|generate|prepare|compose|start|make|send|submit|help me (with a|write|prepare|draft))\b.{0,50}?\b(proposal|cover letter|bid|pitch|application|intro)/i;
+
+export function isProposalAsk(text: string): boolean {
+  return PROPOSAL_ASK.test(text);
+}
+
+export type ProposalEdit = 'shorter' | 'longer' | 'professional' | 'rewrite' | 'generic';
+
+export function detectProposalEdit(text: string): ProposalEdit | null {
+  const t = text.toLowerCase();
+  if (/(shorter|shorten|brief|briefer|condense|concise|tighten|trim|cut down|too long|make it (shorter|briefer|concise))/i.test(t)) return 'shorter';
+  if (/(longer|expand|elaborate|add more|more detail|more detailed|make it (longer|more detailed|more in-depth))/i.test(t)) return 'longer';
+  if (/(more professional|more formal|professional|formal|polish|tone)/i.test(t)) return 'professional';
+  if (/(rewrite|start over|regenerate|redo|try again|fresh|another version)/i.test(t)) return 'rewrite';
+  if (/(edit|change|update|tweak|adjust|modify|revise|improve|make it)/i.test(t)) return 'generic';
+  return null;
+}
+
+export function resolveProposalTarget(text: string, cards: AgentJobCard[]): AgentJobCard | null {
+  if (!cards.length) return null;
+  const t = text.toLowerCase();
+
+  const ranked = [...cards].sort((a, b) => b.score - a.score);
+  const ordMatch = t.match(/(?:the\s+|#\s*)?(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|next|last|top|strongest|best|highest|lowest)\b/);
+  if (ordMatch) {
+    const o = ordMatch[1];
+    if (o === 'first' || o === '1st') return cards[0] ?? null;
+    if (o === 'second' || o === '2nd') return cards[1] ?? null;
+    if (o === 'third' || o === '3rd') return cards[2] ?? null;
+    if (o === 'fourth' || o === '4th') return cards[3] ?? null;
+    if (o === 'fifth' || o === '5th') return cards[4] ?? null;
+    if (o === 'next') return cards[1] ?? null;
+    if (o === 'last') return cards[cards.length - 1] ?? null;
+    if (o === 'top' || o === 'strongest' || o === 'best' || o === 'highest') return ranked[0] ?? null;
+    if (o === 'lowest') return ranked[ranked.length - 1] ?? null;
+  }
+
+  // numeric reference: "job #2", "#3", "the 2nd"
+  const numMatch = t.match(/#\s*(\d+)|(?:job|one|number|#)\s*(\d+)\b/);
+  const n = numMatch ? parseInt(numMatch[1] || numMatch[2] || '', 10) : NaN;
+  if (Number.isFinite(n) && n >= 1 && n <= cards.length) return cards[n - 1] ?? null;
+
+  // title substring (only when the card title is long enough to be specific)
+  const byTitle = cards.find(c => {
+    const title = c.title.toLowerCase();
+    return title.split(/\s+/).length >= 2 && t.includes(title);
+  });
+  return byTitle ?? null;
+}
+
+export async function generateAgentProposal(card: AgentJobCard): Promise<AgentProposalDraft> {
+  const feed = await buildJobFeed();
+  const job = feed.find(j => j.id === card.id);
+  if (!job) {
+    return { jobId: card.id, title: card.title, text: '', verified: false, note: 'The job data for this listing is not available right now.' };
+  }
+  const instructions = extractJobInstructions(job.description || '');
+  const verificationWord = instructions.openingWord || '';
+  const text = generateGroundedProposal(job.title, job.description || '', {
+    clientName: job.clientName,
+    skills: job.skills,
+    verificationWord: verificationWord || undefined,
+    instructions,
+  });
+  const validation = validateProposal(text, { title: job.title, skills: job.skills, description: job.description }, verificationWord, instructions);
+  return {
+    jobId: card.id,
+    title: card.title,
+    text,
+    verified: validation.ok,
+    note: validation.ok ? undefined : validation.issues[0],
+  };
+}
+
+/** Deterministic, grounded proposal edits. Longer/professional edits cannot
+ *  invent content, so they return the draft unchanged and the caller explains. */
+export function applyProposalEdit(draft: AgentProposalDraft, edit: ProposalEdit): AgentProposalDraft {
+  if (edit === 'shorter') {
+    const sentences = draft.text.split(/(?<=[.!?])\s+/).filter(s => s.trim());
+    const head = sentences.slice(0, 2).join(' ').trim();
+    const tail = sentences.length > 2 ? sentences[sentences.length - 1].trim() : '';
+    const text = tail ? `${head} ${tail}` : head;
+    return { ...draft, text };
+  }
+  return { ...draft };
 }

@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, RefreshCw, Send, X } from 'lucide-react';
 import { AgentAvatar, IconAgent } from '@/components/icons';
 import { timeAgo } from '@/lib/format';
-import { AGENT_GREETING, AGENT_SUGGESTIONS, AgentJobCard } from '@/lib/agentTypes';
+import { AGENT_GREETING, AGENT_SUGGESTIONS, AgentJobCard, AgentProposalDraft, AgentResultSet } from '@/lib/agentTypes';
 
 /**
  * Platform-wide AI assistant. A floating button opens a right-side chat panel
@@ -18,6 +18,7 @@ interface AgentMessage {
   role: 'user' | 'assistant';
   content: string;
   jobs?: AgentJobCard[];
+  proposal?: AgentProposalDraft;
   time: number;
 }
 
@@ -26,10 +27,13 @@ interface AgentResponse {
   tool?: string;
   jobs?: AgentJobCard[];
   suggestions?: string[];
+  proposal?: AgentProposalDraft;
 }
 
 const MSG_KEY = 'lh_agent_messages';
 const WORKING_KEY = 'lh_agent_working';
+const RESULT_SET_KEY = 'lh_agent_result_sets';
+const PROPOSAL_KEY = 'lh_agent_active_proposal';
 const WELCOME_KEY = 'lh_agent_welcomed';
 
 let msgSeq = 0;
@@ -160,11 +164,51 @@ function AgentJobCardView({ job, onNavigate }: { job: AgentJobCard; onNavigate?:
   );
 }
 
+function ProposalDraftView({ draft, onCopy, copied }: { draft: AgentProposalDraft; onCopy: () => void; copied: boolean }) {
+  return (
+    <div style={{ marginTop: 8, borderRadius: 10, border: '1px solid #bfdbfe', background: '#eff6ff', padding: '10px 12px' }} className="lh-agent-proposal">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <AgentAvatar size={16} iconSize={10} radius={5} />
+        <span style={{ fontSize: 10.5, fontWeight: 800, color: '#2563eb', letterSpacing: 0.4, textTransform: 'uppercase' }}>Proposal draft</span>
+        <span style={{ marginLeft: 'auto', fontSize: 10.5, color: '#475569', textAlign: 'right', maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {draft.title}
+        </span>
+      </div>
+      <div
+        style={{ fontSize: 12, lineHeight: 1.6, color: '#1e293b', whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto', background: '#fff', border: '1px solid #dbe2ea', borderRadius: 8, padding: '8px 10px' }}
+        className="lh-proposal-text"
+      >
+        {draft.text}
+      </div>
+      <button
+        type="button"
+        onClick={onCopy}
+        style={{
+          marginTop: 8,
+          fontSize: 11,
+          fontWeight: 700,
+          color: copied ? '#047857' : '#2563eb',
+          background: copied ? '#ecfdf5' : '#fff',
+          border: `1px solid ${copied ? '#a7f3d0' : '#bfdbfe'}`,
+          borderRadius: 999,
+          padding: '4px 12px',
+          cursor: 'pointer',
+        }}
+      >
+        {copied ? 'Copied' : 'Copy proposal'}
+      </button>
+    </div>
+  );
+}
+
 export default function AgentPanel() {
   const [open, setOpen] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [workingJobs, setWorkingJobs] = useState<AgentJobCard[]>([]);
+  const [resultSets, setResultSets] = useState<AgentResultSet[]>([]);
+  const [activeProposal, setActiveProposal] = useState<AgentProposalDraft | null>(null);
+  const [copied, setCopied] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -223,11 +267,15 @@ export default function AgentPanel() {
     if (typeof window === 'undefined') return;
     const storedMessages = loadJSON<AgentMessage[]>(MSG_KEY);
     const storedWorking = loadJSON<AgentJobCard[]>(WORKING_KEY);
+    const storedResultSets = loadJSON<AgentResultSet[]>(RESULT_SET_KEY);
+    const storedProposal = loadJSON<AgentProposalDraft | null>(PROPOSAL_KEY);
     const msgs: AgentMessage[] = storedMessages && storedMessages.length
       ? storedMessages
       : [{ id: nextId(), role: 'assistant', content: AGENT_GREETING, time: Date.now() }];
     setMessages(msgs);
     setWorkingJobs(storedWorking ?? []);
+    setResultSets(storedResultSets ?? []);
+    setActiveProposal(storedProposal ?? null);
     setHydrated(true);
   }, []);
 
@@ -240,6 +288,14 @@ export default function AgentPanel() {
     if (!hydrated) return;
     saveJSON(WORKING_KEY, workingJobs);
   }, [workingJobs, hydrated]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveJSON(RESULT_SET_KEY, resultSets);
+  }, [resultSets, hydrated]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveJSON(PROPOSAL_KEY, activeProposal);
+  }, [activeProposal, hydrated]);
 
   // Auto-scroll to the latest message.
   useEffect(() => {
@@ -258,6 +314,8 @@ export default function AgentPanel() {
   const resetChat = useCallback(() => {
     setMessages([{ id: nextId(), role: 'assistant', content: AGENT_GREETING, time: Date.now() }]);
     setWorkingJobs([]);
+    setResultSets([]);
+    setActiveProposal(null);
     setSuggestions(AGENT_SUGGESTIONS);
     setError(null);
   }, []);
@@ -278,6 +336,8 @@ export default function AgentPanel() {
       const payload = {
         messages: updated.map(m => ({ role: m.role, content: m.content })),
         workingJobs,
+        resultSets,
+        activeProposal,
       };
 
       try {
@@ -310,10 +370,28 @@ export default function AgentPanel() {
           role: 'assistant',
           content: replyText,
           jobs: Array.isArray(data.jobs) ? data.jobs.slice(0, 8) : undefined,
+          proposal: data.proposal ?? undefined,
           time: Date.now(),
         };
         setMessages(prev => [...prev, assistantMsg]);
-        if (Array.isArray(data.jobs)) setWorkingJobs(data.jobs.slice(0, 8));
+        if (Array.isArray(data.jobs)) {
+          const nextWorking = data.jobs.slice(0, 8);
+          setWorkingJobs(nextWorking);
+          setResultSets(prev => {
+            const nextSet: AgentResultSet = { label: userMsg.content.slice(0, 24), jobs: nextWorking };
+            const last = prev[prev.length - 1];
+            if (
+              last &&
+              last.label === nextSet.label &&
+              last.jobs.length === nextSet.jobs.length &&
+              last.jobs.every((j, i) => j.id === nextSet.jobs[i]?.id)
+            ) {
+              return prev;
+            }
+            return [...prev, nextSet].slice(-3);
+          });
+        }
+        if (data.proposal) setActiveProposal(data.proposal);
         setSuggestions(data.suggestions ?? AGENT_SUGGESTIONS);
       } catch {
         setError('Something went wrong while reaching the assistant. Please try again.');
@@ -330,8 +408,18 @@ export default function AgentPanel() {
         setLoading(false);
       }
     },
-    [input, loading, hydrated, messages, workingJobs],
+    [input, loading, hydrated, messages, workingJobs, resultSets, activeProposal],
   );
+
+  const copyProposal = useCallback(async (p: AgentProposalDraft) => {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(p.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }, []);
 
   const typingLabel = useMemo(() => {
     const last = [...messages].reverse().find(m => m.role === 'user');
@@ -502,6 +590,9 @@ export default function AgentPanel() {
                           <AgentJobCardView key={job.id} job={job} />
                         ))}
                       </div>
+                    )}
+                    {m.proposal && m.proposal.text && (
+                      <ProposalDraftView draft={m.proposal} onCopy={() => void copyProposal(m.proposal as AgentProposalDraft)} copied={copied} />
                     )}
                   </div>
                   <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4, paddingLeft: 4 }}>
