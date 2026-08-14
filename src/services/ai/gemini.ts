@@ -1,8 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
+  ensureEndsWithWord,
+  ensureIncludesKeywords,
   ensureStartsWithWord,
-  extractVerificationWord,
+  extractJobInstructions,
   generateGroundedProposal,
+  instructionsToPromptLines,
   validateProposal,
 } from "@/lib/proposalGrounding";
 
@@ -56,9 +59,12 @@ export async function analyzeOpportunityWithAI(
   clientName: string = "Client"
 ): Promise<AIAnalysisResult> {
   const genAI = getGenAIClient();
+  const instructions = extractJobInstructions(description);
+  const verificationWord = instructions.openingWord;
+  const instructionLines = instructionsToPromptLines(instructions);
 
   if (!genAI) {
-    return getFallbackAnalysis(title, description, budget, platform, clientName, "Google Gemini API key is missing. Please configure GEMINI_API_KEY in your .env file.");
+    return getFallbackAnalysis(title, description, budget, platform, clientName, "Google Gemini API key is missing. Please configure GEMINI_API_KEY in your .env file.", instructions);
   }
 
   const prompt = `
@@ -102,7 +108,9 @@ Make sure the proposal:
 - If the listing asks questions or gives instructions, acknowledge them naturally in the opening.
 - Does NOT claim any of the freelancer's own experience, past projects, portfolio, tools they have used, results, or qualifications — no freelancer profile exists.
 - Includes a clear call to action to discuss details.
-${(() => { const vw = extractVerificationWord(description); return vw ? `- The "proposal" value MUST begin with exactly the word "${vw}" as its very first characters (no greeting or other word before it). Example: "${vw}\\n\\n<proposal>".` : ''; })()}
+${instructionLines.length ? `\nCLIENT INSTRUCTIONS & REQUIREMENTS (the client wrote these — comply with EVERY one, exactly as written; never skip or genericize any of them):\n${instructionLines.map(l => `- ${l}`).join('\n')}` : ''}
+- The "proposal" value MUST satisfy every instruction above. Where an instruction names a word, include that exact word. Where a question is listed, answer it specifically inside the proposal (grounded only in the Job Details above — never invent facts about the freelancer's own experience or availability).
+${verificationWord ? `- The "proposal" value MUST begin with exactly the word "${verificationWord}" as its very first characters (no greeting or other word before it). Example: "${verificationWord}\\n\\n<proposal>".` : ''}
 `;
 
   try {
@@ -144,14 +152,16 @@ ${(() => { const vw = extractVerificationWord(description); return vw ? `- The "
 
       // Grounding gate: never surface a proposal that leaks another job's
       // context, uses a canned template, invents candidate claims, or misses the
-      // listing's required opening word. When it fails, fall back to the shared
-      // deterministic generator, which is grounded in this listing by construction.
-      const verificationWord = extractVerificationWord(description);
-      const valid = validateProposal(parsed.proposal, { title, description }, verificationWord);
+      // listing's required opening word, ending word, keywords, questions, or
+      // experience bar. When it fails, fall back to the shared deterministic
+      // generator, which is grounded in this listing by construction.
+      const valid = validateProposal(parsed.proposal, { title, description }, verificationWord, instructions);
       if (!valid.ok) {
-        parsed.proposal = generateGroundedProposal(title, description, { clientName, verificationWord });
+        parsed.proposal = generateGroundedProposal(title, description, { clientName, verificationWord, instructions });
       }
       parsed.proposal = ensureStartsWithWord(parsed.proposal, verificationWord);
+      parsed.proposal = ensureIncludesKeywords(parsed.proposal, instructions.keywords);
+      parsed.proposal = ensureEndsWithWord(parsed.proposal, instructions.endingWord);
 
       return parsed;
     });
@@ -164,7 +174,8 @@ ${(() => { const vw = extractVerificationWord(description); return vw ? `- The "
       budget,
       platform,
       clientName,
-      `AI analysis failed at runtime: ${error?.message || error}`
+      `AI analysis failed at runtime: ${error?.message || error}`,
+      instructions
     );
   }
 }
@@ -176,7 +187,8 @@ function getFallbackAnalysis(
   budget: string,
   platform: string,
   clientName: string,
-  reason: string
+  reason: string,
+  instructions: ReturnType<typeof extractJobInstructions>
 ): AIAnalysisResult {
   const words = description.split(/\s+/).length;
   const hasBudget = budget && budget !== "Undetermined";
@@ -187,7 +199,7 @@ function getFallbackAnalysis(
   if (words > 100) score += 10;
   score = Math.min(score, 85);
 
-  const verificationWord = extractVerificationWord(description);
+  const verificationWord = instructions.openingWord;
 
   return {
     score,
@@ -221,6 +233,6 @@ function getFallbackAnalysis(
       "Do you have a design system or wireframes ready?",
       "What level of post-deployment support do you expect?"
     ],
-    proposal: generateGroundedProposal(title, description, { clientName, verificationWord }),
+    proposal: generateGroundedProposal(title, description, { clientName, verificationWord, instructions }),
   };
 }

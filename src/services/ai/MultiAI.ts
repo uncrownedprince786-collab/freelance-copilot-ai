@@ -1,6 +1,14 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
-import { ensureStartsWithWord, extractVerificationWord, generateGroundedProposal } from '@/lib/proposalGrounding';
+import {
+  ensureEndsWithWord,
+  ensureIncludesKeywords,
+  ensureStartsWithWord,
+  extractJobInstructions,
+  generateGroundedProposal,
+  instructionsToPromptLines,
+  ExtractedInstructions,
+} from '@/lib/proposalGrounding';
 
 export interface JobAnalysis {
   summary: string;
@@ -45,18 +53,24 @@ interface AnalysisOptions {
   clientJobsCount?: number;
   // Required opening word extracted from the listing (e.g. "SMILE").
   verificationWord?: string;
+  // Every instruction the listing gives the applicant (opening/ending words,
+  // keywords, questions, experience bar, actions, format) — fed to the prompt
+  // and mechanically enforced on the output.
+  instructions?: ExtractedInstructions;
   // Corrective guidance from a rejected attempt, appended to the prompt.
   regenerationNote?: string;
 }
 
 export class MultiAI {
   async analyze(title: string, description: string, options: AnalysisOptions = {}): Promise<JobAnalysis> {
-    // Resolve the required opening word from the listing once, so every provider
-    // and the fallback both see it (explicit option wins over re-extraction).
+    // Resolve the required opening word and the full instruction set from the
+    // listing once, so every provider and the fallback both see them (explicit
+    // options win over re-extraction).
     const effectiveOptions: AnalysisOptions = {
       ...options,
-      verificationWord: options.verificationWord || extractVerificationWord(description),
+      instructions: options.instructions || extractJobInstructions(description),
     };
+    effectiveOptions.verificationWord = options.verificationWord || effectiveOptions.instructions!.openingWord;
     const providerOrder = [
       { name: 'Gemini', runner: () => this.callGemini(title, description, effectiveOptions) },
       { name: 'OpenAI', runner: () => this.callOpenAI(title, description, effectiveOptions) },
@@ -81,12 +95,14 @@ export class MultiAI {
   }
 
   /** Post-process any provider result so the proposal always honors the
-   *  listing's required opening word before it is surfaced. */
+   *  listing's required opening word, required ending word, and keywords
+   *  before it is surfaced. */
   private finalize(result: JobAnalysis, options: AnalysisOptions): JobAnalysis {
-    const required = options.verificationWord || '';
-    if (required) {
-      result.proposal = ensureStartsWithWord(result.proposal, required);
-    }
+    const inst = options.instructions || extractJobInstructions('');
+    const required = options.verificationWord || inst.openingWord;
+    result.proposal = ensureStartsWithWord(result.proposal, required);
+    result.proposal = ensureIncludesKeywords(result.proposal, inst.keywords);
+    result.proposal = ensureEndsWithWord(result.proposal, inst.endingWord);
     result.verificationWord = required;
     return result;
   }
@@ -202,6 +218,11 @@ export class MultiAI {
     }
     const metricsLine = clientMetrics.length ? clientMetrics.join('; ') : 'no client metrics available';
 
+    const instructionLines = instructionsToPromptLines(options.instructions || extractJobInstructions(description));
+    const instructionSection = instructionLines.length
+      ? `\nCLIENT INSTRUCTIONS & REQUIREMENTS (the client wrote these — comply with EVERY one, exactly as written; never skip or genericize any of them):\n${instructionLines.map(l => `- ${l}`).join('\n')}\n`
+      : '';
+
     const skillsLine = options.skills && options.skills.length
       ? options.skills.join(', ')
       : (options.platform ? '' : '');
@@ -245,7 +266,9 @@ PROPOSAL (exactly 4 parts, no headers, written as a real freelancer speaking dir
 - Part 4 — Call to action: a natural, specific ask for a missing detail the listing did not provide (budget, timeline, or access to existing code/designs). If the description is thin, say what you would need from the client to proceed — never fabricate specifics.
 - Do NOT use generic filler or boilerplate such as "clean, maintainable code", "transparent communication", "fast turnaround and high quality", "I am available to discuss your scope", "schedule a quick chat", "I went through your listing", "Here is how I would approach it", or "Based on what you described".
 - Do NOT claim any of your own experience, past projects, portfolio, tools you have used, results you achieved, or qualifications — none of that information exists.
-${options.verificationWord ? `\nMANDATORY OPENING (strictly enforced):\n- The "proposal" value MUST begin with exactly the word "${options.verificationWord}" — it must be the very first characters of the proposal text, with no greeting, name, or any other word before it. Do not put it in quotes, brackets, or punctuation. Example: "${options.verificationWord}\\n\\n<rest of proposal>".` : ''}\n
+${instructionSection}
+${options.verificationWord ? `\nMANDATORY OPENING (strictly enforced):\n- The "proposal" value MUST begin with exactly the word "${options.verificationWord}" — it must be the very first characters of the proposal text, with no greeting, name, or any other word before it. Do not put it in quotes, brackets, or punctuation. Example: "${options.verificationWord}\\n\\n<rest of proposal>".` : ''}
+- PROPOSAL: satisfy EVERY instruction in CLIENT INSTRUCTIONS & REQUIREMENTS above. Where an instruction names a word, include that exact word. Where a question is listed, answer it specifically inside the proposal (grounded only in the Title, Description, and CLIENT & MARKET SIGNALS — never invent facts about the freelancer's own experience, availability, or tools).\n
 Return JSON with these exact keys:
 {
   "summary": "A short, clear summary of why the project is attractive and what matters most",
@@ -280,6 +303,7 @@ ${options.regenerationNote ? `\nCORRECTIVE GUIDANCE (from a rejected previous at
           clientName: options.clientName,
           skills: options.skills,
           verificationWord: options.verificationWord,
+          instructions: options.instructions,
         }),
         originalBudget: payload.originalBudget || this.extractBudgetText(description, options),
         originalTimeline: payload.originalTimeline || this.extractTimeline(description),
@@ -383,6 +407,7 @@ ${options.regenerationNote ? `\nCORRECTIVE GUIDANCE (from a rejected previous at
         clientName: options.clientName,
         skills: options.skills,
         verificationWord: options.verificationWord,
+        instructions: options.instructions,
       }),
       originalBudget: this.extractBudgetText(description, options),
       originalTimeline: this.extractTimeline(description),

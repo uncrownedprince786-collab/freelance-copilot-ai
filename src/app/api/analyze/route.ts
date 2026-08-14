@@ -5,10 +5,13 @@ import { isAuthenticatedRequest } from '@/lib/adminAuth';
 import { clientKeyOf } from '@/lib/marketFacts';
 import { getRawJobs } from '@/lib/jobsCache';
 import {
+  ensureEndsWithWord,
+  ensureIncludesKeywords,
   ensureStartsWithWord,
-  extractVerificationWord,
+  extractJobInstructions,
   jobFingerprint,
   GroundingJob,
+  ExtractedInstructions,
   validateAssessment,
   validateProposal,
 } from '@/lib/proposalGrounding';
@@ -60,11 +63,12 @@ function isAnalysisUsable(
   job: GroundingJob,
   verificationWord: string,
   fp: string,
+  instructions: ExtractedInstructions,
 ): boolean {
   if (!data || typeof data !== 'object') return false;
   if (typeof data.proposal !== 'string' || !data.proposal.trim()) return false;
   if (typeof data._jobFp === 'string' && data._jobFp !== fp) return false;
-  const proposalOk = validateProposal(data.proposal, job, verificationWord).ok;
+  const proposalOk = validateProposal(data.proposal, job, verificationWord, instructions).ok;
   const assessmentOk = validateAssessment(data, job).ok;
   return proposalOk && assessmentOk;
 }
@@ -181,7 +185,9 @@ export async function POST(request: NextRequest) {
 
   const { title, description, platform, budget, clientName, opportunityId, skills, totalSpent, jobsPosted, totalHires, rating, budgetMin, budgetMax, budgetType, proposalCount, interviewingCount, experienceLevel, duration, connectsRequired, paymentVerified } = body as Record<string, unknown>;
 
-  // Sanitize — strip any HTML/script tags, enforce length limits
+  // Sanitize — strip any HTML/script tags, enforce length limits. The full
+  // description is read (up to 60k chars) because client instructions can sit
+  // at the very end of a long posting and must not be truncated away.
   const sanitize = (s: unknown, max = 500): string =>
     typeof s === 'string'
       ? s.replace(/<[^>]*>/g, '').trim().slice(0, max)
@@ -192,7 +198,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'title is required.' }, { status: 400, headers: secureHeaders });
   }
 
-  const safeDesc = sanitize(description, 12000);
+  const safeDesc = sanitize(description, 60000);
   const safePlatform = sanitize(platform, 50) || 'Unknown';
   const safeBudget = sanitize(budget, 100) || 'Negotiable';
   const safeClientName = sanitize(clientName, 100);
@@ -207,14 +213,15 @@ export async function POST(request: NextRequest) {
   if (safeOpportunityId) {
     const key = cacheKey(safeOpportunityId);
     const groundingJob: GroundingJob = { title: safeTitle, skills: safeSkills, description: safeDesc };
-    const vw = extractVerificationWord(safeDesc);
+    const instructions = extractJobInstructions(safeDesc);
+    const vw = instructions.openingWord;
     const fp = jobFingerprint(safeTitle, safeSkills);
     const memHit = memCache.get(key);
-    if (memHit && isCacheValid(memHit.ts) && isAnalysisUsable(memHit.data, groundingJob, vw, fp)) {
+    if (memHit && isCacheValid(memHit.ts) && isAnalysisUsable(memHit.data, groundingJob, vw, fp, instructions)) {
       return NextResponse.json({ ...(memHit.data as Record<string, unknown>) }, { headers: secureHeaders });
     }
     const persisted = await readPersistentCache(key);
-    if (persisted && isAnalysisUsable(persisted.data, groundingJob, vw, fp)) {
+    if (persisted && isAnalysisUsable(persisted.data, groundingJob, vw, fp, instructions)) {
       memCache.set(key, persisted);
       return NextResponse.json({ ...(persisted.data as Record<string, unknown>) }, { headers: secureHeaders });
     }
@@ -248,9 +255,12 @@ export async function POST(request: NextRequest) {
 
     // Grounding inputs used both to steer generation and to gate the result
     // before it reaches the client. Never return a proposal that contradicts
-    // the listing or leaks another job's context.
+    // the listing or leaks another job's context. The full instruction set from
+    // the listing is extracted here so generation, enforcement, and validation
+    // all agree on what the client explicitly asked for.
     const groundingJob: GroundingJob = { title: safeTitle, skills: safeSkills, description: safeDesc };
-    const verificationWord = extractVerificationWord(safeDesc);
+    const instructions = extractJobInstructions(safeDesc);
+    const verificationWord = instructions.openingWord;
     const fp = jobFingerprint(safeTitle, safeSkills);
 
     let analysis: JobAnalysis | null = null;
@@ -264,9 +274,10 @@ export async function POST(request: NextRequest) {
       analysis = await new MultiAI().analyze(safeTitle, safeDesc, {
         ...baseOptions,
         verificationWord,
+        instructions,
         ...(regenerationNote ? { regenerationNote } : {}),
       });
-      const v = validateProposal(analysis.proposal, groundingJob, verificationWord);
+      const v = validateProposal(analysis.proposal, groundingJob, verificationWord, instructions);
       const a = validateAssessment(analysis, groundingJob);
       if (v.ok && a.ok) break;
       issues = [...v.issues, ...a.issues];
@@ -277,8 +288,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Best effort: if every attempt failed validation, mechanically enforce the
-    // listing's required opening word so the surfaced proposal never violates it.
+    // listing's required opening word, required ending word, and keywords so the
+    // surfaced proposal never violates them.
     analysis.proposal = ensureStartsWithWord(analysis.proposal, verificationWord);
+    analysis.proposal = ensureIncludesKeywords(analysis.proposal, instructions.keywords);
+    analysis.proposal = ensureEndsWithWord(analysis.proposal, instructions.endingWord);
 
     const cleaned = scrubAnalysis(analysis);
     const responseData = {

@@ -56,29 +56,263 @@ function hasWord(text: string, term: string): boolean {
   return new RegExp(`(^|[^a-z0-9])${escapeRe(w)}([^a-z0-9]|$)`).test(t);
 }
 
-/** Try to pull a required opening token/phrase out of an instruction sentence. */
-function extractVerificationToken(sent: string): string | null {
+/** Words too generic to be a client-required keyword on their own. */
+const GENERIC_TOKENS = new Set([
+  'a','an','the','and','or','of','to','in','on','at','with','for','from','by','as','is','are','was','were',
+  'your','you','yourself','my','me','i','we','our','us','it','its','this','that','these','those','there','here',
+  'please','must','will','would','could','should','can','may','might','do','does','did','not','no','yes','so','then','than','if','but',
+  'be','been','being','have','has','had','very','just','also','only','one','two','first','last','next','word','phrase','keyword','code','verification',
+  'start','begin','end','open','include','type','write','enter','use','with','say','tell','state','lead','question','questions','answer','reply',
+  'proposal','cover','letter','response','application','bid','message','submission','applicant','job','project','work',
+]);
+
+const TOKEN_CHARSET = /^[A-Za-z0-9][A-Za-z0-9 _-]*$/;
+const TOKEN_TAIL = /[.!?,;:)\]"'`]+$/;
+/** Words that signal the client is requiring an ENDING word/phrase. */
+const END_MARKER = /\b(end|ending|finish|conclude|close|last|sign[- ]off)\b/i;
+/** Sentences that state a format/application instruction (subject line, format, attachment, apply-via, etc.). */
+const FORMAT_RE = /\b(subject (?:line)?|in the subject|format(?:ted)? (?:as|in|like)|in (?:a |the )?[a-z ]{0,24}format|attach(?:ed)?|\.pdf|word count|minimum words?|apply (?:only )?(?:through|via)|to apply|how to apply|application instructions?|answer the following)\b/i;
+
+/**
+ * Pull a required token/phrase out of an instruction sentence. Accepts quoted
+ * tokens, all-caps runs, "the word/phrase/keyword X" markers, and a capitalized
+ * token after "with/use". Returns null when the sentence does not clearly name
+ * a specific token — so "end with a question" or "start with a greeting" never
+ * produce a fake keyword.
+ */
+function extractInstructionToken(sent: string): string | null {
   const quoted = sent.match(/["'`“”]([^"'`“”]+)["'`“”]/);
   if (quoted) {
-    const w = quoted[1].replace(/[.!?,;:)\]]+$/g, '').trim();
+    const w = quoted[1].replace(TOKEN_TAIL, '').trim();
     if (
       w.length >= 2 &&
       w.length <= 40 &&
-      /^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(w) &&
+      TOKEN_CHARSET.test(w) &&
       !INSTRUCTION_VERBS.has(w.toUpperCase())
     ) {
       return w;
     }
-    return null;
   }
 
-  // All-caps word or short all-caps phrase (e.g. "SMILE" or "I OWN THE INBOX").
-  const caps = sent.match(/\b(?:[A-Z]+\b)(?:\s+[A-Z]+\b){0,5}/);
+  // All-caps word or short all-caps phrase (e.g. "SMILE", "I READ YOUR LISTING").
+  const caps = sent.match(/\b(?:[A-Z]{2,}\b|I\b)(?:\s+(?:[A-Z]{2,}|[AI])\b){0,5}/);
   if (caps) {
     const w = caps[0].trim();
-    if (w.length >= 2 && !INSTRUCTION_VERBS.has(w.toUpperCase())) return w;
+    const hasStrong = w.split(/\s+/).some(tok => /[A-Z]{2,}/.test(tok));
+    if (hasStrong && w.length >= 2 && !INSTRUCTION_VERBS.has(w.toUpperCase())) return w;
   }
+
+  // "the word X" / "code word X" / "phrase X" / "keyword X" — capture the named
+  // token only (bounded, so trailing prose like "in your proposal" never leaks).
+  const marked = sent.match(/\b(?:the\s+)?(?:code\s+)?(?:word|phrase|keyword)\s+["'`“”]?([A-Za-z0-9][A-Za-z0-9 _-]*?)["'`“”]?(?=\s+(?:in|to|of|and|as|for|on|at|with|somewhere|anywhere|when|if|please|must|should|the|your|you|then|from|during|by|before|after|first|end|start|we|so|also)\b|[.!?;,]$|$)/i);
+  if (marked) {
+    const w = marked[1].replace(TOKEN_TAIL, '').trim();
+    const lower = w.toLowerCase();
+    if (
+      w.length >= 2 &&
+      w.length <= 40 &&
+      TOKEN_CHARSET.test(w) &&
+      !INSTRUCTION_VERBS.has(w.toUpperCase()) &&
+      !GENERIC_TOKENS.has(lower)
+    ) {
+      return w;
+    }
+  }
+
+  // Capitalized token at the end after with/use: "Start your proposal with Hello".
+  const title = sent.match(/\b(?:with|use)\s+(?:the\s+(?:word|phrase|keyword)\s+)?([A-Z][A-Za-z0-9-]{1,39})\s*[.;,!]?$/i);
+  if (title) {
+    const w = title[1].trim();
+    if (w.length >= 2 && !INSTRUCTION_VERBS.has(w.toUpperCase()) && !GENERIC_TOKENS.has(w.toLowerCase())) return w;
+  }
+
   return null;
+}
+
+export type InstructionKind =
+  | 'openingWord'
+  | 'endingWord'
+  | 'keyword'
+  | 'question'
+  | 'experience'
+  | 'action'
+  | 'format';
+
+export interface ClientInstruction {
+  kind: InstructionKind;
+  /** The instruction sentence as the client wrote it (trimmed). */
+  raw: string;
+  /** Human-readable requirement, safe to paste into an AI prompt. */
+  requirement: string;
+  /** Significant tokens of the requirement, used for cheap compliance checks. */
+  tokens?: string[];
+}
+
+export interface ExtractedInstructions {
+  openingWord: string;
+  endingWord: string;
+  keywords: string[];
+  questions: string[];
+  experiences: string[];
+  actions: string[];
+  formats: string[];
+  list: ClientInstruction[];
+}
+
+function cleanSentence(s: string): string {
+  return s.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Meaningful (non-stop, non-generic) tokens of a phrase, for compliance checks. */
+function significantTokens(phrase: string): string[] {
+  const out: string[] = [];
+  for (const tok of phrase.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (tok.length >= 4 && !STOP.has(tok) && !GENERIC_TOKENS.has(tok)) out.push(tok);
+  }
+  return out;
+}
+
+function extractExperiencePhrase(sent: string): string | null {
+  const m = sent.match(/\b((?:\d+\+?|\d+-\d+)\s*(?:years?|yrs)\s*(?:\+|more|of)?\s+(?:of\s+)?(?:hands-on\s+|relevant\s+)?experience[^.!?]{0,80})/i)
+    || sent.match(/\b((?:experience|expertise|background|hands-on)\s+(?:working\s+|building\s+|developing\s+|with\s+)?[^.!?\n]{0,80})/i);
+  return m ? m[1].replace(/\s+/g, ' ').trim() : null;
+}
+
+/**
+ * Detect every explicit instruction the listing gives to an applicant — the
+ * required opening word, required ending word, keywords to include, questions
+ * to answer, a stated experience bar, requested actions, and format or
+ * application requirements. Reads the whole description so an instruction at
+ * the end is honored as reliably as one at the top.
+ */
+export function extractJobInstructions(description: string): ExtractedInstructions {
+  const empty: ExtractedInstructions = {
+    openingWord: '', endingWord: '', keywords: [], questions: [], experiences: [], actions: [], formats: [], list: [],
+  };
+  const text = (description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return empty;
+
+  const out: ExtractedInstructions = { ...empty };
+  const add = (ins: ClientInstruction) => { out.list.push(ins); };
+
+  const sentences = text.split(/(?<=[.!?])\s+|\n+/).map(cleanSentence).filter(Boolean);
+  const negative = /\bdo not\b|\bdon'?t\b|\bnever\b|\bavoid\b/i;
+  const applicantContext = /\b(proposal|cover letter|response|application|bid|message|answer|reply|submission|applicant)\b/i;
+
+  for (const sent of sentences) {
+    if (negative.test(sent)) continue;
+
+    // ── Required opening word ──
+    if (!out.openingWord) {
+      const startPos = /\b(start|begin|beginning|open|first|very first|1st|leading|to begin|to start)\b/i.test(sent);
+      const instrVerb = /\b(start|begin|open|first|must|keyword|verification|type|write|enter|include|use|code|word|phrase)\b/i.test(sent);
+      const startMarker = /\b(first (word|line|sentence|letter)|to begin|to start|start off)\b/i.test(sent);
+      if (startPos && instrVerb && (applicantContext.test(sent) || startMarker)) {
+        const token = extractInstructionToken(sent);
+        if (token) {
+          out.openingWord = token;
+          add({ kind: 'openingWord', raw: sent, requirement: `Start the proposal with the word "${token}" — it must be the very first text.`, tokens: significantTokens(token) });
+          // Deliberately no continue: the same sentence can also require an
+          // ending word ("start with X and end with Y").
+        }
+      }
+    }
+
+    // ── Required ending word ──
+    if (!out.endingWord) {
+      const endPos = END_MARKER.test(sent);
+      if (applicantContext.test(sent) && endPos) {
+        // Extract from the END-CLAUSE (last end-marker onward) so a compound
+        // sentence like "start with X and end it with Y" yields Y here, not X.
+        let endIdx = -1;
+        const endRe = /\b(end|ending|finish|conclude|close|last|sign[- ]off)\b/gi;
+        let m: RegExpExecArray | null;
+        while ((m = endRe.exec(sent)) !== null) endIdx = m.index;
+        const clause = endIdx >= 0 ? sent.slice(endIdx) : sent;
+        const token = extractInstructionToken(clause);
+        if (token) {
+          out.endingWord = token;
+          add({ kind: 'endingWord', raw: sent, requirement: `End the proposal with the word "${token}" — it must be the final text.`, tokens: significantTokens(token) });
+          // Deliberately no continue: the same sentence can also carry other
+          // instructions (keyword/question) after the ending clause.
+        }
+      }
+    }
+
+    // ── Keyword anywhere in the proposal ──
+    const notPositioned = !/\b(first (word|line|sentence)|to begin|to start|start|begin)\b/i.test(sent)
+      && !/\b(end|finish|conclude|close|last|sign[- ]off)\b/i.test(sent);
+    if (out.keywords.length < 3 && applicantContext.test(sent) && notPositioned
+      && /\b(include|contain|keyword|mention|put|enter|write|type|use|add|somewhere|anywhere)\b/i.test(sent)
+      && !FORMAT_RE.test(sent)) {
+      const token = extractInstructionToken(sent);
+      if (token) {
+        out.keywords.push(token);
+        add({ kind: 'keyword', raw: sent, requirement: `Include the word "${token}" in the proposal.`, tokens: significantTokens(token) });
+        // Deliberately no continue: a keyword sentence can also ask a question
+        // ("include the word X and tell us about ...").
+      }
+    }
+
+    // ── Applicant-directed question ──
+    if (out.questions.length < 5) {
+      const trimmed = sent.trim();
+      const isQuestion = (/[?]\s*$/.test(trimmed) && /\b(you|your|yours)\b/i.test(trimmed))
+        || (/\b(tell|share|describe|explain|answer|send|provide|mention|state|list|give|include)\s+(us|me)\b/i.test(trimmed) && /\byour\b/i.test(trimmed));
+      if (isQuestion) {
+        out.questions.push(trimmed);
+        add({ kind: 'question', raw: trimmed, requirement: `Answer this question the client asked in the proposal: "${trimmed}"`, tokens: significantTokens(trimmed) });
+        continue;
+      }
+    }
+
+    // ── Required experience bar ──
+    if (out.experiences.length < 2) {
+      const requireSignal = /\b(?:must have|need(s|ed)?|require(s|d)?|looking for|seeking|wanted|ideally|experience with|experienced in|experienced with|familiar with|background in|expertise in|should have)\b/i.test(sent);
+      const expSignal = /\b(?:experience|experienced|expertise|familiar(?:ity)?|background|skilled|hands[- ]on|years?|yrs)\b/i.test(sent);
+      if (requireSignal && expSignal) {
+        const phrase = extractExperiencePhrase(sent);
+        if (phrase && phrase.length <= 110) {
+          out.experiences.push(phrase);
+          add({ kind: 'experience', raw: sent, requirement: `The client requires "${phrase}". Acknowledge that stated experience bar in the proposal WITHOUT claiming you personally have that experience.`, tokens: significantTokens(phrase) });
+          continue;
+        }
+      }
+    }
+
+    // ── Requested action ──
+    if (out.actions.length < 3) {
+      const action = /\b(send|share|include|attach|submit|provide|paste|email|message|upload|give|link|forward|mention)\b[^.!?\n]{0,70}\b(your|a link|links?|portfolio|github|resume|cv|samples?|examples?|work samples|application)\b/i.test(sent)
+        && !/\b(word|phrase|keyword)\b/i.test(sent);
+      if (action) {
+        out.actions.push(sent);
+        add({ kind: 'action', raw: sent, requirement: `The client asked applicants to "${sent}" — address this naturally in the proposal.` });
+      }
+    }
+
+    // ── Format / application instruction ──
+    if (out.formats.length < 3) {
+      if (FORMAT_RE.test(sent)) {
+        out.formats.push(sent);
+        add({ kind: 'format', raw: sent, requirement: `The client stated a format/application instruction: "${sent}" — follow it in the proposal.` });
+      }
+    }
+  }
+
+  return out;
+}
+
+/** Natural-language lines describing every detected instruction, for prompts. */
+export function instructionsToPromptLines(instructions: ExtractedInstructions): string[] {
+  const lines: string[] = [];
+  if (instructions.openingWord) lines.push(`Start your proposal with exactly the word "${instructions.openingWord}" — no greeting or other text before it.`);
+  if (instructions.endingWord) lines.push(`End your proposal with exactly the word "${instructions.endingWord}" — it must be the final text.`);
+  for (const k of instructions.keywords) lines.push(`Include the word "${k}" somewhere in the proposal.`);
+  for (const q of instructions.questions) lines.push(`Answer this question the client asked, inside the proposal: "${q}"`);
+  for (const e of instructions.experiences) lines.push(`The client requires "${e}". Acknowledge that requirement in the proposal WITHOUT claiming you personally have that experience.`);
+  for (const a of instructions.actions) lines.push(`The client asked applicants to "${a}" — address it naturally in the proposal.`);
+  for (const f of instructions.formats) lines.push(`The client stated a format/application instruction: "${f}" — follow it.`);
+  return lines;
 }
 
 /**
@@ -88,24 +322,7 @@ function extractVerificationToken(sent: string): string | null {
  * text and never from negative language like "DO NOT APPLY".
  */
 export function extractVerificationWord(description: string): string {
-  const text = (description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-
-  const sentences = text.split(/(?<=[.!?])\s+|\n+/).map(s => s.trim()).filter(Boolean);
-  const explicit = /\b(start|begin|beginning|open|first|must|keyword|verification)\b/i;
-  const otherInstruction = /\b(write|type|include|enter|use|code|word|phrase)\b/i;
-  const context = /\b(proposal|cover letter|response|application|bid|message|answer|reply)\b/i;
-  const negative = /\bdo not\b|\bdon'?t\b|\bnever\b/i;
-
-  for (const sent of sentences) {
-    if (negative.test(sent)) continue;
-    const hasContext = context.test(sent);
-    const hasInstruction = explicit.test(sent) || otherInstruction.test(sent);
-    if (!hasContext || !hasInstruction) continue;
-    const token = extractVerificationToken(sent);
-    if (token) return token;
-  }
-  return '';
+  return extractJobInstructions(description).openingWord;
 }
 
 /** Does the text begin with the required word (as the first token)? */
@@ -134,6 +351,46 @@ export function ensureStartsWithWord(text: string, word: string): string {
 
   if (startsWithWord(t, w)) return t;
   return `${w}\n\n${t}`;
+}
+
+/** Does the text end with the word as the final token (trailing punctuation allowed)? */
+export function endsWithWord(text: string, word: string): boolean {
+  const w = (word || '').trim();
+  if (!w) return true;
+  const t = (text || '').trim();
+  if (!t) return false;
+  const final = t.replace(/[.!?,;:)\]"'`\s]+$/, '').toLowerCase();
+  const wl = w.toLowerCase();
+  if (final === wl) return true;
+  return new RegExp(`[^a-z0-9]${escapeRe(wl)}$`).test(final);
+}
+
+/** Force the proposal to literally end with the required word. */
+export function ensureEndsWithWord(text: string, word: string): string {
+  const w = (word || '').trim();
+  const t = (text || '').trim();
+  if (!w) return t;
+  if (endsWithWord(t, w)) return t;
+  if (!t) return w;
+  return `${t.replace(/[.!?,;:)\]"'`\s]+$/, '')}\n\n${w}`;
+}
+
+/**
+ * Make sure every keyword the client requires actually appears in the proposal.
+ * Missing keywords are inserted as a short, explicit paragraph so the client's
+ * filter is satisfied without corrupting the rest of the text.
+ */
+export function ensureIncludesKeywords(text: string, keywords: string[]): string {
+  const out = (text || '').trim();
+  if (!out) return out;
+  const missing = (keywords || []).filter(k => k && !new RegExp(escapeRe(k), 'i').test(out));
+  if (!missing.length) return out;
+
+  const insert = missing.map(k => `You asked to see the word "${k}" in your proposal — there it is.`);
+  const paras = out.split(/\n\s*\n/);
+  if (paras.length <= 1) return `${out}\n\n${insert.join('\n')}`;
+  paras.splice(1, 0, insert.join('\n'));
+  return paras.join('\n\n');
 }
 
 /** Meaningful topic signature of a job (title + skills + strong description terms). */
@@ -300,8 +557,16 @@ export interface GroundingJob {
 /**
  * Pre-display validation. Returns the concrete reasons a proposal should not be
  * shown; the caller regenerates from corrected context when any are present.
+ * Beyond grounding, it checks the client's machine-checkable instructions:
+ * required opening word, required ending word, required keywords, the stated
+ * experience bar, and the client's questions.
  */
-export function validateProposal(proposal: string, job: GroundingJob, verificationWord: string): ProposalValidation {
+export function validateProposal(
+  proposal: string,
+  job: GroundingJob,
+  verificationWord: string,
+  instructions: ExtractedInstructions = extractJobInstructions(job.description || ''),
+): ProposalValidation {
   const issues: string[] = [];
   const p = (proposal || '').trim();
   if (!p) {
@@ -310,6 +575,28 @@ export function validateProposal(proposal: string, job: GroundingJob, verificati
 
   if (verificationWord && !startsWithWord(p, verificationWord)) {
     issues.push(`Required opening word "${verificationWord}" is missing from the start of the proposal.`);
+  }
+  if (instructions.endingWord && !endsWithWord(p, instructions.endingWord)) {
+    issues.push(`Required ending word "${instructions.endingWord}" is missing from the end of the proposal.`);
+  }
+  for (const k of instructions.keywords) {
+    if (!new RegExp(escapeRe(k), 'i').test(p)) {
+      issues.push(`Required keyword "${k}" is missing from the proposal.`);
+    }
+  }
+  for (const exp of instructions.experiences) {
+    const tokens = significantTokens(exp);
+    if (tokens.length && tokens.every(t => !hasWord(p, t))) {
+      issues.push(`Proposal does not acknowledge the stated experience requirement ("${exp}").`);
+      break;
+    }
+  }
+  for (const q of instructions.questions.slice(0, 3)) {
+    const tokens = significantTokens(q);
+    if (tokens.length && tokens.every(t => !hasWord(p, t))) {
+      issues.push(`Proposal does not address the client's question: "${q}".`);
+      break;
+    }
   }
 
   const terms = jobTopicTerms(job);
@@ -376,23 +663,20 @@ export function jobFingerprint(title: string, skills: string[]): string {
   return head.slice(0, 80);
 }
 
-const QUESTION_INTENT = /(\bwhat(?:'|’)?s\b|\bwhat (?:do|would|can|are|is)\b|\bhow (?:do|would|can|will) you\b|\bcan you\b|\bcould you\b|\bdo you (?:have|know|use|work)\b|\bare you (?:available|able|open|interested|willing)\b|\bplease (?:answer|respond|explain|tell|share|reply|provide|confirm|state|include)\b|\blet me know\b|\btell me\b|\bany questions\b|\bquestions?\s*(?:for|about|regarding|below)\b|\banswer the (?:following|questions)\b)/i;
-
 /**
  * Detects things the listing explicitly asks of an applicant (a required
  * opening word, or questions/instructions) so the proposal can acknowledge
  * them instead of ignoring them. Returns safe, non-invented sentences.
  */
 export function extractClientQuestions(description: string): string[] {
-  const desc = (description || '').trim();
-  if (!desc) return [];
+  const inst = extractJobInstructions(description);
   const out: string[] = [];
-  const vw = extractVerificationWord(desc);
-  if (vw) {
-    out.push(`Your post asks to begin the response with "${vw}", so the proposal starts with that exact word.`);
+  if (inst.openingWord) {
+    out.push(`Your post asks to begin the response with "${inst.openingWord}", so the proposal starts with that exact word.`);
   }
-  if (QUESTION_INTENT.test(desc)) {
-    out.push('You asked a few specific questions in your post — the plan below answers each one directly.');
+  if (inst.questions.length) {
+    const qs = inst.questions.map(q => `"${q}"`).join(' ');
+    out.push(`You asked: ${qs} — the plan below addresses each one directly.`);
   }
   return out;
 }
@@ -402,23 +686,29 @@ export interface GroundedProposalOptions {
   skills?: string[];
   /** Required opening word extracted from the listing (e.g. "SMILE"). */
   verificationWord?: string;
+  /** Full instruction set extracted from the listing (re-extracted when absent). */
+  instructions?: ExtractedInstructions;
 }
 
 /**
- * The single generic, deterministic proposal generator. Every entry point that
- * produces a proposal funnels through this so the output is always grounded in
- * the CURRENT listing only:
+ * The single deterministic proposal generator. Every entry point that produces
+ * a proposal funnels through this so the output is always grounded in the
+ * CURRENT listing only:
  *   - Every sentence derives from signals actually present in the title /
  *     description / required skills. Nothing else is invented.
  *   - No candidate claims: no experience, past projects, portfolio, tools the
  *     candidate has used, results, or qualifications (no profile exists).
- *   - If the listing requires a specific opening word, the text is forced to
- *     begin with exactly that word.
+ *   - When the listing contains explicit instructions, the proposal is NOT a
+ *     generic template: it satisfies the required opening word, ending word,
+ *     keywords, answers/acknowledges the client's questions, the stated
+ *     experience bar, requested actions, and format requirements.
  */
 export function generateGroundedProposal(title: string, description: string, options: GroundedProposalOptions = {}): string {
   const desc = (description || '').trim();
   const text = `${title || ''} ${desc}`.toLowerCase();
-  const verificationWord = options.verificationWord || extractVerificationWord(desc);
+  const instructions = options.instructions || extractJobInstructions(desc);
+  const verificationWord = options.verificationWord || instructions.openingWord;
+  const endingWord = instructions.endingWord;
 
   // Greeting — only use a real name, never a generic country/client label.
   // Omitted entirely when a verification word must lead the proposal.
@@ -575,9 +865,11 @@ export function generateGroundedProposal(title: string, description: string, opt
     cta = 'If you can share a bit more about your timeline and must-have features, I can confirm the best way to get started.';
   }
 
-  // Assemble — four parts, each grounded in the actual listing:
-  //   Opening → Understanding & plan → CTA. No generic filler lines.
-  // If a verification word is required, the final text MUST begin with it.
+  // Assemble — each part grounded in the actual listing. When the listing
+  // contains explicit instructions, the proposal is tailored to them instead of
+  // a generic template: required opening word, required ending word, keywords,
+  // the client's questions, the stated experience bar, and any requested
+  // actions / format instructions are all honored.
   const lines: string[] = [];
   lines.push(greeting);
 
@@ -586,12 +878,29 @@ export function generateGroundedProposal(title: string, description: string, opt
   if (titleRef) opening = `For ${titleRef}, ${opening}`;
   lines.push(opening);
 
-  const asks = extractClientQuestions(desc);
-  if (asks.length) lines.push(asks.join(' '));
+  // The stated experience bar — acknowledged without claiming we have it.
+  if (instructions.experiences.length) {
+    lines.push(`You've set a clear bar: "${instructions.experiences[0]}". The plan below is shaped around meeting exactly that requirement.`);
+  }
+
+  // Questions the client asked the applicant — acknowledged by name.
+  if (instructions.questions.length) {
+    lines.push(`You asked: ${instructions.questions.map(q => `"${q}"`).join(' ')} — the plan below addresses each one directly.`);
+  }
+
+  // Requested actions and format/application instructions — acknowledged.
+  const extraAsks = [...instructions.actions, ...instructions.formats].slice(0, 2);
+  if (extraAsks.length) {
+    lines.push(`I've noted your instructions: ${extraAsks.map(a => `"${a}"`).join('; ')}. I'll follow them exactly.`);
+  }
 
   lines.push('The plan:');
   lines.push(bullets.map((b, i) => `${i + 1}. ${b}`).join('\n'));
   lines.push(cta);
-  lines.push('Best,');
-  return ensureStartsWithWord(lines.join('\n\n'), verificationWord);
+  if (!endingWord) lines.push('Best,');
+
+  let proposal = lines.join('\n\n');
+  proposal = ensureIncludesKeywords(proposal, instructions.keywords);
+  proposal = ensureEndsWithWord(proposal, endingWord);
+  return ensureStartsWithWord(proposal, verificationWord);
 }
