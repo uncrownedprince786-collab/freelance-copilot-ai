@@ -54,9 +54,17 @@ export class JobPipeline {
       const ex = f.url ? storeByUrl.get(f.url) : undefined;
       if (ex) {
         // Proposal counts are monotonic non-decreasing: only advance on a
-        // confirmed positive count. A provider 0/null is ambiguous (range band,
-        // scrape fallback) and must never overwrite a stored positive count.
-        if (typeof f.proposalCount === 'number' && f.proposalCount > 0) ex.proposalCount = f.proposalCount;
+        // confirmed positive count that is higher than the stored value. A
+        // provider 0/null is ambiguous (range band, scrape fallback) and must
+        // never overwrite a stored positive count, and a lower positive count
+        // (e.g. a re-scrape re-parse) must never decrease an existing one.
+        if (
+          typeof f.proposalCount === 'number' &&
+          f.proposalCount > 0 &&
+          (typeof ex.proposalCount !== 'number' || f.proposalCount > ex.proposalCount)
+        ) {
+          ex.proposalCount = f.proposalCount;
+        }
         if (typeof f.interviewingCount === 'number' && f.interviewingCount > 0) ex.interviewingCount = f.interviewingCount;
         if (typeof f.hiresCount === 'number' && f.hiresCount > 0) ex.hiresCount = f.hiresCount;
       }
