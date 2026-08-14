@@ -60,25 +60,57 @@ function normalizeProposalCount(v: number | null): number | null {
   return v >= 50 ? 50 : v;
 }
 
+// Splits the query list into contiguous slices, one per configured account.
+// Guarded so 0 tokens never yields a degenerate slice size.
+export function computeSliceSize(queryCount: number, tokenCount: number): number {
+  if (tokenCount <= 0) return 1;
+  return Math.max(1, Math.ceil(queryCount / tokenCount));
+}
+
+// Ordered list of accounts to try for a single query: the slice's primary
+// account first, then every other configured account. Pure and deterministic so
+// the query workload is stable across runs (no per-run rotation). With 2+
+// accounts, accounts already confirmed unavailable this run (auth / usage
+// limit / quota) are skipped so a failed account never breaks the run; with a
+// single account it stays in the list so a transient failure still gets
+// another chance. A query is never assigned to the same account twice.
+export function accountOrderForQuery(
+  queryIndex: number,
+  tokens: string[],
+  sliceSize: number,
+  unavailable: ReadonlySet<string>,
+): string[] {
+  if (tokens.length === 0) return [];
+  const primary = Math.min(Math.floor(queryIndex / sliceSize), tokens.length - 1);
+  const candidates = [tokens[primary], ...tokens.filter((_, i) => i !== primary)];
+  if (tokens.length === 1) return candidates;
+  return candidates.filter((t) => !unavailable.has(t));
+}
+
 export class ApifyUpworkProvider implements JobProvider {
   name = "ApifyUpwork";
 
-  // Two authorized Apify accounts are available (APIFY_TOKEN + APIFY_TOKEN2).
-  // The query workload is split deterministically between them — no per-run
-  // rotation. With both tokens present, the query list is partitioned into
+  // Authorized Apify accounts (APIFY_TOKEN, APIFY_TOKEN2, APIFY_TOKEN3). The
+  // query workload is split deterministically across every configured account —
+  // no per-run rotation. With N tokens, the query list is partitioned into N
   // contiguous slices and each slice is ALWAYS served by the same account, so
   // free-tier usage is spread evenly and one account is never exhausted while
-  // the other sits idle. With a single token configured, every query uses it.
+  // another sits idle. With a single token configured, every query uses it.
   //
   // SMART FAILOVER (per run): when the assigned account fails with a
   // usage-limit / auth / quota error (e.g. free tier exceeded), that query is
-  // retried once on the other account, and the failing account is remembered as
-  // unavailable for the REST of this run so subsequent queries skip it instead
-  // of wasting calls on an exhausted account. The switch works in both
-  // directions (whichever account errors out is bypassed). A query is never run
-  // on both accounts for a single fetch. The memory is per-instance (per
-  // sync/refresh request), so the next run re-tries both accounts normally.
-  private tokens: string[] = [process.env.APIFY_TOKEN, process.env.APIFY_TOKEN2]
+  // retried on the next available account, and the failing account is
+  // remembered as unavailable for the REST of this run so subsequent queries
+  // skip it instead of wasting calls on an exhausted account. Every configured
+  // account is a fallback candidate in order, so any N-account setup fails over
+  // correctly (not just 2). A query is never run on two accounts for a single
+  // fetch — it stops at the first success. The memory is per-instance (per
+  // sync/refresh request), so the next run re-tries every account normally.
+  private tokens: string[] = [
+    process.env.APIFY_TOKEN,
+    process.env.APIFY_TOKEN2,
+    process.env.APIFY_TOKEN3,
+  ]
     .filter((t): t is string => Boolean(t && t.trim()));
 
   private unavailableTokens = new Set<string>();
@@ -88,7 +120,7 @@ export class ApifyUpworkProvider implements JobProvider {
   // calls fetchJobs() with no args, so its behavior is unchanged (12 / 60).
   async fetchJobs(opts?: { maxResults?: number; totalCap?: number }): Promise<Job[]> {
     if (this.tokens.length === 0) {
-      console.warn('[ApifyUpworkProvider] APIFY_TOKEN / APIFY_TOKEN2 are missing in environment.');
+      console.warn('[ApifyUpworkProvider] APIFY_TOKEN / APIFY_TOKEN2 / APIFY_TOKEN3 are missing in environment.');
       return [];
     }
 
@@ -106,27 +138,21 @@ export class ApifyUpworkProvider implements JobProvider {
 
     const maxResults = opts?.maxResults ?? 12;
     const totalCap = opts?.totalCap ?? 60;
-    // One contiguous slice per account: 2 tokens -> each serves half the query
-    // list (deterministic); 1 token -> one slice serves everything.
-    const slice = Math.max(1, Math.ceil(queries.length / this.tokens.length));
+    // One contiguous slice per account: N tokens -> each serves an equal share
+    // of the query list (deterministic); 1 token -> one slice serves everything.
+    const slice = computeSliceSize(queries.length, this.tokens.length);
 
     for (let qi = 0; qi < queries.length; qi++) {
       if (results.length >= totalCap) break;
       const query = queries[qi];
 
-      const primaryIdx = Math.min(Math.floor(qi / slice), this.tokens.length - 1);
-      const tokenOrder =
-        this.tokens.length === 1
-          ? [this.tokens[0]]
-          : [this.tokens[primaryIdx], this.tokens[primaryIdx === 0 ? 1 : 0]];
+      // Primary account for this query's slice first, then every other
+      // configured account (skipping any already confirmed unavailable this
+      // run). Generalizes rotation + failover to any number of accounts.
+      const tokenOrder = accountOrderForQuery(qi, this.tokens, slice, this.unavailableTokens);
 
       let rawItems: any[] | null = null; // eslint-disable-line @typescript-eslint/no-explicit-any
       for (const token of tokenOrder) {
-        // Skip an account already confirmed unavailable (usage limit / auth /
-        // quota) earlier in this run; with no alternative (single token) keep
-        // trying so a transient failure still gets a chance.
-        if (this.tokens.length > 1 && this.unavailableTokens.has(token)) continue;
-
         const res = await this.runQuery(query, token, maxResults);
         if (res.exhausted) {
           this.unavailableTokens.add(token);

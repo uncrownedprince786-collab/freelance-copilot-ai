@@ -8,6 +8,7 @@
         "start": "next start",
         "lint": "eslint",
         "check-quota": "tsx scripts/check-quota.ts",
+        "test:apify": "tsx scripts/test-apify-accounts.ts",
         "sync": "tsx scripts/sync.ts"
     },
     "dependencies": {

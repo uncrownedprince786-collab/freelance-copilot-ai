@@ -58,3 +58,6 @@ sync-results.json
 .jobs-cache.json
 .cron-logs.json
 .upwork-quota.json
+
+# one-off investigation probes (never commit)
+/scratch/
