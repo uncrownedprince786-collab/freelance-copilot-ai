@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
+import puppeteer, { Browser } from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 
-const FETCH_TIMEOUT_MS = 30_000;
+export const maxDuration = 60;
+export const runtime = 'nodejs';
+
+const NAV_TIMEOUT_MS = 45_000;
 const MAX_URLS = 6;
-
 const ALLOWED_HOSTS = ['www.upwork.com', 'upwork.com'];
 
 function timingSafeSecretEqual(a: string, b: string): boolean {
@@ -37,46 +41,62 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No urls provided' }, { status: 400 });
   }
 
-  const browserUA =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
-  const results = await Promise.all(
-    urls.map(async (url) => {
-      try {
-        const parsed = new URL(url);
-        if (!ALLOWED_HOSTS.includes(parsed.hostname)) {
-          return { html: '', error: `host not allowed: ${parsed.hostname}` };
-        }
-
-        const res = await fetch(url, {
-          headers: {
-            'User-Agent': browserUA,
-            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Cache-Control': 'no-cache',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Ch-Ua': '"Chromium";v="131", "Not_A Brand";v="24"',
-            'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"',
-          },
-          redirect: 'follow',
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        });
-
-        if (!res.ok) {
-          return { html: '', error: `HTTP ${res.status}` };
-        }
-
-        const html = await res.text();
-        return { html };
-      } catch (err: unknown) {
-        return { html: '', error: err instanceof Error ? err.message : String(err) };
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url);
+      if (!ALLOWED_HOSTS.includes(parsed.hostname)) {
+        return NextResponse.json({ error: `host not allowed: ${parsed.hostname}` }, { status: 403 });
       }
-    }),
-  );
+    } catch {
+      return NextResponse.json({ error: `invalid url: ${url}` }, { status: 400 });
+    }
+  }
 
-  return NextResponse.json({ results });
+  let browser: Browser | null = null;
+  try {
+    browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: { width: 1920, height: 1080 },
+      executablePath: await chromium.executablePath(),
+      headless: true,
+    });
+
+    const results = await Promise.all(
+      urls.map(async (url) => {
+        let page;
+        try {
+          page = await browser!.newPage();
+          await page.setUserAgent(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          );
+          await page.setExtraHTTPHeaders({
+            'Accept-Language': 'en-US,en;q=0.9',
+          });
+
+          await page.goto(url, {
+            waitUntil: 'networkidle2',
+            timeout: NAV_TIMEOUT_MS,
+          });
+
+          await page.waitForSelector('body', { timeout: 5000 }).catch(() => {});
+
+          const html = await page.content();
+          return { html };
+        } catch (err: unknown) {
+          return { html: '', error: err instanceof Error ? err.message : String(err) };
+        } finally {
+          if (page) await page.close().catch(() => {});
+        }
+      }),
+    );
+
+    return NextResponse.json({ results });
+  } catch (err: unknown) {
+    return NextResponse.json(
+      { error: `browser launch failed: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 },
+    );
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
 }
