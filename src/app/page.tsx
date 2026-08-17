@@ -301,6 +301,7 @@ function HomeContent() {
   const [budgetFilter, setBudgetFilter] = useState<string>(() => loadFilters().budgetFilter || 'all');
   const [searchQuery, setSearchQuery] = useState<string>(() => loadFilters().searchQuery || '');
   const [page, setPage] = useState(1);
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
 
   // Persist filter state across navigation/refresh (per-tab sessionStorage).
   useEffect(() => {
@@ -414,8 +415,8 @@ function HomeContent() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const fetchJobs = useCallback(async () => {
-    setLoading(true);
+  const fetchJobs = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await fetch('/api/jobs');
       const data: Job[] = await res.json();
@@ -437,14 +438,23 @@ function HomeContent() {
       }));
       setPage(1);
       setJobs(cleaned);
+      setMaintenanceMode(cleaned.length === 0);
     } catch (err) {
       console.error('Failed to fetch jobs', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => { void fetchJobs(); }, [fetchJobs]);
+
+  // Poll for recovery when in maintenance mode — auto-recovers once jobs
+  // become available in the database.
+  useEffect(() => {
+    if (!maintenanceMode) return;
+    const id = setInterval(() => { void fetchJobs(true); }, 60_000);
+    return () => clearInterval(id);
+  }, [maintenanceMode, fetchJobs]);
 
   // Real freshness telemetry — when the last successful sync actually ran and
   // the adaptive cadence derived from real posting activity.
@@ -538,6 +548,148 @@ function HomeContent() {
       <div style={styles.splashLoad}>
         <div style={styles.spinner} />
         <p style={{ marginTop: 16, color: '#64748b', fontSize: 14 }}>Loading opportunities…</p>
+      </div>
+    );
+  }
+
+  // Maintenance Mode — only when the database is genuinely empty (zero usable
+  // jobs). Does NOT trigger on provider failures, sync errors, or empty filter
+  // results when jobs exist.
+  if (maintenanceMode && jobs.length === 0) {
+    return (
+      <div style={styles.page} className="lh-page">
+        <div style={styles.shell}>
+          <header style={styles.header}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <Logo size={44} />
+              <div>
+                <h1 style={styles.brand}>Lead Hunter</h1>
+                <p style={{ fontSize: 13, color: '#16a34a', fontWeight: 700, margin: '2px 0 0' }}>
+                  Stop scrolling. Start winning
+                </p>
+              </div>
+            </div>
+            <div style={styles.headerRight}>
+              <ThemeToggle />
+            </div>
+          </header>
+
+          {/* Hero status card */}
+          <div className="lh-surface" style={{
+            background: '#fff', border: '1px solid #e2e8f0',
+            borderRadius: 20, padding: '48px 32px', marginTop: 32,
+            boxShadow: '0 4px 24px rgba(15,23,42,0.06)',
+            textAlign: 'center', maxWidth: 600, marginLeft: 'auto', marginRight: 'auto',
+          }}>
+            {/* Animated pulse ring */}
+            <div style={{ position: 'relative', width: 72, height: 72, margin: '0 auto 28px' }}>
+              <div style={{
+                position: 'absolute', inset: 0, borderRadius: '50%',
+                background: '#dcfce7', animation: 'lhPulse 2s ease-in-out infinite',
+              }} />
+              <div style={{
+                position: 'absolute', inset: 8, borderRadius: '50%',
+                background: '#bbf7d0', animation: 'lhPulse 2s ease-in-out infinite 0.3s',
+              }} />
+              <div style={{
+                position: 'relative', width: 72, height: 72, borderRadius: '50%',
+                background: 'linear-gradient(135deg, #16a34a, #22c55e)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 4px 16px rgba(22,163,74,0.3)',
+              }}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 6v6l4 2" />
+                </svg>
+              </div>
+            </div>
+
+            <h2 className="lh-h" style={{ fontSize: 24, fontWeight: 800, margin: '0 0 10px', letterSpacing: '-0.02em' }}>
+              Setting Up Your Job Feed
+            </h2>
+            <p className="lh-body" style={{ fontSize: 15, margin: '0 0 28px', maxWidth: 440, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
+              We&rsquo;re connecting to live job sources and populating your feed with fresh opportunities. This usually takes just a few minutes.
+            </p>
+
+            {/* Live status indicator */}
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 10,
+              background: '#f0fdf4', border: '1px solid #bbf7d0',
+              borderRadius: 999, padding: '10px 20px', marginBottom: 32,
+            }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%', background: '#16a34a',
+                display: 'inline-block', animation: 'lhBlink 1.4s ease-in-out infinite',
+              }} />
+              <span className="lh-body" style={{ fontSize: 13, fontWeight: 600, color: '#15803d' }}>
+                Sync in progress &mdash; auto-recovers when jobs arrive
+              </span>
+            </div>
+
+            {/* Feature highlights */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+              gap: 12, marginTop: 8,
+            }}>
+              {[
+                { icon: '🔍', label: 'Multi-Platform', sub: 'Upwork & Freelancer' },
+                { icon: '⚡', label: 'Real-Time', sub: 'Auto-refreshing feed' },
+                { icon: '🎯', label: 'Smart Ranked', sub: 'Best matches first' },
+              ].map((f) => (
+                <div key={f.label} className="lh-surface" style={{
+                  background: '#f8fafc', border: '1px solid #e2e8f0',
+                  borderRadius: 12, padding: '14px 12px', textAlign: 'center',
+                }}>
+                  <div style={{ fontSize: 22, marginBottom: 6 }}>{f.icon}</div>
+                  <div className="lh-h" style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>{f.label}</div>
+                  <div className="lh-muted" style={{ fontSize: 11.5 }}>{f.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* What to expect */}
+          <div style={{
+            maxWidth: 600, marginLeft: 'auto', marginRight: 'auto',
+            marginTop: 24, padding: '0 8px',
+          }}>
+            <div className="lh-surface" style={{
+              background: '#fff', border: '1px solid #e2e8f0',
+              borderRadius: 14, padding: '16px 20px',
+              display: 'flex', alignItems: 'flex-start', gap: 12,
+              boxShadow: '0 1px 3px rgba(15,23,42,0.04)',
+            }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 10, background: '#eff6ff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2,
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                </svg>
+              </div>
+              <div>
+                <p className="lh-h" style={{ fontSize: 14, fontWeight: 700, margin: '0 0 4px' }}>
+                  No action needed
+                </p>
+                <p className="lh-body" style={{ fontSize: 13, margin: 0, lineHeight: 1.55, color: '#64748b' }}>
+                  This page auto-refreshes every 60 seconds. Once live jobs are found, the full feed will load automatically with filters, scores, and opportunity rankings ready to use.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <footer style={{
+            marginTop: 48, paddingTop: 24, borderTop: '1px solid #e2e8f0',
+            textAlign: 'center', fontSize: 13, lineHeight: 1.6,
+          }}>
+            <p className="lh-body" style={{ margin: 0, fontWeight: 600 }}>
+              Lead Hunter &bull; Developed by <strong className="lh-h">Abdul Raheem</strong> &bull; <a href="mailto:geeksxperts@gmail.com" style={{ color: '#2563eb', textDecoration: 'none' }}>geeksxperts@gmail.com</a>
+            </p>
+            <p className="lh-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+              Stop scrolling. Start winning. &copy; {new Date().getFullYear()} All rights reserved.
+            </p>
+          </footer>
+        </div>
       </div>
     );
   }

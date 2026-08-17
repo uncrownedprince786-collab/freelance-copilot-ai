@@ -353,3 +353,23 @@ html[data-theme='dark'] .lh-page .spinner {
   border-color: #26334a !important;
   border-top-color: #2563eb !important;
 }
+
+/* ── MAINTENANCE PULSE RING ──────────────────────────────────────────── */
+@keyframes lhPulse {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50%      { transform: scale(1.15); opacity: 0.2; }
+}
+
+/* ── MAINTENANCE PAGE DARK MODE ──────────────────────────────────────── */
+html[data-theme='dark'] .lh-page .lh-surface {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+  box-shadow: none !important;
+}
+
+/* Pulse ring inner fill adapts to dark surface */
+html[data-theme='dark'] .lh-page [style*="background:#f0fdf4"],
+html[data-theme='dark'] .lh-page [style*="background: #f0fdf4"] {
+  background: rgba(22, 163, 74, 0.12) !important;
+  border-color: rgba(22, 163, 74, 0.25) !important;
+}
