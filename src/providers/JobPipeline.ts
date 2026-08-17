@@ -1,7 +1,9 @@
-import { Job } from "../types/job";
+import { Job, JobClient } from "../types/job";
 import { JobProvider } from "./JobProvider";
 import { ApifyUpworkProvider } from "./ApifyUpworkProvider";
 import { FreelancerProvider } from "./FreelancerProvider";
+import { Crawl4AiProvider } from "./Crawl4AiProvider";
+import { SerpApiUpworkProvider } from "./SerpApiUpworkProvider";
 import { logCronRun } from "../lib/cronLogger";
 import { recordMarketFacts } from "../lib/marketFacts";
 import { prisma } from "../lib/db";
@@ -13,9 +15,16 @@ export class JobPipeline {
   ];
 
   async execute(): Promise<{ jobs: Job[]; newJobsAdded: number }> {
+    // One shared clock for the whole run: the in-memory working-set purge and
+    // the DB retention purge use the SAME cutoff, so a row kept in memory this
+    // run can never be deleted by the DB purge a few minutes later (the old
+    // code recomputed `now` after the provider fetches, which could delete a
+    // row at the exact 7-day mark in the same run it was re-upserted).
+    const nowMs = Date.now();
+
     console.log('[JobPipeline] Step 1: Cleaning store - Purging jobs older than 7 days...');
     const existingStore = await this.loadExistingStore();
-    const activeStore = this.purgeExpiredJobs(existingStore);
+    const activeStore = this.purgeExpiredJobs(existingStore, nowMs);
     console.log(`[JobPipeline] Active store count after 7-day cleanup: ${activeStore.length}`);
 
     // Build set of existing IDs/URLs to skip fetching duplicates
@@ -23,15 +32,60 @@ export class JobPipeline {
     activeStore.forEach(j => {
       existingKeys.add(j.id);
       if (j.url) existingKeys.add(j.url);
+      const u = JobPipeline.normUrlKey(j.url);
+      if (u) existingKeys.add(u);
     });
 
     console.log('[JobPipeline] Step 2: Fetching jobs from Upwork (Apify) and Freelancer...');
     const fetchedJobs: Job[] = [];
 
-    // Apify Upwork
-    const apifyJobs = await this.providers[0].fetchJobs();
-    console.log(`[JobPipeline] Apify (Upwork): ${apifyJobs.length} jobs.`);
-    fetchedJobs.push(...apifyJobs);
+    // Apify Upwork (primary). A GENUINE provider failure (no token, API/quota
+    // error, timeout, actor failure) triggers the self-hosted Crawl4AI fallback
+    // exactly once. Zero jobs from a successful run is a normal result and
+    // never activates the fallback (see ApifyUpworkProvider.lastRunStatus).
+    const apifyProvider = this.providers[0] as ApifyUpworkProvider;
+    let apifyJobs: Job[] = [];
+    let apifyFailed = false;
+    let apifyFailureReason = '';
+    try {
+      apifyJobs = await apifyProvider.fetchJobs();
+      apifyFailed = apifyProvider.lastRunStatus?.failed === true;
+      apifyFailureReason = apifyProvider.lastRunStatus?.reason ?? '';
+    } catch (err: unknown) {
+      apifyFailed = true;
+      apifyFailureReason = err instanceof Error ? err.message : String(err);
+      console.error('[JobPipeline] Apify (Upwork) fetch threw:', apifyFailureReason);
+    }
+
+    let fallbackJobs: Job[] = [];
+    if (apifyFailed) {
+      console.warn(`[JobPipeline] Apify (Upwork) failed (${apifyFailureReason}) - activating Crawl4AI fallback (once).`);
+      const fallbackStarted = Date.now();
+      try {
+        fallbackJobs = await new Crawl4AiProvider().fetchJobs();
+        console.log(`[JobPipeline] Crawl4AI fallback: ${fallbackJobs.length} jobs in ${Date.now() - fallbackStarted}ms.`);
+      } catch (err: unknown) {
+        console.error('[JobPipeline] Crawl4AI fallback failed:', err instanceof Error ? err.message : err);
+      }
+    } else {
+      console.log(`[JobPipeline] Apify (Upwork): ${apifyJobs.length} jobs.`);
+    }
+    fetchedJobs.push(...apifyJobs, ...fallbackJobs);
+
+    // SerpApi/Google Jobs fallback: if Apify failed AND Crawl4AI returned
+    // nothing, try SerpApi as a last resort for Upwork data.
+    const upworkCount = apifyJobs.length + fallbackJobs.length;
+    if (upworkCount === 0) {
+      console.warn('[JobPipeline] No Upwork jobs from Apify or Crawl4AI — trying SerpApi/Google Jobs fallback.');
+      try {
+        const serpJobs = await new SerpApiUpworkProvider().fetchJobs();
+        console.log(`[JobPipeline] SerpApi fallback: ${serpJobs.length} Upwork jobs.`);
+        fallbackJobs.push(...serpJobs);
+        fetchedJobs.push(...serpJobs);
+      } catch (err: unknown) {
+        console.error('[JobPipeline] SerpApi fallback failed:', err instanceof Error ? err.message : err);
+      }
+    }
 
     // Freelancer (complementary source)
     const freelancerJobs = await this.providers[1].fetchJobs();
@@ -82,9 +136,11 @@ export class JobPipeline {
 
       const key1 = job.id;
       const key2 = job.url;
-      if (!existingKeys.has(key1) && !existingKeys.has(key2)) {
+      const key2n = JobPipeline.normUrlKey(job.url);
+      if (!existingKeys.has(key1) && !existingKeys.has(key2) && !existingKeys.has(key2n)) {
         existingKeys.add(key1);
         if (key2) existingKeys.add(key2);
+        if (key2n) existingKeys.add(key2n);
         
         // Calculate local score. Every valid new job is stored regardless of
         // score — lower-scored opportunities must remain available to the user
@@ -106,14 +162,16 @@ export class JobPipeline {
 
     // Enforce the active-job window at the database level AFTER upserting the
     // working set. Only rows NOT re-saved by saveStore() can match: unapplied
-    // jobs older than 7 days and applied jobs older than 40 days (40-day
-    // applied retention). saveStore() re-upserts every row in finalCollection,
-    // all of which pass the in-memory 7d/40d filter, so a row we just wrote is
-    // never deleted by this query.
+    // jobs whose first-seen createdAt is older than 7 days, and applied jobs
+    // older than 40 days. saveStore() re-upserts every row in finalCollection
+    // (all of which passed the in-memory filter against the SAME cutoff
+    // captured at the start of the run), so a row we just wrote is never
+    // deleted by this query. Cleanup is independent of provider success: a
+    // failed/partial sync re-upserts the whole active store and only genuinely
+    // age-expired rows can match.
     try {
-      const now = Date.now();
-      const unappliedCutoff = new Date(now - 7 * 24 * 60 * 60 * 1000);
-      const appliedCutoff = new Date(now - 40 * 24 * 60 * 60 * 1000);
+      const unappliedCutoff = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
+      const appliedCutoff = new Date(nowMs - 40 * 24 * 60 * 60 * 1000);
       const purged = await prisma.opportunity.deleteMany({
         where: {
           OR: [
@@ -140,7 +198,7 @@ export class JobPipeline {
       status: 'SUCCESS',
       jobsFetched: fetchedJobs.length,
       newJobsAdded: brandNewJobs.length,
-      sourceSummary: `Apify (${apifyJobs.length}), Freelancer (${freelancerJobs.length})`
+      sourceSummary: `Apify (${apifyJobs.length})${fallbackJobs.length ? `, Crawl4AI fallback (${fallbackJobs.length})` : ''}, Freelancer (${freelancerJobs.length})`
     });
 
     return { jobs: finalCollection, newJobsAdded: brandNewJobs.length };
@@ -155,6 +213,15 @@ export class JobPipeline {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let budgetVal: any = op.budget;
         try { budgetVal = JSON.parse(op.budget); } catch {}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let clientObj: Record<string, any> = {};
+        try { clientObj = op.rawPayload ? JSON.parse(op.rawPayload) : {}; } catch {}
+        // True source posting time is preserved in rawPayload.postedAt for
+        // display/activity; createdAt is the immutable first-seen retention
+        // anchor (firstSeenAt). Fall back to createdAt when the source time is
+        // missing or invalid.
+        const sourcePostedMs = typeof clientObj?.postedAt === 'string' ? new Date(clientObj.postedAt).getTime() : NaN;
+        const postedAt = Number.isFinite(sourcePostedMs) && sourcePostedMs > 0 ? new Date(Math.min(sourcePostedMs, Date.now())) : op.createdAt;
         return {
           id: op.id,
           url: op.url,
@@ -168,8 +235,9 @@ export class JobPipeline {
           connectsRequired: op.connections ?? null,
           viewed: op.viewed,
           applied: op.applied,
-          postedAt: op.createdAt,
+          postedAt,
           fetchedAt: op.createdAt,
+          firstSeenAt: op.createdAt,
           country: op.country || '',
           clientName: op.clientName || '',
           clientSpend: op.clientSpend || '',
@@ -184,7 +252,7 @@ export class JobPipeline {
           proposalCount: typeof op.proposalCount === 'number' ? op.proposalCount : null,
           interviewingCount: op.interviewingCount || 0,
           hiresCount: op.hiresCount || 0,
-          client: op.rawPayload ? JSON.parse(op.rawPayload) : {},
+          client: clientObj as JobClient,
         };
       });
     } catch {
@@ -199,6 +267,14 @@ export class JobPipeline {
         const budgetStr = typeof job.budget === 'object' ? JSON.stringify(job.budget) : (job.budget || 'Negotiable');
         const skillsStr = Array.isArray(job.skills) ? job.skills.join(',') : '';
         const clientObj = job.client || {};
+        // Preserve the true source posting time in rawPayload.postedAt for
+        // display/activity. createdAt stays the immutable first-seen retention
+        // anchor (spec §8 retention model): it is set at create and never
+        // rewritten on update, so a sync can never reset a job's age.
+        const sourcePostedIso = job.postedAt instanceof Date
+          ? job.postedAt.toISOString()
+          : (typeof job.postedAt === 'string' ? new Date(job.postedAt).toISOString() : null);
+        const payload = sourcePostedIso ? { ...clientObj, postedAt: sourcePostedIso } : clientObj;
 
         await prisma.opportunity.upsert({
           where: { url: job.url },
@@ -231,7 +307,7 @@ export class JobPipeline {
             clientRating: clientObj.rating ? String(clientObj.rating) : '',
             jobsPosted: clientObj.jobsPosted ?? null,
             applied: job.applied || false,
-            rawPayload: JSON.stringify(clientObj),
+            rawPayload: JSON.stringify(payload),
           },
           create: {
             id: job.id,
@@ -241,7 +317,7 @@ export class JobPipeline {
             budget: budgetStr,
             platform: job.platform || 'Upwork',
             score: job.score ?? 70,
-            createdAt: job.postedAt ? new Date(job.postedAt) : new Date(),
+            createdAt: new Date(), // immutable first-seen retention anchor (spec §8); true source time lives in rawPayload.postedAt
             country: job.country || clientObj.country || '',
             clientName: job.clientName || clientObj.name || '',
             clientSpend: job.clientSpend || '',
@@ -258,7 +334,7 @@ export class JobPipeline {
             clientRating: clientObj.rating ? String(clientObj.rating) : '',
             jobsPosted: clientObj.jobsPosted ?? null,
             applied: job.applied || false,
-            rawPayload: JSON.stringify(clientObj),
+            rawPayload: JSON.stringify(payload),
           },
         });
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -268,14 +344,32 @@ export class JobPipeline {
     }
   }
 
-  private purgeExpiredJobs(jobs: Job[]): Job[] {
-    const now = new Date().getTime();
+  // Comparison-only key for deduplication. The same listing can surface with
+  // different tracking/query variants across providers or runs (Apify, Crawl4AI,
+  // Freelancer), so we compare on a normalized key while STORING the original
+  // url unchanged. Strips query string, fragment and trailing slashes, and
+  // folds Upwork's `/job-post/~<id>` canonical form onto `/jobs/~<id>`.
+  private static normUrlKey(url?: string | null): string {
+    if (!url) return '';
+    return String(url).trim().split('#')[0].split('?')[0].replace(/\/job-post\/~/, '/jobs/~').replace(/\/+$/, '');
+  }
+
+  private purgeExpiredJobs(jobs: Job[], nowMs: number): Job[] {
     const unappliedMaxMs = 7 * 24 * 60 * 60 * 1000;  // 7 days for unapplied
     const appliedMaxMs = 40 * 24 * 60 * 60 * 1000;   // 40 days for applied jobs
 
     return jobs.filter(job => {
-      if (!job.postedAt) return false;
-      const ageMs = now - new Date(job.postedAt).getTime();
+      // Retention age = first time the row entered THIS database
+      // (Opportunity.createdAt), carried through the store as firstSeenAt.
+      // Fall back to postedAt defensively for rows that predate that field.
+      // A job's DB age therefore never depends on the source's posting
+      // timestamp, so a job can never be purged before it has actually been in
+      // the database 7 days (40 days once applied).
+      const anchorMs = job.firstSeenAt
+        ? new Date(job.firstSeenAt).getTime()
+        : (job.postedAt ? new Date(job.postedAt).getTime() : NaN);
+      if (!Number.isFinite(anchorMs)) return false;
+      const ageMs = nowMs - anchorMs;
       if (job.applied) {
         return ageMs <= appliedMaxMs;
       }
