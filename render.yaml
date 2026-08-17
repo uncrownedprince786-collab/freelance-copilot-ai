@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: crawl4ai
+    runtime: image
+    image:
+      url: unclecode/crawl4ai:latest
+    disk:
+      name: crawl4ai-sessions
+      mountPath: /root/.crawl4ai
+      sizeGB: 1
+    envVars:
+      - key: CRAWL4AI_LIMIT_GCLAIM
+        value: "10"
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
