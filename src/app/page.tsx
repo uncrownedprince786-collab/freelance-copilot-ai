@@ -28,7 +28,7 @@ interface FilterState {
 }
 
 const DEFAULT_FILTERS: FilterState = {
-  platform: 'Upwork',
+  platform: 'all',
   sortBy: 'recommended',
   jobTypeFilter: 'all',
   opportunityFilter: 'all',
@@ -45,9 +45,8 @@ function loadFilters(): FilterState {
     if (!raw) return DEFAULT_FILTERS;
     const parsed = JSON.parse(raw) as Partial<FilterState>;
     const merged = { ...DEFAULT_FILTERS, ...parsed };
-    // "All Platforms" was removed — coerce any stale stored value to a real
-    // platform so a returning visitor never lands on the deleted scope.
-    if (merged.platform !== 'Upwork' && merged.platform !== 'Freelancer') merged.platform = DEFAULT_FILTERS.platform;
+    // Coerce any stale stored value to a valid platform scope.
+    if (merged.platform !== 'all' && merged.platform !== 'Upwork' && merged.platform !== 'Freelancer') merged.platform = DEFAULT_FILTERS.platform;
     return merged;
   } catch {
     return DEFAULT_FILTERS;
@@ -312,7 +311,7 @@ function HomeContent() {
 
   // Both platforms we support, always offered as selectors even if the current
   // dataset is thin for one of them (so the structure is predictable).
-  const PLATFORM_OPTIONS: PlatformScope[] = ['Upwork', 'Freelancer'];
+  const PLATFORM_OPTIONS: PlatformScope[] = ['all', 'Upwork', 'Freelancer'];
 
   // Platform scope = the dataset the filters operate on.
   const scopeJobs = useMemo(
