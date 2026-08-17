@@ -1,9 +1,3 @@
 {
-  "crons": [],
-  "functions": {
-    "src/app/api/crawl/route.ts": {
-      "maxDuration": 60,
-      "memory": 1024
-    }
-  }
+  "crons": []
 }
