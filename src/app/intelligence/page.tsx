@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ThemeToggle } from '@/components/ThemeToggle';
+
 import SiteNav from '@/components/SiteNav';
 import { formatTime12 } from '@/lib/format';
 

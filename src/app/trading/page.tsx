@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ThemeToggle } from '@/components/ThemeToggle';
+
 import SiteNav from '@/components/SiteNav';
-import { Logo } from '@/components/Logo';
+
 import { formatTime12 } from '@/lib/format';
 
 interface DayPoint {

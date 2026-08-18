@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
-import { ThemeToggle } from '@/components/ThemeToggle';
+
 import SiteNav from '@/components/SiteNav';
 import { IconShield, IconUsers, IconLock, IconUser, IconRefresh, IconList } from '@/components/icons';
 import { formatTime12, formatDateTime12 } from '@/lib/format';
