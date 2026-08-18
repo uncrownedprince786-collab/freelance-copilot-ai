@@ -416,10 +416,15 @@ function HomeContent() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const fetchJobs = useCallback(async (silent = false) => {
+  const fetchJobs = useCallback(async (silent = false, plat?: PlatformScope) => {
     if (!silent) setLoading(true);
     try {
-      const res = await fetch('/api/jobs');
+      const activePlatform = plat ?? platform;
+      const params = new URLSearchParams();
+      if (activePlatform && activePlatform !== 'all') params.set('platform', activePlatform);
+      params.set('limit', '200');
+      const qs = params.toString();
+      const res = await fetch(`/api/jobs${qs ? '?' + qs : ''}`);
       const json = await res.json();
       const data: Job[] = Array.isArray(json) ? json : json.jobs ?? [];
       // Guests see NO server-persisted viewed/applied state — both are kept
@@ -446,7 +451,7 @@ function HomeContent() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [platform]);
 
   useEffect(() => { void fetchJobs(); }, [fetchJobs]);
 
