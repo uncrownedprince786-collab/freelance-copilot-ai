@@ -784,13 +784,6 @@ function HomeContent() {
           </div>
         </header>
 
-        {/* ── FRESHNESS ── */}
-        {lastSyncedAt && (
-          <div className="lh-muted" style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
-            Last synced {timeAgo(lastSyncedAt)}
-          </div>
-        )}
-
         {/* ── NEW JOBS BANNER ── */}
         {newCount > 0 && (
           <div style={styles.banner}>
@@ -804,9 +797,6 @@ function HomeContent() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span className="lh-h" style={{ fontSize: 13, fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 {platform === 'all' ? 'All Platforms' : platform} metrics
-              </span>
-              <span className="lh-muted" style={{ fontSize: 12, color: '#94a3b8' }}>
-                from {scopeJobs.length} available {platform === 'all' ? 'listings' : `${platform.toLowerCase()} listings`} in the current feed
               </span>
             </div>
           </div>

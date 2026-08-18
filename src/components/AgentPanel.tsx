@@ -5,6 +5,7 @@ import { ArrowUp, RefreshCw, Send, X } from 'lucide-react';
 import { AgentAvatar, IconAgent } from '@/components/icons';
 import { timeAgo } from '@/lib/format';
 import { AGENT_GREETING, AGENT_SUGGESTIONS, AgentJobCard, AgentProposalDraft, AgentResultSet } from '@/lib/agentTypes';
+import { loginAsGuest } from '@/lib/auth';
 
 /**
  * Platform-wide AI assistant. A floating button opens a right-side chat panel
@@ -262,7 +263,7 @@ export default function AgentPanel() {
   // Dismiss the nudge once the panel is opened.
   useEffect(() => { if (open) setNudge(false); }, [open]);
 
-  // Restore session + first-landing welcome.
+  // Restore session + first-landing welcome + ensure guest session for API.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const storedMessages = loadJSON<AgentMessage[]>(MSG_KEY);
@@ -277,6 +278,8 @@ export default function AgentPanel() {
     setResultSets(storedResultSets ?? []);
     setActiveProposal(storedProposal ?? null);
     setHydrated(true);
+    // Ensure guest session cookie exists for /api/agent calls
+    void loginAsGuest();
   }, []);
 
   // Persist on change.

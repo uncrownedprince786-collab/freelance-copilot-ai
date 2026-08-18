@@ -193,16 +193,13 @@ export function IconAlert(props: IconProps) {
 }
 
 /**
- * Conversational-agent identity mark: a chat bubble with a typing indicator.
- * Communicates "assistant", not a robot or generic AI emblem.
+ * Modern AI sparkle icon — communicates "intelligent assistant" with a clean,
+ * contemporary feel. Used for the agent FAB, panel header, and avatar.
  */
 export function IconAgent(props: IconProps) {
   return (
     <svg {...base(props)}>
-      <path d="M4 4h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
-      <circle cx="8.5" cy="10" r="1.2" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="10" r="1.2" fill="currentColor" stroke="none" />
-      <circle cx="15.5" cy="10" r="1.2" fill="currentColor" stroke="none" />
+      <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />
     </svg>
   );
 }
