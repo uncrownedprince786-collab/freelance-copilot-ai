@@ -420,7 +420,8 @@ function HomeContent() {
     if (!silent) setLoading(true);
     try {
       const res = await fetch('/api/jobs');
-      const data: Job[] = await res.json();
+      const json = await res.json();
+      const data: Job[] = Array.isArray(json) ? json : json.jobs ?? [];
       // Guests see NO server-persisted viewed/applied state — both are kept
       // per-tab in sessionStorage so a guest's own history is private to the
       // browsing session.

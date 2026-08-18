@@ -68,18 +68,7 @@ export function ThemeToggle({ size = 16 }: ThemeToggleProps) {
       onClick={toggle}
       title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      className="lh-field"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        padding: '8px 12px',
-        fontSize: 13,
-        fontWeight: 600,
-        cursor: 'pointer',
-        lineHeight: 1,
-      }}
+      className="lh-theme-toggle"
     >
       {isDark ? <IconSun size={size} /> : <IconMoon size={size} />}
     </button>

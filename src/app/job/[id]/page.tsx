@@ -127,8 +127,8 @@ export default function JobDetailPage() {
   // Load the full store once so "Other jobs from this client" can be shown.
   useEffect(() => {
     fetch('/api/jobs')
-      .then(r => (r.ok ? r.json() : []))
-      .then((jobs: Job[]) => setAllJobs(Array.isArray(jobs) ? jobs : []))
+      .then(r => (r.ok ? r.json() : { jobs: [] }))
+      .then((json: unknown) => { const arr = Array.isArray(json) ? json : (json as { jobs?: Job[] })?.jobs ?? []; setAllJobs(arr); })
       .catch(() => { /* non-critical */ });
   }, []);
 
@@ -156,7 +156,8 @@ export default function JobDetailPage() {
     try {
       const res = await fetch('/api/jobs');
       if (!res.ok) throw new Error('Failed to load jobs');
-      const jobs: Job[] = await res.json();
+      const json = await res.json();
+      const jobs: Job[] = Array.isArray(json) ? json : json.jobs ?? [];
       const found = jobs.find(j => j.id === params.id);
       if (found) {
         setJob(markViewedIfGuest(found));
