@@ -201,7 +201,6 @@ export default function AboutPage() {
 
         {/* Hero */}
         <section style={styles.hero}>
-          <Logo size={64} />
           <div style={styles.eyebrow}>Product</div>
           <h1 style={styles.title}>About Lead Hunter</h1>
           <p className="lh-body" style={styles.tagline}>

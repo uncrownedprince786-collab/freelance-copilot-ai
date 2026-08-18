@@ -299,6 +299,7 @@ function HomeContent() {
   const [connectionFilter, setConnectionFilter] = useState<string>(() => loadFilters().connectionFilter || 'all');
   const [budgetFilter, setBudgetFilter] = useState<string>(() => loadFilters().budgetFilter || 'all');
   const [searchQuery, setSearchQuery] = useState<string>(() => loadFilters().searchQuery || '');
+  const [quickFilter, setQuickFilter] = useState<'all' | 'new' | 'hot' | 'applied'>('all');
   const [page, setPage] = useState(1);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
 
@@ -387,7 +388,12 @@ function HomeContent() {
   }, [scopeJobs, f, countryOptions, connectionOptions, budgetBuckets, hasFixed, hasHourly]);
 
   const filteredJobs = useMemo(() => {
-    const result = scopeJobs.filter(j => passes(f, j, undefined, budgetBuckets));
+    let result = scopeJobs.filter(j => passes(f, j, undefined, budgetBuckets));
+
+    // Quick filter from stat card clicks
+    if (quickFilter === 'new') result = result.filter(j => j.isNew);
+    else if (quickFilter === 'hot') result = result.filter(j => j.score >= 70);
+    else if (quickFilter === 'applied') result = result.filter(j => j.applied);
 
     if (sortBy === 'score') {
       result.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
@@ -406,7 +412,7 @@ function HomeContent() {
       return 0;
     });
     return result;
-  }, [scopeJobs, f, sortBy, budgetBuckets]);
+  }, [scopeJobs, f, sortBy, budgetBuckets, quickFilter]);
 
   const totalPages = Math.ceil(filteredJobs.length / PER_PAGE);
   const paginatedJobs = useMemo(() => filteredJobs.slice((page - 1) * PER_PAGE, page * PER_PAGE), [filteredJobs, page]);
@@ -805,16 +811,22 @@ function HomeContent() {
             </div>
           </div>
           <div style={styles.statsRow}>
-            {[
-              { label: 'Listings', value: stats.total },
-              { label: 'New (24h)', value: stats.new },
-              { label: 'Hot (70+)', value: stats.hot },
-              { label: 'Applied', value: stats.applied },
-            ].map(s => (
-            <div key={s.label} className="lh-surface" style={styles.statCard}>
+            {([
+              { label: 'Listings', value: stats.total, key: 'all' as const },
+              { label: 'New (24h)', value: stats.new, key: 'new' as const },
+              { label: 'Hot (70+)', value: stats.hot, key: 'hot' as const },
+              { label: 'Applied', value: stats.applied, key: 'applied' as const },
+            ]).map(s => (
+            <button key={s.label} className="lh-surface" style={{
+              ...styles.statCard,
+              cursor: 'pointer',
+              border: quickFilter === s.key ? '2px solid #2563eb' : styles.statCard.border,
+              background: quickFilter === s.key ? '#eff6ff' : styles.statCard.background,
+              transform: quickFilter === s.key ? 'scale(1.02)' : undefined,
+            }} onClick={() => { setQuickFilter(quickFilter === s.key ? 'all' : s.key); setPage(1); }}>
               <div className="lh-h" style={styles.statNum}>{s.value}</div>
               <div className="lh-muted" style={styles.statLabel}>{s.label}</div>
-            </div>
+            </button>
           ))}
         </div>
 
