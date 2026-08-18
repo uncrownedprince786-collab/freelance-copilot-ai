@@ -8,7 +8,7 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
 - **Database**: Prisma Client (`postgresql` in production, `sqlite` dev adapter fallback)
 - **UI & Styling**: Vanilla CSS design system tokens + custom UI components (`lucide-react`)
 - **AI Engine**: `@google/generative-ai` (Gemini 2.5 Flash) with `MultiAI` fallback (OpenAI, Grok, DeepSeek, deterministic ground-truth fallback)
-- **Data Providers**: Apify Upwork Scraper (`ApifyUpworkProvider`), Freelancer API (`FreelancerProvider`)
+- **Data Providers**: Apify Upwork Scraper (`ApifyUpworkProvider`, multi-account failover with ordered pool + exhausted-account skip), Freelancer API (`FreelancerProvider`)
 
 ## Architecture & Data Flow
 
@@ -65,14 +65,17 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
    - Trends (`/trends`, `/api/trends`) includes a 30-day window history, per-day average budget (USD), remote vs on-site share, and 5-series skill volume — all sourced from `market_facts` dimensions recorded per sync. The response is cached in `SystemKv` under a versioned `trends_cache` (`CACHE_VERSION = 2`); a version mismatch is treated as a miss so stale pre-Task-4 caches silently rebuild, and the trends page guards `(history.skillSeries?.length ?? 0) > 0` before rendering window data.
 
 ## Key Files & Directories
-- `prisma/schema.prisma`: Data models (`Opportunity`, `Analysis`, `ProjectTracking`, `UserSession`, `CronLog`, `SystemKv`, `MarketFact`).
-- `src/providers/`: Data ingestion pipeline (`JobPipeline.ts`, `ActiveJobRefresher.ts`, `ApifyUpworkProvider.ts`, `FreelancerProvider.ts`).
+- `prisma/schema.prisma`: Data models (`Opportunity`, `Analysis`, `ProjectTracking`, `UserSession`, `CronLog`, `SystemKv`, `MarketFact`). Composite indexes: `[platform,score]`, `[platform,createdAt]`, `[applied,createdAt]`.
+- `src/providers/`: Data ingestion pipeline (`JobPipeline.ts` — trimmed rawPayload, provider health tracking, Crawl4AI/SerpApi removed, `ActiveJobRefresher.ts`, `ApifyUpworkProvider.ts` — multi-account failover, `FreelancerProvider.ts`).
 - `src/lib/jobFeed.ts`: Enriched job feed builder used by jobs API and AI Agent.
 - `src/lib/marketIntelligence.ts` & `marketFacts.ts`: Real marketplace trends, distribution, and historical tracking.
 - `src/services/ai/`: AI reasoning layer (`MultiAI.ts`, `gemini.ts`, `agentChat.ts`, `analyzer.ts`).
 - `src/lib/proposalGrounding.ts`: Proposal grounding guards + shared deterministic `generateGroundedProposal` (verification words, claim/template/foreign-topic checks, job fingerprint).
-- `src/app/`: App Router pages (`page.tsx` Dashboard, `job/[id]/page.tsx` Job Detail, `trends/page.tsx` Market Trends, `cron-logs/page.tsx`).
-- `src/app/api/`: REST endpoints (`jobs`, `sync`, `sync/refresh`, `sync/status`, `analyze`, `agent`, `trends`, `search`).
+- `src/app/`: App Router pages (`page.tsx` Dashboard, `job/[id]/page.tsx` Job Detail, `intelligence/page.tsx` Market Intelligence, `trading/page.tsx` Market Trends, `cron-logs/page.tsx`).
+- `src/app/api/`: REST endpoints (`jobs` — server-side filtering, cursor pagination, lightweight select, `sync`, `sync/refresh`, `sync/status`, `analyze`, `agent`, `intelligence`, `trends`, `search`, `jobs/applied`, `jobs/view`).
+- `src/components/SiteNav.tsx`: Shared navigation bar (Leads / Intelligence / AI Apply tabs + ThemeToggle).
+- `src/components/ThemeToggle.tsx`: Icon-only (sun/moon) dark/light theme toggle with system-preference sync.
+- `.github/workflows/cron-sync.yml`: Single 30-minute coordinator (consolidated from separate cron-sync + cron-refresh workflows).
 
 ## Operational Commands
 - **Type Check**: `npx tsc --noEmit`
@@ -94,4 +97,10 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
 - Job feed ranking (`0f1a9db`, pushed to GitHub `main`, deployed to Vercel production): `compareOpportunities` (`src/lib/opportunityRanking.ts`) now ranks by a freshness-weighted combined score (`freshness + proposalCount + assessment score`) instead of hard freshness tiers, so a 1–5 minute age gap affects order while a 2-hour gap always dominates proposal/score. Recomputed on every read from current DB fields (tests in `scripts/test-ranking.ts`).
 - Dark Mode text visibility fix (`c2fd131`): Added 5 `html[data-theme='dark']` CSS rules in `src/app/globals.css` using existing `lh-*` color palette (`#c7d0dc`, `#f1f5f9`, `#8b99ad`) to override inline text colors (`#111827`, `#374151`) that were invisible on dark background `#0b1220`. Targets `.lh-page`, headings `h1-h4`, `.lh-body`, `.lh-muted`, `.lh-h` with `!important` to override inline styles.
 - Market Trending page (`f3c3281`): Repurposed `/trading` as Market Trending page with real API data from `/api/trends`. Removed old `/trends` page (only one Market Trending route). Navigation updated: Dashboard → Market Trending → `/trading`. Clean card-based UI with Market Overview, Platform Mix, Remote Share, Active Skills, Fast Growing Skills, Competition Insights, Budget Trend, 7d/30d sparklines.
+- Production hardening pass (`553342f`): Server-side `/api/jobs` rewrite (WHERE/ORDER BY/cursor pagination/lightweight select), scoring fix (unreachable `proposalCount > 20` → 4-tier), composite DB indexes (`[platform,score]`, `[platform,createdAt]`, `[applied,createdAt]`), default sort changed to score-first, opportunity reason snippets, trimmed rawPayload, scheduler consolidation (single 30-min cron), provider health tracking to SystemKv, shared SiteNav component, dark mode CSS extensions (~100+ lines), Crawl4AI + SerpApi fully removed (providers, compose files, packages).
+- Market Intelligence fixes (this session):
+  - §14 — "Insufficient data" labels → "Too early to tell" (intelligence + trading pages + API strings)
+  - §16 — Rounding fixes: `fmt()` and `avg()` in intelligence/trading pages now use `Math.round()` for jobs/day and proposals instead of 1-decimal rounding
+  - §9 — Comprehensive dark mode CSS overrides: 100+ new attribute-selector rules covering all hardcoded inline `color`, `background`, and `border` patterns in intelligence/trading pages (`#111827`, `#374151`, `#6b7280`, `#9ca3af` text; `#fafafa`, `#fff`, `#f3f4f6`, colored chip backgrounds; `#e5e7eb`, `#d1d5db`, `#eef1f5` borders; `#eef1f5` bar tracks)
+  - §10 — ThemeToggle verified already icon-only (sun/moon, no text)
 - Code matches `brain.md`, GitHub `main`, and Vercel production deployment.

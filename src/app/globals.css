@@ -439,6 +439,128 @@ html[data-theme='dark'] .lh-page [style*="border-bottom: 1px solid #e5e7eb"] {
   border-bottom-color: #26334a !important;
 }
 
+/* ── INTELLIGENCE + TRADING DARK MODE ────────────────────────────────────
+   Override hardcoded inline color/background patterns in intelligence & trading
+   pages that aren't caught by .lh-* class overrides. */
+
+/* Card/box backgrounds */
+html[data-theme='dark'] .lh-page [style*="background: #fafafa"],
+html[data-theme='dark'] .lh-page [style*="background:#fafafa"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fff"],
+html[data-theme='dark'] .lh-page [style*="background:#fff"] {
+  background: #131c2e !important;
+}
+
+/* Light chip/tag backgrounds */
+html[data-theme='dark'] .lh-page [style*="background: #f0fdf4"],
+html[data-theme='dark'] .lh-page [style*="background:#f0fdf4"] {
+  background: rgba(22, 163, 74, 0.12) !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fffbeb"],
+html[data-theme='dark'] .lh-page [style*="background:#fffbeb"] {
+  background: rgba(245, 158, 11, 0.12) !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fef2f2"],
+html[data-theme='dark'] .lh-page [style*="background:#fef2f2"] {
+  background: rgba(220, 38, 38, 0.12) !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #eff6ff"],
+html[data-theme='dark'] .lh-page [style*="background:#eff6ff"] {
+  background: rgba(37, 99, 235, 0.12) !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fff7ed"],
+html[data-theme='dark'] .lh-page [style*="background:#fff7ed"] {
+  background: rgba(234, 88, 12, 0.12) !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #f3f4f6"],
+html[data-theme='dark'] .lh-page [style*="background:#f3f4f6"] {
+  background: #1e293b !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fefce8"],
+html[data-theme='dark'] .lh-page [style*="background:#fefce8"] {
+  background: rgba(234, 179, 8, 0.12) !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fdf4ff"],
+html[data-theme='dark'] .lh-page [style*="background:#fdf4ff"] {
+  background: rgba(168, 85, 247, 0.12) !important;
+}
+
+/* Hardcoded text colors → override to dark-mode readable */
+html[data-theme='dark'] .lh-page [style*="color: #111827"] {
+  color: #f1f5f9 !important;
+}
+html[data-theme='dark'] .lh-page [style*="color:#111827"] {
+  color: #f1f5f9 !important;
+}
+html[data-theme='dark'] .lh-page [style*="color: #374151"] {
+  color: #c7d0dc !important;
+}
+html[data-theme='dark'] .lh-page [style*="color:#374151"] {
+  color: #c7d0dc !important;
+}
+html[data-theme='dark'] .lh-page [style*="color: #6b7280"] {
+  color: #8b99ad !important;
+}
+html[data-theme='dark'] .lh-page [style*="color:#6b7280"] {
+  color: #8b99ad !important;
+}
+html[data-theme='dark'] .lh-page [style*="color: #9ca3af"] {
+  color: #7a869a !important;
+}
+html[data-theme='dark'] .lh-page [style*="color:#9ca3af"] {
+  color: #7a869a !important;
+}
+
+/* Border colors */
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #e5e7eb"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="border:1px solid #e5e7eb"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #d1d5db"] {
+  border-color: #334155 !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #eef1f5"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="border:1px solid #eef1f5"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #bbf7d0"] {
+  border-color: rgba(22, 163, 74, 0.3) !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #fde68a"] {
+  border-color: rgba(245, 158, 11, 0.3) !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #fecaca"] {
+  border-color: rgba(220, 38, 38, 0.3) !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #bfdbfe"] {
+  border-color: rgba(37, 99, 235, 0.3) !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #fed7aa"] {
+  border-color: rgba(234, 88, 12, 0.3) !important;
+}
+
+/* Bar tracks & fills */
+html[data-theme='dark'] .lh-page [style*="background: #eef1f5"] {
+  background: #1e293b !important;
+}
+html[data-theme='dark'] .lh-page [style*="background:#eef1f5"] {
+  background: #1e293b !important;
+}
+
+/* Red text for errors */
+html[data-theme='dark'] .lh-page [style*="color: #dc2626"] {
+  color: #fca5a5 !important;
+}
+html[data-theme='dark'] .lh-page [style*="color:#dc2626"] {
+  color: #fca5a5 !important;
+}
+
 /* ── TOOLTIP / DROPDOWN DARK MODE ──────────────────────────────────────── */
 html[data-theme='dark'] .lh-page [style*="background: white"] {
   background: #131c2e !important;

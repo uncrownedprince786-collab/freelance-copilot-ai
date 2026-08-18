@@ -70,7 +70,7 @@ export interface IntelligenceData {
 }
 
 function getBudgetDirection(intel: ReturnType<typeof computeMarketIntelligence>): string {
-  if (intel.budgetTrend.length < 2) return 'Insufficient budget data';
+  if (intel.budgetTrend.length < 2) return 'Not enough budget data yet — appears after a few syncs';
   const recent = intel.budgetTrend.slice(-3).filter(d => d.avgUsd != null);
   const older = intel.budgetTrend.slice(-7, -3).filter(d => d.avgUsd != null);
   if (recent.length && older.length) {
@@ -81,7 +81,7 @@ function getBudgetDirection(intel: ReturnType<typeof computeMarketIntelligence>)
     if (pct < -10) return `Budgets trending down ${Math.round(pct)}% vs prior week`;
     return `Budgets stable (${Math.round(pct) >= 0 ? '+' : ''}${Math.round(pct)}%)`;
   }
-  return 'Insufficient budget data';
+  return 'Not enough budget data yet — appears after a few syncs';
 }
 
 export async function GET() {

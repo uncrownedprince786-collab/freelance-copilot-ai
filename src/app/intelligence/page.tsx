@@ -81,7 +81,7 @@ const DIRECTION_META: Record<string, { label: string; color: string; bg: string;
   rising:      { label: 'Rising',        color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' },
   falling:     { label: 'Falling',       color: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
   stable:      { label: 'Stable',        color: '#b45309', bg: '#fffbeb', border: '#fde68a' },
-  insufficient:{ label: 'Insufficient data', color: '#6b7280', bg: '#f3f4f6', border: '#e5e7eb' },
+  insufficient:{ label: 'Too early to tell', color: '#6b7280', bg: '#f3f4f6', border: '#e5e7eb' },
 };
 
 const GROWTH_META: Record<string, { label: string; color: string; arrow: string }> = {
@@ -95,12 +95,11 @@ const COMP_LEVEL_META: Record<string, { label: string; color: string; bg: string
   Low:          { label: 'Low competition',    color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' },
   Normal:       { label: 'Normal competition', color: '#b45309', bg: '#fffbeb', border: '#fde68a' },
   High:         { label: 'High competition',   color: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
-  Insufficient: { label: 'Insufficient data',  color: '#6b7280', bg: '#f3f4f6', border: '#e5e7eb' },
+  Insufficient: { label: 'Too early to tell',  color: '#6b7280', bg: '#f3f4f6', border: '#e5e7eb' },
 };
 
 function fmt(n: number): string {
-  if (Number.isInteger(n)) return String(n);
-  return String(Math.round(n * 10) / 10);
+  return String(Math.round(n));
 }
 
 function usd(n: number | null): string {
@@ -278,7 +277,7 @@ export default function IntelligencePage() {
                 <div style={s.changeBox} className="lh-surface">
                   <div className="lh-muted" style={s.changeLabel}>Competition</div>
                   <div className="lh-h" style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
-                    {DIRECTION_META[data.changing.competitionDirection]?.label ?? 'Insufficient data'}
+                    {DIRECTION_META[data.changing.competitionDirection]?.label ?? 'Too early to tell'}
                   </div>
                   <div className="lh-muted" style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.55 }}>{data.changing.competitionReason}</div>
                 </div>

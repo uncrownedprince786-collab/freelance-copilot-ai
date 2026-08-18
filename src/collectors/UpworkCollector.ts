@@ -1,7 +1,6 @@
 import { BaseCollector } from "./BaseCollector";
 import { RawOpportunity } from "./types";
 import * as fs from 'fs';
-import { getJson } from "serpapi";
 import { getStoragePath } from "@/lib/storage";
 
 export class UpworkCollector extends BaseCollector {
@@ -205,77 +204,8 @@ export class UpworkCollector extends BaseCollector {
     return hasStackSignal && hasRoleSignal;
   }
 
-  private async searchGoogleJobs(query: string): Promise<RawOpportunity[]> {
-    if (!process.env.SERPAPI_KEY) {
-      return [];
-    }
-
-    const response = await getJson({
-      api_key: process.env.SERPAPI_KEY,
-      engine: "google_jobs",
-      q: query,
-      hl: "en",
-      gl: "us"
-    });
-    
-    if (!response?.jobs_results) return [];
-    
-    const jobs: RawOpportunity[] = [];
-    
-    for (const job of response.jobs_results) {
-      const isUpwork = 
-        (job.link && job.link.includes('upwork.com')) ||
-        (job.company_name && job.company_name.toLowerCase().includes('upwork'));
-      
-      if (!isUpwork) continue;
-      
-      let jobId = null;
-      const urlSources = [job.link, job.apply_options?.[0]?.link, job.url];
-      
-      for (const source of urlSources) {
-        if (source && source.includes('upwork.com')) {
-          const match = source.match(/~([A-Za-z0-9_\-=]+)/);
-          if (match) {
-            jobId = match[1];
-            break;
-          }
-        }
-      }
-      
-      if (jobId) {
-        let postedDate = null;
-        if (job.detected_extensions?.posted_at) {
-          postedDate = this.parsePostedDate(job.detected_extensions.posted_at);
-        }
-        
-        const descText = job.description || job.title || "";
-        const clientSpendMatch = descText.match(/(?:Client spent|Total spent)[:\s]*\$?(\d+[KMBkmb]?)/i);
-        const reviewsMatch = descText.match(/(\d+(?:\.\d+)?)\s*(?:out of 5|stars?)/i);
-
-        const normalizedJob: RawOpportunity = {
-          title: this.cleanTitle(job.title || "Untitled"),
-          description: descText,
-          url: `https://www.upwork.com/jobs/~${jobId}`,
-          platform: "Upwork",
-          budget: this.extractBudget(descText),
-          location: job.location || "Remote",
-          postedDate: postedDate || new Date(0).toISOString(),
-          company: "Client",
-          status: "OPEN",
-          country: job.location || "Unknown",
-          clientName: job.company_name && job.company_name !== "Upwork" ? job.company_name : "Client",
-          clientSpend: clientSpendMatch ? `$${clientSpendMatch[1]}` : "",
-          clientReviews: reviewsMatch ? `${reviewsMatch[1]} stars` : "",
-          connections: 0
-        };
-
-        if (this.isLikelyAuthenticJob(normalizedJob)) {
-          jobs.push(normalizedJob);
-        }
-      }
-    }
-    
-    return jobs;
+  private async searchGoogleJobs(_query: string): Promise<RawOpportunity[]> {
+    return [];
   }
 
   private async searchPublicUpworkJobs(query: string): Promise<RawOpportunity[]> {
