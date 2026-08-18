@@ -117,3 +117,8 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
 - **Clickable stat cards** (`9ef1c66`): Dashboard stat cards (Listings/New/Hot/Applied) are now clickable filters. Click to filter, click again to deselect. Active card gets blue border highlight. Uses `quickFilter` state applied in `filteredJobs` computation.
 - **About page duplicate logo removed** (`9ef1c66`): Removed body `<Logo size={64} />` from about page hero section (header logo preserved).
 - **Dark mode footer + about agent section** (`0b4fe30`): Added comprehensive rgb() format CSS overrides for `.lh-page` covering all pages. Targets 8 common text colors that React renders as rgb() instead of hex. Fixes dashboard footer (Abdul Raheem name + copyright) and about page agent section (bubble text + body text) not visible in dark mode.
+- **Agent job links + compare cards + default light mode** (`9d6c400`):
+  - Job detail page now fetches by ID (`?id=xxx`) instead of paginated all-jobs, so agent card clicks always resolve (no more "Job not found").
+  - Agent compare intent now returns clickable job cards (was text-only before).
+  - Default theme changed to light mode (was following OS dark preference).
+  - Agent system prompt rewritten: conversational ChatGPT-like tone, can answer freelance-related questions using platform data, compare responses are decisive with signal-based reasoning.
