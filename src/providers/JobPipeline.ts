@@ -104,24 +104,43 @@ export class JobPipeline {
 
     await this.saveStore(finalCollection);
 
-    // DB-level retention enforcement
+    // DB-level retention enforcement — remove all jobs older than 7 days
     try {
-      const unappliedCutoff = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
-      const appliedCutoff = new Date(nowMs - 40 * 24 * 60 * 60 * 1000);
+      const cutoff = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
       const purged = await prisma.opportunity.deleteMany({
         where: {
-          OR: [
-            { createdAt: { lt: unappliedCutoff }, applied: false },
-            { createdAt: { lt: appliedCutoff }, applied: true },
-          ],
+          createdAt: { lt: cutoff },
         },
       });
       if (purged.count > 0) {
-        console.log(`[JobPipeline] Purged ${purged.count} rows outside the active window (7d unapplied / 40d applied).`);
+        console.log(`[JobPipeline] Purged ${purged.count} rows older than 7 days.`);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn('[JobPipeline] DB purge skipped (non-fatal):', msg);
+    }
+
+    // Safety cap: if count still exceeds 5000 after 7-day cleanup, delete
+    // oldest rows first until we're under the limit.
+    try {
+      const count = await prisma.opportunity.count();
+      if (count > 5000) {
+        const excess = count - 4500;
+        const ids = await prisma.opportunity.findMany({
+          orderBy: { createdAt: 'asc' },
+          take: excess,
+          select: { id: true },
+        });
+        if (ids.length > 0) {
+          await prisma.opportunity.deleteMany({
+            where: { id: { in: ids.map(i => i.id) } },
+          });
+          console.log(`[JobPipeline] Safety cap: removed ${ids.length} oldest rows (${count} → ${count - ids.length}).`);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[JobPipeline] Safety cap skipped (non-fatal):', msg);
     }
 
     const facts = await recordMarketFacts(finalCollection);
