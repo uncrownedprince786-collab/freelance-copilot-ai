@@ -420,13 +420,23 @@ function HomeContent() {
     if (!silent) setLoading(true);
     try {
       const activePlatform = plat ?? platform;
-      const params = new URLSearchParams();
-      if (activePlatform && activePlatform !== 'all') params.set('platform', activePlatform);
-      params.set('limit', '200');
-      const qs = params.toString();
-      const res = await fetch(`/api/jobs${qs ? '?' + qs : ''}`);
-      const json = await res.json();
-      const data: Job[] = Array.isArray(json) ? json : json.jobs ?? [];
+      // Fetch ALL pages via cursor pagination so every job is available
+      // for client-side filtering (score, platform, search, etc.).
+      const allJobs: Job[] = [];
+      let cursor: string | null = null;
+      do {
+        const params = new URLSearchParams();
+        if (activePlatform && activePlatform !== 'all') params.set('platform', activePlatform);
+        params.set('limit', '500');
+        if (cursor) params.set('cursor', cursor);
+        const res = await fetch(`/api/jobs?${params.toString()}`);
+        const json = await res.json();
+        const page: Job[] = Array.isArray(json) ? json : json.jobs ?? [];
+        allJobs.push(...page);
+        cursor = json.nextCursor ?? null;
+        // Safety: stop after 10 pages to avoid runaway loops
+        if (allJobs.length > 5000) break;
+      } while (cursor);
       // Guests see NO server-persisted viewed/applied state — both are kept
       // per-tab in sessionStorage so a guest's own history is private to the
       // browsing session.
@@ -438,7 +448,7 @@ function HomeContent() {
       const guestViewed: Set<string> = new Set(
         JSON.parse(typeof window !== 'undefined' ? (sessionStorage.getItem('guest_viewed') || '[]') : '[]')
       );
-      const cleaned = data.map(j => ({
+      const cleaned = allJobs.map(j => ({
         ...j,
         applied: isAdminUser ? j.applied : guestApplied.has(j.id),
         viewed: isAdminUser ? j.viewed : guestViewed.has(j.id),

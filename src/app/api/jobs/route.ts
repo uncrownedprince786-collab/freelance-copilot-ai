@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     const jobType = url.searchParams.get('jobType');
     const country = url.searchParams.get('country');
     const cursor = url.searchParams.get('cursor');
-    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100);
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 500);
     const countOnly = url.searchParams.get('count') === '1';
 
     const where: Prisma.OpportunityWhereInput = {};
