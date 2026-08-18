@@ -5,11 +5,17 @@ import { compareOpportunities } from './opportunityRanking';
 /**
  * FRESHNESS MODEL (single source of truth for timestamps):
  *
+ * - createdAt  = the moment THIS database first stored the row (Opportunity's
+ *   immutable first-seen anchor). Set once at insert and never rewritten on
+ *   update, so a listing's DB age is stable for its lifetime. ALL retention
+ *   purges (in-memory and DB, JobPipeline + sync route) are keyed on it: a job
+ *   is never deleted before it has been in the database 7 days (40 days once
+ *   applied), regardless of the source's posting timestamp.
  * - postedAt   = the SOURCE's posting time for the listing (provider
- *   publishTime / submitdate), clamped to never be in the future. When the
- *   source omits it, the row records its first-seen time. Persisted as
- *   Opportunity.createdAt at insert time and never rewritten on update, so a
- *   listing's age is stable for its lifetime.
+ *   publishTime / submitdate), clamped to never be in the future. Preserved in
+ *   Opportunity.rawPayload.postedAt at insert and returned by getRawJobs() for
+ *   display / activity charts / adaptive sync cadence. When the source omits it
+ *   (or the row predates preservation), createdAt is used.
  * - fetchedAt  = the provider fetch time for that listing. Currently computed
  *   per fetch but NOT persisted; used only during a single pipeline run.
  * - updatedAt  = NOT persisted on Opportunity (schema has no such column).

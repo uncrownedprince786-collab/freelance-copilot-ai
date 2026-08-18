@@ -13,7 +13,7 @@ import { compareOpportunities } from '@/lib/opportunityRanking';
 const FILTERS_KEY = 'lh_jobs_filters';
 
 type PlatformScope = 'all' | 'Upwork' | 'Freelancer';
-type SortKey = 'recommended' | 'date' | 'competition' | 'budget';
+type SortKey = 'score' | 'recommended' | 'date' | 'competition' | 'budget';
 type OpportunityKey = 'all' | 'recommended' | 'actFast';
 
 interface FilterState {
@@ -29,7 +29,7 @@ interface FilterState {
 
 const DEFAULT_FILTERS: FilterState = {
   platform: 'Freelancer',
-  sortBy: 'recommended',
+  sortBy: 'score',
   jobTypeFilter: 'all',
   opportunityFilter: 'all',
   countryFilter: 'all',
@@ -292,7 +292,7 @@ function HomeContent() {
   // Filters — restored from per-tab sessionStorage; a fresh session defaults
   // to "all platforms" with the Recommended sort.
   const [platform, setPlatform] = useState<PlatformScope>(() => loadFilters().platform);
-  const [sortBy, setSortBy] = useState<SortKey>(() => loadFilters().sortBy || 'recommended');
+  const [sortBy, setSortBy] = useState<SortKey>(() => loadFilters().sortBy || 'score');
   const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'fixed' | 'hourly'>(() => loadFilters().jobTypeFilter);
   const [opportunityFilter, setOpportunityFilter] = useState<OpportunityKey>(() => loadFilters().opportunityFilter);
   const [countryFilter, setCountryFilter] = useState<string>(() => loadFilters().countryFilter || 'all');
@@ -389,7 +389,9 @@ function HomeContent() {
   const filteredJobs = useMemo(() => {
     const result = scopeJobs.filter(j => passes(f, j, undefined, budgetBuckets));
 
-    if (sortBy === 'recommended') {
+    if (sortBy === 'score') {
+      result.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    } else if (sortBy === 'recommended') {
       result.sort(recommendedComparator);
     } else if (sortBy === 'competition') {
       result.sort(competitionComparator);
@@ -697,7 +699,7 @@ function HomeContent() {
     platform !== DEFAULT_FILTERS.platform || jobTypeFilter !== 'all' || opportunityFilter !== 'all' ||
     countryFilter !== 'all' || connectionFilter !== 'all' || budgetFilter !== 'all' ||
     searchQuery.trim() !== '' ||
-    sortBy !== 'recommended';
+    sortBy !== 'score';
 
   return (
     <div style={styles.page} className="lh-page">
@@ -855,6 +857,7 @@ function HomeContent() {
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <select value={sortBy} onChange={e => { setSortBy(e.target.value as SortKey); setPage(1); }} style={styles.select} className="lh-field">
+                <option value="score">Sort: Best Leads</option>
                 <option value="recommended">Sort: Recommended</option>
                 <option value="date">Sort: Newest</option>
                 <option value="competition">Sort: Lowest competition</option>
@@ -986,6 +989,13 @@ function HomeContent() {
 
                   {/* Description snippet */}
                   <p style={styles.snippet}>{job.description?.substring(0, 130)}…</p>
+
+                  {/* Opportunity reason (spec §40) — explain why this is a lead */}
+                  {job.opportunityReason && (
+                    <p className="lh-muted" style={{ fontSize: 12, color: '#6366f1', marginBottom: 8, lineHeight: 1.5, fontStyle: 'italic' }}>
+                      {job.opportunityReason}
+                    </p>
+                  )}
 
                   {/* Real listing signals: competition, repeat client, act-fast */}
                   {(typeof job.proposalCount === 'number' || job.repeatClient || job.actFast) && (

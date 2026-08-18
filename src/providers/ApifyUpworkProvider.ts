@@ -1,4 +1,4 @@
-import { JobProvider } from "./JobProvider";
+import { JobProvider, ProviderRunStatus } from "./JobProvider";
 import { Job } from "../types/job";
 
 // Upwork reports competition as an exact number, a ceiling band ("50+"), range
@@ -115,12 +115,19 @@ export class ApifyUpworkProvider implements JobProvider {
 
   private unavailableTokens = new Set<string>();
 
+  // Set at the end of every fetchJobs() run so the caller can distinguish a
+  // GENUINE provider failure (no token, all queries failing with API/quota/
+  // timeout/actor errors) from a normal run that simply returned few or zero
+  // jobs. Zero jobs from successful queries is NOT a failure.
+  lastRunStatus?: ProviderRunStatus;
+
   // `opts` is only used by the Active Job Refresh flow, which fetches a wider
   // recency window to catch older-but-still-active listings. The new-job sync
   // calls fetchJobs() with no args, so its behavior is unchanged (12 / 60).
   async fetchJobs(opts?: { maxResults?: number; totalCap?: number }): Promise<Job[]> {
     if (this.tokens.length === 0) {
       console.warn('[ApifyUpworkProvider] APIFY_TOKEN / APIFY_TOKEN2 / APIFY_TOKEN3 are missing in environment.');
+      this.lastRunStatus = { failed: true, reason: 'no APIFY token configured', queriesTotal: 0, queriesFailed: 0 };
       return [];
     }
 
@@ -135,6 +142,7 @@ export class ApifyUpworkProvider implements JobProvider {
 
     const results: Job[] = [];
     const seen = new Set<string>();
+    let succeededQueries = 0;
 
     const maxResults = opts?.maxResults ?? 12;
     const totalCap = opts?.totalCap ?? 60;
@@ -163,6 +171,7 @@ export class ApifyUpworkProvider implements JobProvider {
           break;
         }
       }
+      if (rawItems !== null) succeededQueries++;
       if (rawItems === null || rawItems.length === 0) continue;
 
       for (const item of rawItems) {
@@ -247,7 +256,17 @@ export class ApifyUpworkProvider implements JobProvider {
       }
     }
 
-    console.log(`[ApifyUpworkProvider] Total jobs fetched: ${results.length}`);
+    // Genuine failure only when NO query produced a usable response (API error,
+    // quota/usage exhaustion, timeout, actor failure). Successful-but-empty
+    // queries are a normal result and never count as failure.
+    const failed = queries.length > 0 && succeededQueries === 0;
+    this.lastRunStatus = {
+      failed,
+      reason: failed ? `all ${queries.length} query attempts failed (API/quota/timeout/actor)` : 'ok',
+      queriesTotal: queries.length,
+      queriesFailed: queries.length - succeededQueries,
+    };
+    console.log(`[ApifyUpworkProvider] Total jobs fetched: ${results.length} (failed=${failed})`);
     return results;
   }
 

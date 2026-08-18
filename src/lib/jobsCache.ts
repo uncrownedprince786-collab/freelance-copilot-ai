@@ -43,6 +43,16 @@ export async function getRawJobs(limit = 500): Promise<RawJob[]> {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let budgetVal: any = op.budget;
       try { budgetVal = JSON.parse(op.budget); } catch {}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let client: Record<string, any> = {};
+      try { client = op.rawPayload ? JSON.parse(op.rawPayload) : {}; } catch {}
+      // createdAt is the immutable first-seen retention anchor. The true source
+      // posting time is preserved in rawPayload.postedAt (JobPipeline.saveStore)
+      // and returned here for display/activity; fall back to createdAt.
+      const sourcePostedMs = typeof client?.postedAt === 'string' ? new Date(client.postedAt).getTime() : NaN;
+      const postedAt = Number.isFinite(sourcePostedMs) && sourcePostedMs > 0
+        ? new Date(Math.min(sourcePostedMs, Date.now())).toISOString()
+        : op.createdAt.toISOString();
       return {
         id: op.id,
         url: op.url,
@@ -54,7 +64,7 @@ export async function getRawJobs(limit = 500): Promise<RawJob[]> {
         platform: op.platform,
         viewed: op.viewed,
         applied: op.applied,
-        postedAt: op.createdAt.toISOString(),
+        postedAt,
         country: op.country || '',
         clientName: op.clientName || '',
         clientSpend: op.clientSpend || '',
@@ -69,7 +79,7 @@ export async function getRawJobs(limit = 500): Promise<RawJob[]> {
         proposalCount: typeof op.proposalCount === 'number' ? op.proposalCount : null,
         interviewingCount: op.interviewingCount || 0,
         hiresCount: op.hiresCount || 0,
-        client: op.rawPayload ? JSON.parse(op.rawPayload) : {},
+        client,
       };
     });
   } catch {

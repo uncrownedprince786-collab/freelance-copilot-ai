@@ -61,6 +61,7 @@ interface OpportunityItem {
   clientSpend?: string;
   clientReviews?: string;
   connections?: number;
+  rawPayload?: string | null;
 }
 
 interface OpportunityDetailsProps {
@@ -75,6 +76,20 @@ export default function OpportunityDetails({ opportunity: initialOpportunity }: 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Display the preserved source posting time when available (stored in
+  // rawPayload.postedAt); createdAt is the first-seen retention anchor, so
+  // fall back to it when the source time is missing or invalid.
+  let postedMs = NaN;
+  if (typeof opportunity.rawPayload === "string") {
+    try {
+      const parsed = JSON.parse(opportunity.rawPayload) as { postedAt?: unknown };
+      if (typeof parsed?.postedAt === "string") postedMs = new Date(parsed.postedAt).getTime();
+    } catch { /* malformed payload - fall back to createdAt */ }
+  }
+  const postedDate = Number.isFinite(postedMs) && postedMs > 0
+    ? new Date(postedMs)
+    : new Date(opportunity.createdAt);
 
   // Trigger AI analysis on demand
   const handleAnalyze = async () => {
@@ -216,7 +231,7 @@ export default function OpportunityDetails({ opportunity: initialOpportunity }: 
                     {opportunity.title}
                   </h1>
                   <p className="text-xs text-neutral-400">
-                    Posted on {new Date(opportunity.createdAt).toLocaleDateString()} at {new Date(opportunity.createdAt).toLocaleTimeString()}
+                    Posted on {postedDate.toLocaleDateString()} at {postedDate.toLocaleTimeString()}
                   </p>
                 </div>
                 <Badge variant={getScoreColor(opportunity.score)} className="text-sm font-black px-3 py-1">

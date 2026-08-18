@@ -37,6 +37,11 @@ export interface Job {
   source: "upwork" | "freelancer" | "google";
   score: number | null;
   fetchedAt: Date;
+  // Retention age anchor: the immutable Opportunity.createdAt (first time the
+  // row entered THIS database). Set when loading stored rows; unset for freshly
+  // fetched jobs (assigned at insert). Pipeline retention purges use this, so a
+  // job's DB age never depends on the source's posting timestamp.
+  firstSeenAt?: Date;
   // UI legacy compatibility fields
   platform?: string;
   country?: string;

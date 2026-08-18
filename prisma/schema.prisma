@@ -47,6 +47,9 @@ model Opportunity {
   @@index([score])
   @@index([createdAt])
   @@index([viewed])
+  @@index([platform, score])
+  @@index([platform, createdAt])
+  @@index([applied, createdAt])
   @@map("opportunities")
 }
 

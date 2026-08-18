@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import SiteNav from '@/components/SiteNav';
 import { formatTime12 } from '@/lib/format';
 
 interface Opportunity {
@@ -173,19 +174,7 @@ export default function IntelligencePage() {
 
       <div style={s.shell}>
 
-        {/* Header */}
-        <header style={s.header} className="lh-topbar">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => router.push('/')}>
-            <div>
-              <div className="lh-h" style={s.brand}>Lead Hunter</div>
-              <div style={s.slogan}>Stop scrolling. Start winning</div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <ThemeToggle />
-            <button onClick={() => router.push('/')} style={s.backBtn} className="lh-field">← Dashboard</button>
-          </div>
-        </header>
+        <SiteNav />
 
         {/* Page heading */}
         <div style={s.pageHead}>

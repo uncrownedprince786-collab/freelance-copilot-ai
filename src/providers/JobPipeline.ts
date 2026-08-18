@@ -193,6 +193,24 @@ export class JobPipeline {
     const facts = await recordMarketFacts(finalCollection);
     console.log(`[JobPipeline] Recorded ${facts.recorded} market facts${facts.failed ? ' (skipped: table unavailable)' : ''}.`);
 
+    // Persist provider health (spec §13) — last run status per provider.
+    try {
+      const now = new Date().toISOString();
+      const upsert = (key: string, value: unknown) =>
+        prisma.systemKv.upsert({
+          where: { key },
+          create: { key, value: JSON.stringify(value), updatedAt: new Date() },
+          update: { value: JSON.stringify(value), updatedAt: new Date() },
+        });
+      await Promise.all([
+        upsert('provider:apify', { lastRun: now, failed: apifyFailed, reason: apifyFailureReason || null, count: apifyJobs.length }),
+        upsert('provider:freelancer', { lastRun: now, failed: false, count: freelancerJobs.length }),
+        upsert('provider:crawl4ai', { lastRun: now, failed: fallbackJobs.length === 0 && apifyFailed, count: fallbackJobs.length }),
+        upsert('provider:serpapi', { lastRun: now, failed: false, count: 0 }),
+        upsert('pipeline:lastRun', { lastRun: now, total: fetchedJobs.length, new: brandNewJobs.length, active: finalCollection.length }),
+      ]);
+    } catch { /* non-fatal */ }
+
     // Log execution
     await logCronRun({
       status: 'SUCCESS',
@@ -274,7 +292,21 @@ export class JobPipeline {
         const sourcePostedIso = job.postedAt instanceof Date
           ? job.postedAt.toISOString()
           : (typeof job.postedAt === 'string' ? new Date(job.postedAt).toISOString() : null);
-        const payload = sourcePostedIso ? { ...clientObj, postedAt: sourcePostedIso } : clientObj;
+        // Trim rawPayload to only card-essential fields (spec §24: don't store
+        // the full raw provider JSON every time).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const extra = clientObj as any;
+        const payload: Record<string, unknown> = {
+          ...(sourcePostedIso ? { postedAt: sourcePostedIso } : {}),
+          ...(clientObj.country ? { country: clientObj.country } : {}),
+          ...(clientObj.name ? { name: clientObj.name } : {}),
+          ...(extra.clientKey ? { clientKey: extra.clientKey } : {}),
+          ...(clientObj.opportunityReason ? { opportunityReason: clientObj.opportunityReason } : {}),
+          ...(clientObj.totalSpent ? { totalSpent: clientObj.totalSpent } : {}),
+          ...(clientObj.rating ? { rating: clientObj.rating } : {}),
+          ...(clientObj.jobsPosted ? { jobsPosted: clientObj.jobsPosted } : {}),
+          ...(extra.memberSince ? { memberSince: extra.memberSince } : {}),
+        };
 
         await prisma.opportunity.upsert({
           where: { url: job.url },
@@ -451,12 +483,14 @@ export class JobPipeline {
       if (job.proposalCount <= 5) {
         score += 15;
         reasons.push('Low competition');
-      } else if (job.proposalCount >= 15) {
-        score -= 20;
-        reasons.push('High competition (15+ proposals)');
-      } else if (job.proposalCount > 20) {
-        score -= 15;
+      } else if (job.proposalCount <= 14) {
+        reasons.push('Moderate competition');
+      } else if (job.proposalCount <= 29) {
+        score -= 10;
         reasons.push('High competition');
+      } else {
+        score -= 20;
+        reasons.push('Very high competition');
       }
     }
 

@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import SiteNav from '@/components/SiteNav';
 import { formatTime12 } from '@/lib/format';
 
 interface CronLogEntry {
@@ -97,22 +98,12 @@ export default function CronLogsPage() {
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <div style={st.shell}>
 
-        {/* Header */}
-        <header style={st.header} className="lh-topbar">
-          <div style={st.brandGroup} onClick={() => router.push('/')}>
-            <div>
-              <div className="lh-h" style={st.brandTitle}>Lead Hunter</div>
-              <div style={st.slogan}>Stop scrolling. Start winning</div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <ThemeToggle />
-            <button onClick={runManualSync} disabled={running} style={st.runBtn}>
-              {running ? 'Running…' : 'Run Sync Now'}
-            </button>
-            <button onClick={() => router.push('/')} style={st.backBtn} className="lh-field">← Dashboard</button>
-          </div>
-        </header>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <SiteNav />
+          <button onClick={runManualSync} disabled={running} style={st.runBtn}>
+            {running ? 'Running…' : 'Run Sync Now'}
+          </button>
+        </div>
 
         {/* Status bar */}
         <div style={st.statusBar}>

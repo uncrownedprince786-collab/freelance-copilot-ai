@@ -373,3 +373,86 @@ html[data-theme='dark'] .lh-page [style*="background: #f0fdf4"] {
   background: rgba(22, 163, 74, 0.12) !important;
   border-color: rgba(22, 163, 74, 0.25) !important;
 }
+
+/* ── DASHBOARD PAGE DARK MODE ──────────────────────────────────────────── */
+html[data-theme='dark'] .lh-page [style*="background: linear-gradient(135deg, #eff6ff, #f0f9ff)"],
+html[data-theme='dark'] .lh-page [style*="background:linear-gradient(135deg, #eff6ff, #f0f9ff)"] {
+  background: linear-gradient(135deg, #131c2e, #0b1220) !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: linear-gradient(135deg, #ecfdf5, #f0fdf4)"],
+html[data-theme='dark'] .lh-page [style*="background:linear-gradient(135deg, #ecfdf5, #f0fdf4)"] {
+  background: linear-gradient(135deg, #131c2e, #0b1220) !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: linear-gradient(135deg, #fdf4ff, #faf5ff)"],
+html[data-theme='dark'] .lh-page [style*="background:linear-gradient(135deg, #fdf4ff, #faf5ff)"] {
+  background: linear-gradient(135deg, #131c2e, #0b1220) !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: linear-gradient(135deg, #fefce8, #fffbeb)"],
+html[data-theme='dark'] .lh-page [style*="background:linear-gradient(135deg, #fefce8, #fffbeb)"] {
+  background: linear-gradient(135deg, #131c2e, #0b1220) !important;
+}
+
+/* ── JOBS LIST PAGE DARK MODE ──────────────────────────────────────────── */
+html[data-theme='dark'] .lh-page .jobCard {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page .jobCard:hover {
+  background: #1a2540 !important;
+  border-color: #2563eb !important;
+}
+
+/* ── TRADING / AI APPLY PAGE DARK MODE ─────────────────────────────────── */
+html[data-theme='dark'] .lh-page [style*="background: #fdf4ff"],
+html[data-theme='dark'] .lh-page [style*="background:#fdf4ff"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #f0fdf4"],
+html[data-theme='dark'] .lh-page [style*="background:#f0fdf4"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #eff6ff"],
+html[data-theme='dark'] .lh-page [style*="background:#eff6ff"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fff7ed"],
+html[data-theme='dark'] .lh-page [style*="background:#fff7ed"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fefce8"],
+html[data-theme='dark'] .lh-page [style*="background:#fefce8"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fef2f2"],
+html[data-theme='dark'] .lh-page [style*="background:#fef2f2"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #f8fafc"] {
+  background: #0b1220 !important;
+}
+
+/* ── INTELLIGENCE / MARKET DATA DARK MODE ───────────────────────────────── */
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #e5e7eb"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="border-bottom: 1px solid #e5e7eb"] {
+  border-bottom-color: #26334a !important;
+}
+
+/* ── TOOLTIP / DROPDOWN DARK MODE ──────────────────────────────────────── */
+html[data-theme='dark'] .lh-page [style*="background: white"] {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
+}
+
+/* ── SCROLLBAR DARK MODE ──────────────────────────────────────────────── */
+html[data-theme='dark'] ::-webkit-scrollbar-track {
+  background: #0b1220;
+}
+html[data-theme='dark'] ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+html[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}

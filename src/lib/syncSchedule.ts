@@ -21,10 +21,20 @@ async function liveHourCounts(): Promise<{ counts: number[]; total: number }> {
   const since = new Date(Date.now() - ANALYSIS_WINDOW_MS);
   const rows = await prisma.opportunity.findMany({
     where: { createdAt: { gte: since } },
-    select: { createdAt: true },
+    select: { createdAt: true, rawPayload: true },
   });
   const counts = new Array<number>(24).fill(0);
-  for (const row of rows) counts[new Date(row.createdAt).getUTCHours()]++;
+  for (const row of rows) {
+    // Prefer the preserved source posting time (rawPayload.postedAt) so the
+    // cadence reflects real posting hours; fall back to the first-seen anchor.
+    let ts = row.createdAt.getTime();
+    try {
+      const payload = row.rawPayload ? JSON.parse(row.rawPayload) : null;
+      const srcMs = typeof payload?.postedAt === 'string' ? new Date(payload.postedAt).getTime() : NaN;
+      if (Number.isFinite(srcMs) && srcMs > 0 && srcMs <= Date.now()) ts = srcMs;
+    } catch { /* keep createdAt */ }
+    counts[new Date(ts).getUTCHours()]++;
+  }
   return { counts, total: rows.length };
 }
 

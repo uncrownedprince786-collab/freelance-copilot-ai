@@ -124,8 +124,12 @@ export async function runAllCollectors(): Promise<{
       const cleanedBudget = typeof item.budget === "string" ? (item.budget.trim() || "Undetermined") : "Undetermined";
       const baseScore = calculateBaseScore(item);
       // Normalize the posted date - different collectors use different field names
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const postedAt = (item.postedAt || item.postedDate) ? new Date((item.postedAt || item.postedDate) as any) : new Date();
+      // createdAt is the immutable first-seen retention anchor: set once at
+      // create, never touched by updates. The true source posting time is
+      // preserved in rawPayload.postedAt for display/activity.
+      const postedAt = (item.postedAt || item.postedDate) ? new Date((item.postedAt || item.postedDate) as string) : null;
+      const sourceIso = postedAt && !isNaN(postedAt.getTime()) ? postedAt.toISOString() : null;
+      const legacyPayload = sourceIso ? JSON.stringify({ postedAt: sourceIso }) : "{}";
       await prisma.opportunity.upsert({
         where: { url: item.url },
         update: {
@@ -147,13 +151,14 @@ export async function runAllCollectors(): Promise<{
           url: item.url,
           score: baseScore,
           risk: "Medium",
-          createdAt: postedAt,
+          createdAt: new Date(),
           status: item.status || "OPEN",
           country: item.country,
           clientName: item.clientName,
           clientSpend: item.clientSpend,
           clientReviews: item.clientReviews,
           connections: item.connections,
+          rawPayload: legacyPayload,
         },
       });
       totalImported++;

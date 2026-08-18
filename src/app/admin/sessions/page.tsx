@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAdmin } from '@/lib/auth';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import SiteNav from '@/components/SiteNav';
 import { IconShield, IconUsers, IconLock, IconUser, IconRefresh, IconList } from '@/components/icons';
 import { formatTime12, formatDateTime12 } from '@/lib/format';
 
@@ -110,19 +111,7 @@ export default function AdminSessionsPage() {
   return (
     <div style={st.page} className="lh-page">
       <div style={st.shell}>
-        {/* Header */}
-        <header style={st.header} className="lh-topbar">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }} onClick={() => router.push('/')}>
-            <div>
-              <h1 style={st.brand}>Lead Hunter</h1>
-              <p style={st.slogan}>Stop scrolling. Start winning</p>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <ThemeToggle />
-            <button onClick={() => router.push('/')} style={st.backBtn} className="lh-field">← Dashboard</button>
-          </div>
-        </header>
+        <SiteNav />
 
         {/* Page Title */}
         <div style={{ marginBottom: 24 }}>
