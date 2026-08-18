@@ -154,12 +154,12 @@ export default function JobDetailPage() {
 
   const loadJobFromApi = async () => {
     try {
-      const res = await fetch('/api/jobs');
-      if (!res.ok) throw new Error('Failed to load jobs');
+      const res = await fetch(`/api/jobs?id=${encodeURIComponent(String(params.id))}`);
+      if (!res.ok) throw new Error('Failed to load job');
       const json = await res.json();
       const jobs: Job[] = Array.isArray(json) ? json : json.jobs ?? [];
-      const found = jobs.find(j => j.id === params.id);
-      if (found) {
+      const found = jobs[0];
+      if (found && found.id === params.id) {
         setJob(markViewedIfGuest(found));
       } else {
         setError('Job not found.');
