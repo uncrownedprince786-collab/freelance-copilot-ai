@@ -287,7 +287,7 @@ export function computeMarketIntelligence(jobs: RawJob[]): MarketIntelligence {
   }
   const dirReason = previous > 0
     ? `${recent} listings were collected in the last 3 days vs ${previous} in the 3 days before that (${marketDirectionPct! >= 0 ? '+' : ''}${marketDirectionPct}%).`
-    : 'Not enough older data to compare — the listing window is only a few days old.';
+    : 'Collecting data — direction will appear once we have a few more days of history.';
 
   // ── Platform mix ─────────────────────────────────────────────────────
   const platform = { upwork: 0, freelancer: 0, other: 0 };

@@ -594,6 +594,26 @@ html[data-theme='dark'] .lh-page [style*="background: white"] {
   box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
 }
 
+/* ── JOB DETAIL PAGE DARK MODE (rgb format from React inline styles) ── */
+html[data-theme='dark'] .lj-page [style*="17, 24, 39"] {
+  color: #f1f5f9 !important;
+}
+html[data-theme='dark'] .lj-page [style*="15, 23, 42"] {
+  color: #f1f5f9 !important;
+}
+html[data-theme='dark'] .lj-page [style*="55, 65, 81"] {
+  color: #c7d0dc !important;
+}
+html[data-theme='dark'] .lj-page [style*="107, 114, 128"] {
+  color: #8b99ad !important;
+}
+html[data-theme='dark'] .lj-page [style*="156, 163, 175"] {
+  color: #8b99ad !important;
+}
+html[data-theme='dark'] .lj-page [style*="100, 116, 139"] {
+  color: #8b99ad !important;
+}
+
 /* ── SCROLLBAR DARK MODE ──────────────────────────────────────────────── */
 html[data-theme='dark'] ::-webkit-scrollbar-track {
   background: #0b1220;
