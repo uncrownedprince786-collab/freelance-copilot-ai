@@ -122,3 +122,7 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
   - Agent compare intent now returns clickable job cards (was text-only before).
   - Default theme changed to light mode (was following OS dark preference).
   - Agent system prompt rewritten: conversational ChatGPT-like tone, can answer freelance-related questions using platform data, compare responses are decisive with signal-based reasoning.
+- **Agent auth + new icon + clean dashboard** (`b7ab229`):
+  - AgentPanel now calls `loginAsGuest()` on hydrate to create a server-side session cookie, so `/api/agent` requests authenticate (was 401 without session).
+  - New modern sparkle AI icon replaces old chat bubble icon.
+  - Removed "Last synced Xm ago" and "from X available listings" text from dashboard.
