@@ -109,3 +109,10 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
   - ThemeToggle: removed `lh-field` class + bordered box, replaced with transparent `.lh-theme-toggle` (no border, no bg, icon-only, subtle hover, focus-visible outline)
   - Removed unused `ThemeToggle`/`Logo` imports from intelligence, trading, cron-logs, admin/sessions pages
 - Code matches `brain.md`, GitHub `main`, and Vercel production deployment.
+
+## Recent Changes (August 2026)
+- **7-day retention + safety cap** (`5118487`): All jobs (applied + non-applied) deleted after 7 days. Safety cap at 5,000 jobs — if exceeded after 7-day cleanup, oldest rows deleted first until under 4,500. Runs in both JobPipeline (every sync) and /api/sync (cron path). Always removes oldest, never fresh.
+- **Job detail dark mode fix** (`897c1be`): React renders `#111827` as `rgb(17, 24, 39)` in the DOM, so existing attribute selectors didn't match. Added 6 CSS override rules targeting the rgb() format for all common text colors used in the job detail stylesheet. All headings, labels, values, and body text now display correctly in dark mode.
+- **Intelligence "Too early" message** (`897c1be`): Changed reason text from "Not enough older data to compare — the listing window is only a few days old." to "Collecting data — direction will appear once we have a few more days of history."
+- **Clickable stat cards** (`9ef1c66`): Dashboard stat cards (Listings/New/Hot/Applied) are now clickable filters. Click to filter, click again to deselect. Active card gets blue border highlight. Uses `quickFilter` state applied in `filteredJobs` computation.
+- **About page duplicate logo removed** (`9ef1c66`): Removed body `<Logo size={64} />` from about page hero section (header logo preserved).
