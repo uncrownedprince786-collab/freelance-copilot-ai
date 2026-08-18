@@ -98,9 +98,14 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
 - Dark Mode text visibility fix (`c2fd131`): Added 5 `html[data-theme='dark']` CSS rules in `src/app/globals.css` using existing `lh-*` color palette (`#c7d0dc`, `#f1f5f9`, `#8b99ad`) to override inline text colors (`#111827`, `#374151`) that were invisible on dark background `#0b1220`. Targets `.lh-page`, headings `h1-h4`, `.lh-body`, `.lh-muted`, `.lh-h` with `!important` to override inline styles.
 - Market Trending page (`f3c3281`): Repurposed `/trading` as Market Trending page with real API data from `/api/trends`. Removed old `/trends` page (only one Market Trending route). Navigation updated: Dashboard → Market Trending → `/trading`. Clean card-based UI with Market Overview, Platform Mix, Remote Share, Active Skills, Fast Growing Skills, Competition Insights, Budget Trend, 7d/30d sparklines.
 - Production hardening pass (`553342f`): Server-side `/api/jobs` rewrite (WHERE/ORDER BY/cursor pagination/lightweight select), scoring fix (unreachable `proposalCount > 20` → 4-tier), composite DB indexes (`[platform,score]`, `[platform,createdAt]`, `[applied,createdAt]`), default sort changed to score-first, opportunity reason snippets, trimmed rawPayload, scheduler consolidation (single 30-min cron), provider health tracking to SystemKv, shared SiteNav component, dark mode CSS extensions (~100+ lines), Crawl4AI + SerpApi fully removed (providers, compose files, packages).
-- Market Intelligence fixes (this session):
+- Market Intelligence fixes:
   - §14 — "Insufficient data" labels → "Too early to tell" (intelligence + trading pages + API strings)
   - §16 — Rounding fixes: `fmt()` and `avg()` in intelligence/trading pages now use `Math.round()` for jobs/day and proposals instead of 1-decimal rounding
-  - §9 — Comprehensive dark mode CSS overrides: 100+ new attribute-selector rules covering all hardcoded inline `color`, `background`, and `border` patterns in intelligence/trading pages (`#111827`, `#374151`, `#6b7280`, `#9ca3af` text; `#fafafa`, `#fff`, `#f3f4f6`, colored chip backgrounds; `#e5e7eb`, `#d1d5db`, `#eef1f5` borders; `#eef1f5` bar tracks)
-  - §10 — ThemeToggle verified already icon-only (sun/moon, no text)
+  - §9 — Comprehensive dark mode CSS overrides: 100+ new attribute-selector rules covering all hardcoded inline `color`, `background`, and `border` patterns in intelligence/trading pages
+  - §10 — ThemeToggle changed to icon-only transparent control (no border, no background, `.lh-theme-toggle` class with subtle hover + focus-visible)
+- Production hotfix (`aeb28ec`, `f4e4503`):
+  - **ROOT CAUSE**: `/api/jobs` returns `{jobs, nextCursor, hasMore}` but `page.tsx` and `job/[id]/page.tsx` expected a flat `Job[]` array. `data.map()` threw TypeError silently caught → `setJobs` never called → empty dashboard.
+  - Fixed `page.tsx`, `job/[id]/page.tsx` (2 fetch paths) to destructure `{jobs}` from API response
+  - ThemeToggle: removed `lh-field` class + bordered box, replaced with transparent `.lh-theme-toggle` (no border, no bg, icon-only, subtle hover, focus-visible outline)
+  - Removed unused `ThemeToggle`/`Logo` imports from intelligence, trading, cron-logs, admin/sessions pages
 - Code matches `brain.md`, GitHub `main`, and Vercel production deployment.
