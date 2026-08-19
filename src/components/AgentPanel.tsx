@@ -303,7 +303,12 @@ export default function AgentPanel() {
   // Auto-scroll to the latest message.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    // Use rAF to ensure DOM has rendered the new message before scrolling.
+    const raf = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
   }, [messages, loading, open]);
 
   // Focus the input when the panel opens.
@@ -348,7 +353,7 @@ export default function AgentPanel() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(60000),
+          signal: AbortSignal.timeout(90000),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => null);

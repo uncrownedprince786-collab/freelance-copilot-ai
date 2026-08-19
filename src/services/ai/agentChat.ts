@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 
 /**
@@ -14,13 +14,13 @@ export interface ChatMessage {
   content: string;
 }
 
-const REQUEST_TIMEOUT_MS = 20000;
+const REQUEST_TIMEOUT_MS = 30000;
 
-export async function runAssistantChat(system: string, messages: ChatMessage[], maxOutputTokens = 900): Promise<string> {
+export async function runAssistantChat(system: string, messages: ChatMessage[], maxOutputTokens = 1500): Promise<string> {
   const providers: { name: string; runner: () => Promise<string | null> }[] = [
     { name: 'Gemini', runner: () => callGemini(system, messages) },
     { name: 'OpenAI', runner: () => callOpenAI(system, messages, maxOutputTokens) },
-    { name: 'Grok', runner: () => callGrok(system, messages, maxOutputTokens) },
+    { name: 'Groq', runner: () => callGrok(system, messages, maxOutputTokens) },
     { name: 'DeepSeek', runner: () => callDeepSeek(system, messages, maxOutputTokens) },
   ];
 
@@ -41,7 +41,7 @@ function isConfigured(provider: string): boolean {
   switch (provider) {
     case 'Gemini': return Boolean(process.env.GEMINI_API_KEY);
     case 'OpenAI': return Boolean(process.env.OPENAI_API_KEY);
-    case 'Grok': return Boolean(process.env.GROK_API_KEY);
+    case 'Groq': return Boolean(process.env.GROK_API_KEY);
     case 'DeepSeek': return Boolean(process.env.DEEPSEEK_API_KEY);
     default: return false;
   }
@@ -58,13 +58,19 @@ function buildMessages(system: string, messages: ChatMessage[]) {
 async function callGemini(system: string, messages: ChatMessage[]): Promise<string | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-  const conversation = buildMessages(system, messages)
-    .map(m => `${m.role.toUpperCase()}: ${m.content}`)
-    .join('\n\n');
-  const result = await model.generateContent(conversation, { timeout: REQUEST_TIMEOUT_MS });
-  return result.response.text() || null;
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const conversation = buildMessages(system, messages)
+      .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+      .join('\n\n');
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: conversation,
+    });
+    return response.text ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function callOpenAI(system: string, messages: ChatMessage[], maxOutputTokens: number): Promise<string | null> {
@@ -83,18 +89,22 @@ async function callOpenAI(system: string, messages: ChatMessage[], maxOutputToke
 async function callGrok(system: string, messages: ChatMessage[], maxOutputTokens: number): Promise<string | null> {
   const apiKey = process.env.GROK_API_KEY;
   if (!apiKey) return null;
-  const response = await fetch('https://api.x.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'grok-2-1212',
-      messages: buildMessages(system, messages),
-      max_tokens: maxOutputTokens,
-    }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const payload = await response.json();
-  return payload?.choices?.[0]?.message?.content ?? null;
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'openai/gpt-oss-120b',
+        messages: buildMessages(system, messages),
+        max_tokens: maxOutputTokens,
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const payload = await response.json();
+    return payload?.choices?.[0]?.message?.content ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function callDeepSeek(system: string, messages: ChatMessage[], maxOutputTokens: number): Promise<string | null> {

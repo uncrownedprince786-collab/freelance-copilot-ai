@@ -250,7 +250,7 @@ export function describeFilters(f: SmartSearchResult, applied: boolean): string 
 }
 
 /** Search the live feed using the same smart-search parser as the dashboard. */
-export async function runJobSearch(rawText: string, limit = 8): Promise<AgentSearchResult> {
+export async function runJobSearch(rawText: string, limit = 12): Promise<AgentSearchResult> {
   const feed = await buildJobFeed();
   const parsed = parseSmartSearch(rawText);
   const filtered = feed.filter(j => applySmartFilters(j, parsed));
@@ -258,8 +258,29 @@ export async function runJobSearch(rawText: string, limit = 8): Promise<AgentSea
   // first, lower known competition within a comparable-freshness tier, then
   // existing opportunity signals (see src/lib/opportunityRanking.ts).
   const sorted = [...filtered].sort(compareOpportunities);
+
+  // When no platform filter is set, ensure at least 3 results from each platform
+  // so the user sees a balanced mix (Upwork + Freelancer).
+  let result = sorted;
+  if (!parsed.platform && sorted.length > 6) {
+    const upwork = sorted.filter(j => j.platform === 'Upwork');
+    const freelancer = sorted.filter(j => j.platform === 'Freelancer');
+    const minPerPlatform = 3;
+    if (upwork.length >= minPerPlatform && freelancer.length >= minPerPlatform) {
+      const topUpwork = upwork.slice(0, minPerPlatform);
+      const topFreelancer = freelancer.slice(0, minPerPlatform);
+      const remaining = sorted.filter(j =>
+        !topUpwork.includes(j) && !topFreelancer.includes(j)
+      );
+      const filler = remaining.slice(0, Math.max(0, limit - topUpwork.length - topFreelancer.length));
+      result = [...topUpwork, ...topFreelancer, ...filler].slice(0, limit);
+    }
+  } else {
+    result = sorted.slice(0, limit);
+  }
+
   return {
-    jobs: sorted.slice(0, limit).map(shapeJobCard),
+    jobs: result.map(shapeJobCard),
     total: sorted.length,
     filtersNote: describeFilters(parsed, false),
   };

@@ -36,7 +36,7 @@ const secureHeaders = {
 
 const MAX_MESSAGES = 20;
 const MAX_MSG_LEN = 2000;
-const MAX_JOBS = 8;
+const MAX_JOBS = 12;
 
 const INJECTION_REDIRECT =
   `I'm focused on helping you with freelance and job-market decisions — I can't share internal instructions, configuration, or technical details.
@@ -71,11 +71,56 @@ function fallbackReply(intent: AgentIntent, lastMsg: string, cards: AgentJobCard
 
   const count = cards.length;
   const plural = count === 1 ? 'y' : 'ies';
+  const ranked = [...cards].sort((a, b) => b.score - a.score);
+  const top = ranked[0];
+
+  // Detect specific follow-up questions
+  const lowerMsg = lastMsg.toLowerCase();
+  const isWhyBetter = /why (is|'s) (the )?(top|first|best|#1|one) better/i.test(lowerMsg);
+  const isMoreLike = /(more like|similar|same kind)/i.test(lowerMsg);
+  const isWhatFocus = /(what should i|what to|focus on|prioritize)/i.test(lowerMsg);
+
   if (intent === 'compare') {
-    const ranked = [...cards].sort((a, b) => b.score - a.score);
-    const top = ranked[0];
-    return `I found ${count} matching opportunit${plural}. The strongest by its own signals is "${top.title}". Open it to see the full assessment and generate a tailored proposal.`;
+    if (isWhyBetter && ranked.length >= 2) {
+      const second = ranked[1];
+      const reasons: string[] = [];
+      if (top.score > second.score) reasons.push(`higher score (${top.score}% vs ${second.score}%)`);
+      if (top.proposalCount != null && second.proposalCount != null && top.proposalCount < second.proposalCount) reasons.push(`fewer proposals (${top.proposalCount} vs ${second.proposalCount})`);
+      if (top.paymentVerified && !second.paymentVerified) reasons.push('verified payment');
+      if (top.clientSpend && !second.clientSpend) reasons.push('client has spend history');
+      if (top.repeatClient && !second.repeatClient) reasons.push('repeat client with other open listings');
+      if (top.actFast && !second.actFast) reasons.push('fresh with low competition (act fast)');
+      if (top.country && top.country === 'United States') reasons.push('US-based client');
+      const reasonStr = reasons.length ? reasons.join(', ') : 'stronger overall signals';
+      return `The top pick is "${top.title}" (${top.platform}, ${top.budget}, ${top.score}%). It beats "${second.title}" because: ${reasonStr}. Open it for the full assessment and a tailored proposal.`;
+    }
+    if (isMoreLike) {
+      const platform = top.platform;
+      const skills = top.skills.filter(Boolean).slice(0, 3);
+      const similar = ranked.filter(j => j !== top && j.platform === platform).slice(0, 3);
+      if (similar.length) {
+        const titles = similar.map(s => `"${s.title}" (${s.score}%, ${s.budget})`).join(', ');
+        return `More ${platform} jobs like "${top.title}": ${titles}. They share the ${platform} platform and similar budget range.${skills.length ? ` Want me to filter by a specific skill (e.g. "${skills[0]}") or budget?` : ' Want me to filter by budget?'}`;
+      }
+      return `The top match is "${top.title}" on ${platform} (${top.budget}). I don't see other ${platform} jobs in this set with a similar profile. Try broadening to all platforms or a different skill.`;
+    }
+    if (isWhatFocus) {
+      const highScore = ranked.filter(j => j.score >= 70);
+      const lowComp = ranked.filter(j => j.proposalCount != null && j.proposalCount <= 10);
+      const verified = ranked.filter(j => j.paymentVerified);
+      const fast = ranked.filter(j => j.actFast);
+      const tips: string[] = [];
+      if (highScore.length) tips.push(`${highScore.length} high-score (70%+) opportunities`);
+      if (lowComp.length) tips.push(`${lowComp.length} with ≤10 proposals`);
+      if (verified.length) tips.push(`${verified.length} with verified payment`);
+      if (fast.length) tips.push(`${fast.length} fresh + low competition (act fast)`);
+      return `Focus on: ${tips.join('; ')}. The top-ranked "${top.title}" (${top.score}%)${top.actFast ? ' ⚡ act fast' : ''} is your strongest signal.`;
+    }
+
+    // General compare
+    return `I found ${count} matching opportunit${plural}. The strongest by its own signals is "${top.title}" (${top.platform}, ${top.budget}, ${top.score}%${top.actFast ? ', act fast' : ''}${top.proposalCount != null ? `, ${top.proposalCount} proposals` : ''}${top.paymentVerified ? ', verified payment' : ''}). Open it to see the full assessment and generate a tailored proposal.`;
   }
+
   return `I found ${count} matching opportunit${plural}. They're ranked by each job's own opportunity signals, with the strongest matches shown first. Open a job to see its full assessment and generate a tailored proposal.`;
 }
 
