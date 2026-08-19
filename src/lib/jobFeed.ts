@@ -78,10 +78,16 @@ export async function buildJobFeed(): Promise<JobFeedItem[]> {
   // Repeat-client signal: jobs sharing the same stable client key in the
   // current store. A client posting multiple listings is an active buyer
   // worth prioritizing (and one whose other listings are discoverable).
+  // Client names are anonymized by Upwork, so we fall back to a composite
+  // fingerprint of spend + jobs-posted count to identify repeat buyers.
   const clientCounts = new Map<string, number>();
   const clientKeys = new Map<string, string | null>();
   for (const job of rawJobs) {
-    const key = clientKeyOf(job);
+    const nameKey = clientKeyOf(job);
+    const spend = typeof job.client === 'object' && job.client?.totalSpent ? String(job.client.totalSpent) : (job.clientSpend || '');
+    const posted = typeof job.client === 'object' && job.client?.jobsPosted ? String(job.client.jobsPosted) : '';
+    // Composite key: name if available, else spend+posted fingerprint
+    const key = nameKey || (spend && posted ? `sp:${spend}:${posted}` : null);
     const jid = job.id || job.url || '';
     if (jid) clientKeys.set(jid, key);
     if (key) clientCounts.set(key, (clientCounts.get(key) || 0) + 1);

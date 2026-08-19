@@ -17,6 +17,11 @@ export interface IntelligenceData {
     marketDirectionReason: string;
     totalJobs: number;
   };
+  dataMaturity: {
+    distinctDays: number;
+    enoughForTrends: boolean;
+    note: string;
+  };
   changing: {
     growingSkills: { skill: string; count: number; growthPct: number | null; status: string }[];
     decliningSkills: { skill: string; count: number; growthPct: number | null; status: string }[];
@@ -70,18 +75,18 @@ export interface IntelligenceData {
 }
 
 function getBudgetDirection(intel: ReturnType<typeof computeMarketIntelligence>): string {
-  if (intel.budgetTrend.length < 2) return 'Not enough budget data yet — appears after a few syncs';
-  const recent = intel.budgetTrend.slice(-3).filter(d => d.avgUsd != null);
-  const older = intel.budgetTrend.slice(-7, -3).filter(d => d.avgUsd != null);
-  if (recent.length && older.length) {
-    const recentAvg = recent.reduce((a, b) => a + (b.avgUsd ?? 0), 0) / recent.length;
-    const olderAvg = older.reduce((a, b) => a + (b.avgUsd ?? 0), 0) / older.length;
-    const pct = ((recentAvg - olderAvg) / olderAvg * 100);
-    if (pct > 10) return `Budgets trending up +${Math.round(pct)}% vs prior week`;
-    if (pct < -10) return `Budgets trending down ${Math.round(pct)}% vs prior week`;
-    return `Budgets stable (${Math.round(pct) >= 0 ? '+' : ''}${Math.round(pct)}%)`;
-  }
-  return 'Not enough budget data yet — appears after a few syncs';
+  const withBudget = intel.budgetTrend.filter(d => d.avgUsd != null);
+  if (withBudget.length < 2) return 'Not enough budget data yet — appears after a few syncs';
+  const half = Math.ceil(withBudget.length / 2);
+  const recent = withBudget.slice(-half);
+  const older = withBudget.slice(0, half);
+  const recentAvg = recent.reduce((a, b) => a + (b.avgUsd ?? 0), 0) / recent.length;
+  const olderAvg = older.reduce((a, b) => a + (b.avgUsd ?? 0), 0) / older.length;
+  if (olderAvg === 0) return 'Not enough budget history to compare';
+  const pct = Math.round((recentAvg - olderAvg) / olderAvg * 100);
+  if (pct > 10) return `Budgets trending up +${pct}% over available history`;
+  if (pct < -10) return `Budgets trending down ${pct}% over available history`;
+  return `Budgets stable (${pct >= 0 ? '+' : ''}${pct}%)`;
 }
 
 export async function GET() {
@@ -213,6 +218,13 @@ export async function GET() {
         marketDirectionReason: intel.marketDirectionReason,
         totalJobs: intel.totalJobs,
       },
+      dataMaturity: {
+        distinctDays: intel.dataMaturity.distinctDays,
+        enoughForTrends: intel.dataMaturity.enoughForTrends,
+        note: intel.dataMaturity.enoughForTrends
+          ? `Based on ${intel.dataMaturity.distinctDays} days of collected data`
+          : `Still collecting — trend analysis needs ≥4 days of history (currently ${intel.dataMaturity.distinctDays}).`,
+      },
       changing: {
         growingSkills: growing,
         decliningSkills: cooling,
@@ -241,7 +253,7 @@ export async function GET() {
       },
       mostActiveSkills: intel.mostActiveSkills,
       budgets: {
-        trend: intel.budgetTrend,
+        trend: intel.budgetTrend.filter(d => d.avgUsd != null || d.jobs > 0),
         engagementSplit: intel.engagementSplit,
         budgetBySkill,
       },

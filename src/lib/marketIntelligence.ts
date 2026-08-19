@@ -74,6 +74,7 @@ export interface MarketIntelligence {
   topMonitorHours: HourPoint[];
   platformPeakHours: { platform: string; hours: HourPoint[] }[];
   retentionNote: string;
+  dataMaturity: { distinctDays: number; enoughForTrends: boolean };
 }
 
 export const SKILL_KEYWORDS = [
@@ -334,6 +335,14 @@ export function computeMarketIntelligence(jobs: RawJob[]): MarketIntelligence {
     .slice(0, 10)
     .map(([skill, count]) => ({ skill, count }));
 
+  // Data maturity: count distinct days with actual job data in the7-day window.
+  // Skill trend comparisons are only meaningful when data spans both halves of
+  // the window (≥4 distinct days). With <4 days, every skill appears in only
+  // the newer half and would be misclassified as "new".
+  const sevenDaysWithData = new Set(sevenArr.filter(d => d.count > 0).map(d => d.date));
+  const distinctDaysCount = sevenDaysWithData.size;
+  const enoughForTrends = distinctDaysCount >= 4;
+
   // Fast-growing: older half vs newer half of the 7-day window.
   const sevenKeys = sevenArr.map(d => d.date);
   const halfLen = Math.ceil(sevenKeys.length / 2);
@@ -361,8 +370,13 @@ export function computeMarketIntelligence(jobs: RawJob[]): MarketIntelligence {
     if (total < 4) continue; // too little signal to call a trend
     let status: SkillGrowth['status'] = 'stable';
     let growthPct: number | null = null;
-    if (f === 0) status = 'new';
-    else {
+    if (!enoughForTrends) {
+      // Not enough spread to compare halves — all data is from the same few days.
+      status = 'new';
+      growthPct = null;
+    } else if (f === 0) {
+      status = 'new';
+    } else {
       growthPct = Math.round((s - f) / f * 100);
       status = growthPct >= 20 ? 'growing' : growthPct <= -20 ? 'declining' : 'stable';
     }
@@ -473,5 +487,6 @@ export function computeMarketIntelligence(jobs: RawJob[]): MarketIntelligence {
     topMonitorHours,
     platformPeakHours,
     retentionNote: 'Listings are retained for ~7 days (applied jobs longer), so older days in the 30-day view only reflect records still in the store.',
+    dataMaturity: { distinctDays: distinctDaysCount, enoughForTrends },
   };
 }

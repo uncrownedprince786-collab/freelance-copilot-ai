@@ -37,6 +37,11 @@ interface IntelligenceData {
     marketDirectionReason: string;
     totalJobs: number;
   };
+  dataMaturity: {
+    distinctDays: number;
+    enoughForTrends: boolean;
+    note: string;
+  };
   changing: {
     growingSkills: SkillItem[];
     decliningSkills: SkillItem[];
@@ -231,6 +236,13 @@ export default function IntelligencePage() {
               </div>
             </div>
 
+            {/* Data maturity banner */}
+            {!data.dataMaturity.enoughForTrends && (
+              <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#1d4ed8', lineHeight: 1.55 }} className="fade-up">
+                <strong style={{ fontWeight: 700 }}>Still warming up</strong> — {data.dataMaturity.note} Skill trends, competition direction, and budget analysis become reliable after a few more syncs.
+              </div>
+            )}
+
             {/* ── 2. Opportunities worth watching ── */}
             <div className="fade-up lh-surface" style={s.card}>
               <div style={s.cardHead}>
@@ -288,7 +300,11 @@ export default function IntelligencePage() {
                 <div style={s.changeBox} className="lh-surface">
                   <div className="lh-muted" style={s.changeLabel}>Growing skills</div>
                   <div className="lh-body" style={{ fontSize: 13, lineHeight: 1.6 }}>
-                    {data.changing.growingSkills.length ? data.changing.growingSkills.slice(0, 4).map(s => s.skill).join(', ') : 'Too little signal yet'}
+                    {!data.dataMaturity.enoughForTrends
+                      ? 'Collecting data — will appear once we have a few more days of history.'
+                      : data.changing.growingSkills.length
+                        ? data.changing.growingSkills.slice(0, 4).map(s => `${s.skill} (${s.growthPct != null ? `+${s.growthPct}%` : 'new'})`).join(', ')
+                        : 'No clear gainers yet'}
                   </div>
                 </div>
               </div>
@@ -350,17 +366,29 @@ export default function IntelligencePage() {
               <div className="fade-up lh-surface" style={s.card}>
                 <h2 style={s.cardTitle}>Skills Gaining Demand</h2>
                 <p className="lh-muted" style={s.cardSub}>Appearing more in newer listings than older ones.</p>
-                <div style={{ marginTop: 12 }}>{renderSkillList(data.skills.growing, 'No clear gainers yet — data is still accumulating.')}</div>
+                <div style={{ marginTop: 12 }}>
+                  {!data.dataMaturity.enoughForTrends
+                    ? <p className="lh-muted" style={s.emptyNote}>Collecting data — direction will appear once we have a few more days of history.</p>
+                    : renderSkillList(data.skills.growing, 'No clear gainers yet — data is still accumulating.')}
+                </div>
               </div>
               <div className="fade-up lh-surface" style={s.card}>
                 <h2 style={s.cardTitle}>Steady Skills</h2>
                 <p className="lh-muted" style={s.cardSub}>Consistent demand week over week.</p>
-                <div style={{ marginTop: 12 }}>{renderSkillList(data.skills.stable, 'No steady skills to report yet.')}</div>
+                <div style={{ marginTop: 12 }}>
+                  {!data.dataMaturity.enoughForTrends
+                    ? <p className="lh-muted" style={s.emptyNote}>Collecting data — will appear once we have a few more days of history.</p>
+                    : renderSkillList(data.skills.stable, 'No steady skills to report yet.')}
+                </div>
               </div>
               <div className="fade-up lh-surface" style={s.card}>
                 <h2 style={s.cardTitle}>Cooling Skills</h2>
                 <p className="lh-muted" style={s.cardSub}>Demand easing in the newer half of the window.</p>
-                <div style={{ marginTop: 12 }}>{renderSkillList(data.skills.cooling, 'Nothing cooling down right now.')}</div>
+                <div style={{ marginTop: 12 }}>
+                  {!data.dataMaturity.enoughForTrends
+                    ? <p className="lh-muted" style={s.emptyNote}>Collecting data — will appear once we have a few more days of history.</p>
+                    : renderSkillList(data.skills.cooling, 'Nothing cooling down right now.')}
+                </div>
               </div>
             </div>
 
