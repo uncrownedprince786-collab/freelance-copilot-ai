@@ -650,3 +650,59 @@ html[data-theme='dark'] ::-webkit-scrollbar-thumb {
 html[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* ── ABOUT PAGE DARK MODE ────────────────────────────────────────────── */
+html[data-theme='dark'] .wf-step {
+  background: #131c2e !important;
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .wf-title {
+  color: #e2e8f0 !important;
+}
+html[data-theme='dark'] .wf-desc {
+  color: #8b99ad !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #f9fafb"],
+html[data-theme='dark'] .lh-page [style*="background:#f9fafb"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #0f172a"],
+html[data-theme='dark'] .lh-page [style*="background:#0f172a"] {
+  background: #1a2540 !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #e2e8f0"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #dbe2ea"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #d1d5db"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #f1f5f9"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="border-top: 1px solid #e2e8f0"] {
+  border-top-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: linear-gradient(135deg,#f0f4ff"],
+html[data-theme='dark'] .lh-page [style*="background: linear-gradient(135deg, #f0f4ff"] {
+  background: #0b1220 !important;
+}
+
+/* ── DASHBOARD DARK MODE — inline style overrides ────────────────────── */
+html[data-theme='dark'] .lh-page [style*="background: #fff8f0"],
+html[data-theme='dark'] .lh-page [style*="background:#fff8f0"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="border: 1px solid #e5e7eb"] {
+  border-color: #26334a !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: white"],
+html[data-theme='dark'] .lh-page [style*="background:white"] {
+  background: #131c2e !important;
+}
+html[data-theme='dark'] .lh-page [style*="background: #fff"],
+html[data-theme='dark'] .lh-page [style*="background:#fff"] {
+  background: #131c2e !important;
+}

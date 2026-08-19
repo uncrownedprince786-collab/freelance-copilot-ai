@@ -212,6 +212,8 @@ export default function AgentPanel() {
   const [copied, setCopied] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const sendingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nudge, setNudge] = useState(false);
   const playedRef = useRef(false);
@@ -300,6 +302,11 @@ export default function AgentPanel() {
     saveJSON(PROPOSAL_KEY, activeProposal);
   }, [activeProposal, hydrated]);
 
+  // Abort in-flight requests on unmount.
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
+
   // Auto-scroll to the latest message.
   useEffect(() => {
     const el = scrollRef.current;
@@ -331,7 +338,8 @@ export default function AgentPanel() {
   const send = useCallback(
     async (raw?: string) => {
       const text = (raw ?? input).trim();
-      if (!text || loading || !hydrated) return;
+      if (!text || sendingRef.current || !hydrated) return;
+      sendingRef.current = true;
       setInput('');
       setError(null);
 
@@ -349,6 +357,9 @@ export default function AgentPanel() {
       };
 
       try {
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
         const res = await fetch('/api/agent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -414,9 +425,10 @@ export default function AgentPanel() {
         ]);
       } finally {
         setLoading(false);
+        sendingRef.current = false;
       }
     },
-    [input, loading, hydrated, messages, workingJobs, resultSets, activeProposal],
+    [input, hydrated, messages, workingJobs, resultSets, activeProposal],
   );
 
   const copyProposal = useCallback(async (p: AgentProposalDraft) => {

@@ -125,7 +125,7 @@ export async function getOpportunities(rawOptions: z.input<typeof GetOpportuniti
       success: false,
       data: [],
       meta: { total: 0, page: 1, limit: 15, totalPages: 0 },
-      error: error?.message || "Failed to load opportunities. Please verify database connection.",
+      error: "Failed to load opportunities. Please verify database connection.",
     };
   }
 }
@@ -158,7 +158,7 @@ export async function getOpportunityById(id: string) {
     console.error(`Failed to load opportunity with ID ${id}:`, error);
     return {
       success: false,
-      error: error?.message || "Failed to load opportunity details.",
+      error: "Failed to load opportunity details.",
     };
   }
 }
@@ -196,7 +196,7 @@ export async function updateTrackingStatusAction(opportunityId: string, status: 
     console.error(`Failed to update tracking status for ${opportunityId}:`, error);
     return {
       success: false,
-      error: error?.message || "Failed to update opportunity tracking status.",
+      error: "Failed to update opportunity tracking status.",
     };
   }
 }
@@ -219,7 +219,7 @@ export async function syncOpportunitiesAction() {
     return {
       success: false,
       importedCount: 0,
-      error: error?.message || "Failed to complete opportunity sync.",
+      error: "Failed to complete opportunity sync.",
     };
   }
 }
@@ -244,7 +244,7 @@ export async function analyzeOpportunityAction(opportunityId: string) {
     console.error(`Analysis failed for opportunity ${opportunityId}:`, error);
     return {
       success: false,
-      error: error?.message || "Failed to complete AI opportunity analysis.",
+      error: "Failed to complete AI opportunity analysis.",
     };
   }
 }
@@ -316,7 +316,7 @@ export async function getDashboardStats() {
         platformBreakdown: {},
         countries: [],
       },
-      error: error?.message || "Stats unavailable.",
+      error: "Stats unavailable.",
     };
   }
 }

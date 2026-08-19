@@ -76,14 +76,18 @@ async function callGemini(system: string, messages: ChatMessage[]): Promise<stri
 async function callOpenAI(system: string, messages: ChatMessage[], maxOutputTokens: number): Promise<string | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
-  const client = new OpenAI({ apiKey, timeout: REQUEST_TIMEOUT_MS });
-  const response = await client.responses.create({
-    model: 'gpt-4.1-mini',
-    input: buildMessages(system, messages),
-    max_output_tokens: maxOutputTokens,
-  });
-  const text = typeof response === 'string' ? response : (response.output_text ?? '');
-  return text || null;
+  try {
+    const client = new OpenAI({ apiKey, timeout: REQUEST_TIMEOUT_MS });
+    const response = await client.responses.create({
+      model: 'gpt-4.1-mini',
+      input: buildMessages(system, messages),
+      max_output_tokens: maxOutputTokens,
+    });
+    const text = typeof response === 'string' ? response : (response.output_text ?? '');
+    return text || null;
+  } catch {
+    return null;
+  }
 }
 
 async function callGrok(system: string, messages: ChatMessage[], maxOutputTokens: number): Promise<string | null> {
@@ -110,16 +114,20 @@ async function callGrok(system: string, messages: ChatMessage[], maxOutputTokens
 async function callDeepSeek(system: string, messages: ChatMessage[], maxOutputTokens: number): Promise<string | null> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return null;
-  const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'deepseek-chat',
-      messages: buildMessages(system, messages),
-      max_tokens: maxOutputTokens,
-    }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const payload = await response.json();
-  return payload?.choices?.[0]?.message?.content ?? null;
+  try {
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: buildMessages(system, messages),
+        max_tokens: maxOutputTokens,
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const payload = await response.json();
+    return payload?.choices?.[0]?.message?.content ?? null;
+  } catch {
+    return null;
+  }
 }
