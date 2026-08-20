@@ -109,11 +109,13 @@ export async function getSyncCooldownMs(): Promise<number> {
 // Human-readable schedule string for the UI, derived from the same data.
 export async function getScheduleLabel(): Promise<string> {
   const peak = await getPeakHours();
-  if (peak.size === 0) return 'Every 4 hours';
+  const peakMin = Math.round(PEAK_INTERVAL_MS / 60000);
+  const offPeakH = Math.round(OFF_PEAK_INTERVAL_MS / 3600000);
+  if (peak.size === 0) return `Every ${offPeakH} hours`;
   const hours = [...peak].sort((a, b) => a - b);
   const fmt = (h: number) => {
     const h12 = h % 12 === 0 ? 12 : h % 12;
     return `${h12}${h < 12 ? ' AM' : ' PM'} UTC`;
   };
-  return `Peak (${hours.map(fmt).join(', ')}): ~20 min · Off-peak: ~4 h`;
+  return `Peak (${hours.map(fmt).join(', ')}): ~${peakMin} min · Off-peak: ~${offPeakH} h`;
 }
