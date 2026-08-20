@@ -1,5 +1,6 @@
 import { JobProvider, ProviderRunStatus } from "./JobProvider";
 import { Job } from "../types/job";
+import { getApifyBudgetRemaining, consumeApifyBudget } from "../lib/apifyBudget";
 
 // Upwork reports competition as an exact number, a ceiling band ("50+"), range
 // bands ("0 to 5", "5 to 10", "20 to 50"), or phrases like "Be the first to
@@ -132,10 +133,13 @@ export class ApifyUpworkProvider implements JobProvider {
     }
 
     const queries = [
-      "client growth manager",
-      "telehealth growth manager",
+      // Consolidated for free-tier friendliness: one broad "growth manager"
+      // query replaces the previous client/telehealth/ecommerce variants (same
+      // niche, wider recall per Apify call) alongside the other two lead
+      // domains. Each query is a billed Apify run, so fewer, broader queries
+      // keep quality high while cutting cost.
+      "growth manager",
       "marketing strategy",
-      "ecommerce growth manager",
       "full stack developer",
       "react developer",
     ];
@@ -143,8 +147,9 @@ export class ApifyUpworkProvider implements JobProvider {
     const results: Job[] = [];
     const seen = new Set<string>();
     let succeededQueries = 0;
+    let skippedQueries = 0;
 
-    const maxResults = opts?.maxResults ?? 12;
+    const maxResults = opts?.maxResults ?? 8;
     const totalCap = opts?.totalCap ?? 60;
     // One contiguous slice per account: N tokens -> each serves an equal share
     // of the query list (deterministic); 1 token -> one slice serves everything.
@@ -152,6 +157,15 @@ export class ApifyUpworkProvider implements JobProvider {
 
     for (let qi = 0; qi < queries.length; qi++) {
       if (results.length >= totalCap) break;
+
+      // Daily free-tier budget: stop launching billed Apify runs once the cap
+      // is hit. Sync runs first in the cron, so new-job ingestion gets
+      // priority; the refresh shares the same pool and skips when it is empty.
+      if ((await getApifyBudgetRemaining()) <= 0) {
+        skippedQueries = queries.length - qi;
+        break;
+      }
+
       const query = queries[qi];
 
       // Primary account for this query's slice first, then every other
@@ -258,15 +272,20 @@ export class ApifyUpworkProvider implements JobProvider {
 
     // Genuine failure only when NO query produced a usable response (API error,
     // quota/usage exhaustion, timeout, actor failure). Successful-but-empty
-    // queries are a normal result and never count as failure.
-    const failed = queries.length > 0 && succeededQueries === 0;
+    // queries are a normal result and never count as failure. A run that
+    // stopped early because the daily Apify budget ran out is NOT a provider
+    // failure — it is an expected free-tier skip.
+    const budgetSkipped = skippedQueries > 0;
+    const failed = !budgetSkipped && queries.length > 0 && succeededQueries === 0;
     this.lastRunStatus = {
       failed,
-      reason: failed ? `all ${queries.length} query attempts failed (API/quota/timeout/actor)` : 'ok',
-      queriesTotal: queries.length,
-      queriesFailed: queries.length - succeededQueries,
+      reason: budgetSkipped
+        ? `daily Apify query budget exhausted (skipped ${skippedQueries} query(s))`
+        : failed ? `all ${queries.length} query attempts failed (API/quota/timeout/actor)` : 'ok',
+      queriesTotal: queries.length - skippedQueries,
+      queriesFailed: queries.length - skippedQueries - succeededQueries,
     };
-    console.log(`[ApifyUpworkProvider] Total jobs fetched: ${results.length} (failed=${failed})`);
+    console.log(`[ApifyUpworkProvider] Total jobs fetched: ${results.length} (failed=${failed}, skipped=${skippedQueries})`);
     return results;
   }
 
@@ -285,7 +304,11 @@ export class ApifyUpworkProvider implements JobProvider {
   ): Promise<{ items: any[] | null; exhausted: boolean }> {
     const endpoint = `https://api.apify.com/v2/actors/blackfalcondata~upwork-scraper/run-sync-get-dataset-items?token=${token}`;
     try {
-      console.log(`[ApifyUpworkProvider] Fetching Upwork jobs for: "${query}" (account ...${token.slice(-4)})...`);
+      // Each query attempt is a billed Apify run (pay-per-event), so consume
+      // the daily budget here — after the availability check above and once for
+      // every account retried.
+      const remaining = await consumeApifyBudget();
+      console.log(`[ApifyUpworkProvider] Fetching Upwork jobs for: "${query}" (account ...${token.slice(-4)}, budget remaining ${remaining})...`);
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -25,8 +25,8 @@ import { logCronRun } from "../lib/cronLogger";
 //   so a single run can never balloon.
 // - Never creates duplicates and never overwrites a stored value with a missing
 //   one: a field is only written when the provider returned a usable value.
-const REFRESH_MAX_RESULTS = 40;   // per Upwork query (wider than the sync's 12)
-const REFRESH_TOTAL_CAP = 240;    // hard ceiling on Upwork results per refresh run
+const REFRESH_MAX_RESULTS = 12;   // per Upwork query (matches the sync fetch)
+const REFRESH_TOTAL_CAP = 60;     // hard ceiling on Upwork results per refresh run
 const REFRESH_BATCH = 30;         // existing jobs patched per run
 const REFRESH_TIME_LIMIT_MS = 90_000; // strict execution ceiling
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;

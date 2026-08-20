@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db';
 // frequently; the sync route itself decides whether a full fetch is due using
 // the real distribution of job posting times, so we never hammer the source
 // APIs off-peak and never hardcode arbitrary "peak hours".
-export const PEAK_INTERVAL_MS = 20 * 60 * 1000;       // ~every 20 min during peak activity
+export const PEAK_INTERVAL_MS = 45 * 60 * 1000;      // ~every 45 min during peak activity
 export const OFF_PEAK_INTERVAL_MS = 4 * 60 * 60 * 1000; // ~every 4 h otherwise
 const ANALYSIS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;   // live-window lookback (7 days)
 const HISTORICAL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000; // persisted-aggregate lookback (14 days)

@@ -6,7 +6,7 @@ import { isAdminRequest } from "@/lib/adminAuth";
 
 const LOCK_KEY = "refresh_lock";
 const LOCK_TTL_MS = 10 * 60 * 1000; // 10 minutes; release-on-finally plus TTL safety net
-const COOLDOWN_MS = 10 * 60 * 1000; // minimum gap between non-forced refreshes
+const COOLDOWN_MS = 45 * 60 * 1000; // minimum gap between non-forced refreshes
 const COOLDOWN_KEY = "last_refresh_run";
 
 function timingSafeSecretEqual(a: string, b: string): boolean {

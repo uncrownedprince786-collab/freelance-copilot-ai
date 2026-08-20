@@ -126,3 +126,12 @@ Lead Hunter is a production Next.js application that aggregates freelance job op
   - AgentPanel now calls `loginAsGuest()` on hydrate to create a server-side session cookie, so `/api/agent` requests authenticate (was 401 without session).
   - New modern sparkle AI icon replaces old chat bubble icon.
   - Removed "Last synced Xm ago" and "from X available listings" text from dashboard.
+- **Groq AI provider** (`7eb1466`): Agent wired to use Groq (`openai/gpt-oss-120b`) as primary provider via `api.groq.com`. Gemini SDK upgraded to `@google/genai@2.17.1`. Agent conversational — full-comparison responses with signal-based reasoning. MAX_JOBS=12, maxOutputTokens=1500, request timeout=30s, client timeout=90s. Platform balancing in search (≥3 Upwork + ≥3 Freelancer).
+- **Intelligence data quality** (`5cae515`): Added `dataMaturity` field (`distinctDays`, `enoughForTrends`) so skill trend/comparison charts only show when ≥4 days of data exist. Budget trend chart trimmed to only days with actual data. Repeat-client detection uses spend+jobsPosted fingerprint fallback for anonymized Upwork clients. Market direction/competition direction respect data maturity.
+- **Production hardening pass** (`bec51b1`):
+  - **CRITICAL**: `callOpenAI` and `callDeepSeek` in `agentChat.ts` wrapped in try/catch — provider failures now gracefully fall through instead of crashing the entire agent turn.
+  - **CRITICAL**: Agent double-click race condition fixed via `sendingRef` (atomic check+set). In-flight requests abort on component unmount via `AbortController`.
+  - **SECURITY**: `Strict-Transport-Security` (HSTS) and `X-XSS-Protection` headers added to `next.config.js`.
+  - **SECURITY**: Error messages in `opportunity-actions.ts` no longer leak `error?.message` (Prisma internals) to clients — replaced with static strings.
+  - **ERROR BOUNDARIES**: Added `error.tsx` to all route segments (`app/`, `job/`, `intelligence/`, `trading/`) + branded `not-found.tsx` (404).
+  - **DARK MODE**: Added ~30 CSS override rules in `globals.css` for the About page (`.wf-step`, `.wf-title`, `.wf-desc`, `#f9fafb`, `#0f172a`, `#e2e8f0`, `#dbe2ea`, `#d1d5db`, `#f1f5f9` borders, gradient backgrounds, `#fff`/`white` cards).

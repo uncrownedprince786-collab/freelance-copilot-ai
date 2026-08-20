@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 export default function NotFound() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f7f9fc', fontFamily: 'system-ui, sans-serif' }}>
@@ -7,7 +9,7 @@ export default function NotFound() {
         <p style={{ fontSize: 14, color: '#6b7280', margin: '0 0 20px', lineHeight: 1.6 }}>
           The page you&apos;re looking for doesn&apos;t exist or has been moved.
         </p>
-        <a
+        <Link
           href="/"
           style={{
             background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8,
@@ -16,7 +18,7 @@ export default function NotFound() {
           }}
         >
           Back to dashboard
-        </a>
+        </Link>
       </div>
     </div>
   );

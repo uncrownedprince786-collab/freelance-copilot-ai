@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getScheduleLabel } from '@/lib/syncSchedule';
+import { getApifyBudgetRemaining, getApifyDailyBudget } from '@/lib/apifyBudget';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +19,14 @@ export async function GET() {
       } catch { /* ignore corrupt record */ }
     }
     const schedule = await getScheduleLabel();
-    return NextResponse.json({ lastSyncedAt, schedule, adaptive: true });
+    const budgetDaily = getApifyDailyBudget();
+    const budgetRemaining = await getApifyBudgetRemaining();
+    return NextResponse.json({
+      lastSyncedAt,
+      schedule,
+      adaptive: true,
+      apifyBudget: { daily: budgetDaily, remaining: budgetRemaining },
+    });
   } catch {
     return NextResponse.json({ lastSyncedAt: null, schedule: 'Every 4 hours', adaptive: true });
   }
