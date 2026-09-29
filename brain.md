@@ -308,7 +308,7 @@ the source omits it, and `client.jobsPosted` populated from
 | Baseline verification | typecheck ✅ · lint ✅ · tests ✅ · build ✅ at `cdfbb54` |
 | Phase 1 — critical security + cost + test gate | **complete** — `27eb93a` |
 | Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **complete in code, unapplied** — every engine built and tested; nothing has touched the database and no UI reads it |
-| Phase 3 — Neon/Apify cost reduction (remainder) | not started |
+| Phase 3 — Neon/Apify cost reduction (remainder) | **in progress** — write amplification, scheduler query and budget allocation done (`05701b3`, `c2be9df`); source health, adaptive scheduling and the admin surface not started |
 | Phase 4 — UX revamp, chatbot deterministic-first | not started |
 
 **Working branch:** `audit/production-hardening` off `dd5a0cf`. Pushed. Not
@@ -585,9 +585,67 @@ every hour. `leadScoredAt` is excluded from the comparison: it changes every
 run by definition, so counting it would mark every row dirty and defeat the
 check.
 
+### Phase 3 — cost and cron (`05701b3`, `c2be9df`)
+
+**Cron audit, from 800 recorded runs over 53 days.** One correction to a
+first reading: 480 of 800 runs added zero new jobs, but that is not waste —
+479 of them are *refresher* runs, which add no new jobs by design. Separated:
+
+| Run kind | Runs | Records fetched | New jobs |
+|---|---|---|---|
+| sync | 321 | 54,127 | 9,826 |
+| refresher | 479 | 5,210 | 0 (by design) |
+
+**The source split**, measurable only now that the quality columns are
+populated — and this is the whole Phase 3 argument:
+
+| Source | Rows | Useful leads (high+promising) | % useful | Avg lead score | Duplicates |
+|---|---|---|---|---|---|
+| Upwork | 198 | **131** | **66.2%** | 64.1 | 0 |
+| Freelancer | 1,134 | 115 | 10.1% | 42.8 | 28 |
+
+Upwork produces **more** useful leads than Freelancer from one sixth of the
+volume. Upwork is also the only source that costs Apify budget — and the one
+being starved. 211 of 800 runs reported `Apify (0)`, and the stored budget
+state reads *"daily Apify query budget exhausted (skipped 4 query(s))"*.
+
+The arithmetic: discovery issues 4 queries per run, the cap is 16 billed runs
+a day, so the budget covers four sync runs — but the cron fires ~10 times a
+day and the refresher draws from the same pool in between. Whoever asked
+first won.
+
+**Fixed so far:**
+
+- *Discovery reserve* (`APIFY_DISCOVERY_RESERVE`, default 8 of 16). Refresh
+  may only spend what is above the floor, so it degrades to zero before
+  discovery loses a query. Set to 0 to restore the old shared pool.
+- *Yield-ranked hours* (`bestDiscoveryHours`). Recorded yield runs from 3.4
+  new jobs per run at 03:00 UTC to 20.8 at 06:00 — a factor of six at the
+  same price. Pure and tested against the measured distribution; **not yet
+  wired into the sync route.**
+- *Write amplification.* A sync fetches ~150 Freelancer records and ~19% are
+  new; the other ~130 were rewritten in full every run — about 1,300 row
+  updates a day for no visible change. `contentHash` now makes the
+  comparison exact, and unchanged listings get one batched `lastSeenAt`
+  touch instead. A value the source STOPPED publishing does not count as a
+  change, so an intermittent field cannot trigger a rewrite and then blank
+  out good data.
+- *Scheduler query.* `liveHourCounts` pulled every row in a 7-day window
+  with its `rawPayload` blob and JSON-parsed each one, on every sync tick.
+  Now a SQL GROUP BY over the indexed `postedAt`. Measured against
+  production: **1,295 rows → 24, 267 KB → 448 B, 1,110ms → 232ms**, identical
+  distribution. A PGlite test pins the UTC semantics.
+
+**Still open in Phase 3:** wiring the hour ranking into the scheduler,
+per-source health records with consecutive-failure backoff (§21), cost per
+useful lead as a stored metric (§51), and the admin surface for all of it
+(§35). Also unresolved: the sync cadence (~10 runs/day) is four times what
+the Apify budget can serve, so most runs are Freelancer-only — that is the
+next scheduling decision, not a bug.
+
 ### What is NOT done, and what is NOT verified
 
-**Not built:** the UI does not read any of these columns. The feed still
+**Not built:** the UI does not read any of the Phase 2 columns. The feed still
 sorts by `createdAt`, there is no separate Latest vs Recommended (§23), the
 job detail page does not distinguish source fact from derived value (§26,
 §56), Trending is untouched (§28), and the clustering pass is not wired into
