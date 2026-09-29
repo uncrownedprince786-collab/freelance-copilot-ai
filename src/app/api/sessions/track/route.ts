@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { isAdminRequest } from '@/lib/adminAuth';
+import { isAdminRequest, getSessionClaims } from '@/lib/adminAuth';
 
-interface SessionEvent {
+// Session activity tracking.
+//
+// SECURITY: this route used to be unauthenticated, cast `await req.json()`
+// straight to a typed interface without validating it, and spread the entire
+// caller-supplied object into the stored events array with no byte cap. That
+// allowed anyone to write ~2 GB per guestId (500 events x ~4 MB body) under
+// unlimited guestIds, and to set their own `role: 'admin'` label so forged
+// activity appeared as admin activity in the admin dashboard.
+//
+// It now requires a valid session, and takes the identity (guestId + role)
+// from the SIGNED cookie claims rather than from the request body. Every
+// stored field is explicitly picked and length-capped; nothing is spread.
+
+const MAX_EVENTS = 200;          // per session, newest kept
+const MAX_EVENT_LEN = 64;        // event name
+const MAX_DETAIL_LEN = 200;      // human-readable detail (e.g. a job title)
+const MAX_EVENTS_BYTES = 64_000; // hard ceiling on the serialized blob
+
+interface StoredEvent {
   guestId: string;
   role: 'admin' | 'guest';
   event: string;
@@ -12,63 +30,118 @@ interface SessionEvent {
 }
 
 function getVisitorCountry(req: NextRequest): string {
-  return req.headers.get('x-vercel-ip-country') || req.headers.get('cf-ipcountry') || '';
+  const raw = req.headers.get('x-vercel-ip-country') || req.headers.get('cf-ipcountry') || '';
+  // Edge-supplied, but still clamp: it is a header.
+  return raw.replace(/[^A-Za-z-]/g, '').slice(0, 8);
+}
+
+function cleanStr(v: unknown, max: number): string {
+  if (typeof v !== 'string') return '';
+  // Strip control characters so stored text cannot corrupt log or table output.
+  return v.replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, max);
+}
+
+/** A timestamp we are willing to store: real, and not in the future. */
+function safeTimestamp(v: unknown): Date {
+  const now = Date.now();
+  if (typeof v !== 'string') return new Date(now);
+  const ms = new Date(v).getTime();
+  if (!Number.isFinite(ms) || ms <= 0 || ms > now) return new Date(now);
+  return new Date(ms);
+}
+
+/** Trim oldest-first until the serialized array fits the byte ceiling. */
+function fitEvents(events: StoredEvent[]): StoredEvent[] {
+  let out = events.slice(-MAX_EVENTS);
+  while (out.length > 1 && JSON.stringify(out).length > MAX_EVENTS_BYTES) {
+    out = out.slice(Math.ceil(out.length / 4));
+  }
+  return out;
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const body: SessionEvent = await req.json();
-    if (typeof body?.guestId !== 'string' || body.guestId.trim().length === 0 || body.guestId.length > 100) {
-      return NextResponse.json({ ok: false, error: 'Missing or invalid guestId' }, { status: 400 });
-    }
+  // Identity comes from the signed session, never from the body.
+  const claims = await getSessionClaims();
+  if (!claims) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  }
+  const role: 'admin' | 'guest' = claims.role;
+  const guestId = role === 'admin' ? 'admin' : cleanStr(claims.guestId, 100);
+  if (!guestId) {
+    return NextResponse.json({ ok: false, error: 'Session has no subject' }, { status: 400 });
+  }
 
-    const role = body.role === 'admin' ? 'admin' : 'guest';
+  try {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ ok: false, error: 'Invalid body' }, { status: 400 });
+    }
+    const raw = (body ?? {}) as Record<string, unknown>;
+
+    const event = cleanStr(raw.event, MAX_EVENT_LEN);
+    if (!event) {
+      return NextResponse.json({ ok: false, error: 'Missing event' }, { status: 400 });
+    }
+    const detail = cleanStr(raw.detail, MAX_DETAIL_LEN);
+    const now = safeTimestamp(raw.timestamp);
     const country = getVisitorCountry(req);
+
+    // Explicitly constructed — no spread of caller-controlled keys.
+    const entry: StoredEvent = {
+      guestId,
+      role,
+      event,
+      ...(detail ? { detail } : {}),
+      timestamp: now.toISOString(),
+      ...(country ? { country } : {}),
+    };
+
     const existing = await prisma.userSession.findUnique({
-      where: { guestId: body.guestId }
+      where: { guestId },
+      select: { startTime: true, events: true },
     });
 
-    let events: SessionEvent[] = existing?.events ? JSON.parse(existing.events) : [];
-    events.push({ ...body, role, country });
-    if (events.length > 500) events = events.slice(-500);
+    let events: StoredEvent[] = [];
+    if (existing?.events) {
+      try {
+        const parsed = JSON.parse(existing.events);
+        if (Array.isArray(parsed)) events = parsed as StoredEvent[];
+      } catch {
+        events = [];
+      }
+    }
+    events.push(entry);
+    const serialized = JSON.stringify(fitEvents(events));
 
-    const now = new Date(body.timestamp || Date.now());
-
-    if (body.event === 'session_start' || !existing) {
+    if (event === 'session_start' || !existing) {
       await prisma.userSession.upsert({
-        where: { guestId: body.guestId },
-        update: {
-          role,
-          lastSeen: now,
-          events: JSON.stringify(events),
-        },
+        where: { guestId },
+        update: { role, lastSeen: now, events: serialized },
         create: {
-          guestId: body.guestId,
+          guestId,
           role,
           startTime: now,
           lastSeen: now,
-          events: JSON.stringify([{ ...body, role, country }]),
+          events: JSON.stringify([entry]),
         },
       });
-    } else if (body.event === 'session_end') {
-      const startTime = existing.startTime ? new Date(existing.startTime).getTime() : now.getTime();
-      const durationMs = Math.max(0, now.getTime() - startTime);
+    } else if (event === 'session_end') {
+      const startMs = existing.startTime ? new Date(existing.startTime).getTime() : now.getTime();
       await prisma.userSession.update({
-        where: { guestId: body.guestId },
+        where: { guestId },
         data: {
           endTime: now,
           lastSeen: now,
-          durationMs,
-          events: JSON.stringify(events),
+          durationMs: Math.max(0, now.getTime() - startMs),
+          events: serialized,
         },
       });
     } else {
       await prisma.userSession.update({
-        where: { guestId: body.guestId },
-        data: {
-          lastSeen: now,
-          events: JSON.stringify(events),
-        },
+        where: { guestId },
+        data: { lastSeen: now, events: serialized },
       });
     }
 
@@ -90,8 +163,14 @@ export async function GET() {
     });
 
     const now = Date.now();
-    const sessions = records.map(r => {
-      const evs: SessionEvent[] = r.events ? JSON.parse(r.events) : [];
+    const sessions = records.map((r) => {
+      let evs: StoredEvent[] = [];
+      try {
+        const parsed = r.events ? JSON.parse(r.events) : [];
+        if (Array.isArray(parsed)) evs = parsed as StoredEvent[];
+      } catch {
+        evs = [];
+      }
       const lastSeenTime = r.lastSeen.getTime();
       const ended = r.endTime;
       let status: string;
@@ -99,9 +178,11 @@ export async function GET() {
         status = 'Offline';
       } else {
         const idleMs = now - lastSeenTime;
-        status = idleMs <= 90_000 ? 'Active' : idleMs <= 15 * 60_000 ? 'Idle' : 'Offline';
+        // Must stay above the client heartbeat interval or every live session
+        // reads as Idle between beats. See HEARTBEAT_MS in src/app/page.tsx.
+        status = idleMs <= 10 * 60_000 ? 'Active' : idleMs <= 30 * 60_000 ? 'Idle' : 'Offline';
       }
-      const location = evs.find(e => e.country)?.country || '';
+      const location = evs.find((e) => e.country)?.country || '';
       return {
         guestId: r.guestId,
         role: r.role as 'admin' | 'guest',
@@ -118,6 +199,6 @@ export async function GET() {
     return NextResponse.json({ sessions });
   } catch (err) {
     console.error('Session fetch error:', err);
-    return NextResponse.json({ sessions: [], error: 'Internal server error' });
+    return NextResponse.json({ sessions: [], error: 'Internal server error' }, { status: 500 });
   }
 }

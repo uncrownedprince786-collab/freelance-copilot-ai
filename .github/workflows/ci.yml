@@ -1,0 +1,67 @@
+name: CI
+
+# The repo previously had no test workflow at all: two genuine test scripts
+# existed but nothing ran them, and one of them could not even be executed
+# because of a broken import. This gate runs them on every push and PR.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Proposal grounding tests
+        run: npm run test:grounding
+
+      - name: Ranking tests
+        run: npm run test:ranking
+
+      - name: Production build
+        run: npm run build
+
+      - name: Audit production dependencies
+        # Fails on a CRITICAL advisory in runtime dependencies, so a framework
+        # RCE cannot sit unnoticed again (this gate would have caught
+        # GHSA-p293-qw3h-jr36 / GHSA-2xp9-vwfh-vxw4 in next@16.3.0).
+        #
+        # Deliberately set at critical, not high: the remaining high advisories
+        # are all inside the Prisma CLI's own dependency chain
+        # (@prisma/config -> deepmerge-ts, and mysql2, which this project never
+        # loads because it uses Postgres). npm's only offered remedy is
+        # downgrading prisma 7 -> 6, which is a worse trade than carrying them.
+        # Revisit when Prisma ships a patched CLI.
+        run: npm audit --omit=dev --audit-level=critical
+
+      - name: Report all advisories (non-blocking)
+        if: always()
+        run: npm audit --omit=dev || true

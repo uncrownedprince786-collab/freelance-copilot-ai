@@ -1,60 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
 import { ActiveJobRefresher } from "../../../../providers/ActiveJobRefresher";
 import { prisma } from "@/lib/db";
 import { isAdminRequest } from "@/lib/adminAuth";
+import { hasValidCronBearer } from "@/lib/cronAuth";
+import { acquireLock, releaseLock } from "@/lib/runLock";
 
 const LOCK_KEY = "refresh_lock";
 const LOCK_TTL_MS = 10 * 60 * 1000; // 10 minutes; release-on-finally plus TTL safety net
 const COOLDOWN_MS = 45 * 60 * 1000; // minimum gap between non-forced refreshes
 const COOLDOWN_KEY = "last_refresh_run";
 
-function timingSafeSecretEqual(a: string, b: string): boolean {
-  const aHash = crypto.createHash("sha256").update(a).digest();
-  const bHash = crypto.createHash("sha256").update(b).digest();
-  return crypto.timingSafeEqual(aHash, bHash);
-}
-
-async function acquireLock(): Promise<boolean> {
-  try {
-    const now = Date.now();
-    const existing = await prisma.systemKv.findUnique({ where: { key: LOCK_KEY } });
-    if (existing) {
-      try {
-        const parsed = JSON.parse(existing.value) as { startedAt: number };
-        if (now - parsed.startedAt < LOCK_TTL_MS) return false;
-      } catch {
-        /* treat corrupt/stale record as free */
-      }
-    }
-    await prisma.systemKv.upsert({
-      where: { key: LOCK_KEY },
-      update: { value: JSON.stringify({ startedAt: now }) },
-      create: { key: LOCK_KEY, value: JSON.stringify({ startedAt: now }) },
-    });
-    return true;
-  } catch {
-    return true; // fail-open rather than blocking the refresh
-  }
-}
-
-async function releaseLock(): Promise<void> {
-  await prisma.systemKv.delete({ where: { key: LOCK_KEY } }).catch(() => {});
-}
+// Auth and overlap prevention are shared: lib/cronAuth for the Bearer check,
+// lib/runLock for a single-statement lock that two concurrent ticks cannot
+// both win. Both fail closed.
 
 async function runRefresh(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const expectedSecret = process.env.CRON_SECRET;
-
-    let authorized = false;
-    if (authHeader && expectedSecret) {
-      const providedSecret = authHeader.replace(/^Bearer\s+/i, "").trim();
-      authorized = timingSafeSecretEqual(providedSecret, expectedSecret);
-    }
-    if (!authorized && (await isAdminRequest())) {
-      authorized = true;
-    }
+    const authorized = hasValidCronBearer(req) || (await isAdminRequest());
     if (!authorized) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -62,7 +24,8 @@ async function runRefresh(req: NextRequest) {
     const url = new URL(req.url);
     const force = url.searchParams.get("force") === "true";
 
-    if (!(await acquireLock())) {
+    const lock = await acquireLock(LOCK_KEY, LOCK_TTL_MS);
+    if (!lock) {
       return NextResponse.json({ error: "Refresh already in progress" }, { status: 429 });
     }
 
@@ -89,7 +52,7 @@ async function runRefresh(req: NextRequest) {
 
       return NextResponse.json({ success: true, ...result });
     } finally {
-      await releaseLock();
+      await releaseLock(lock);
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -102,8 +65,15 @@ export async function POST(req: NextRequest) {
   return runRefresh(req);
 }
 
-// Vercel Cron invokes the configured path with a GET request and sends
-// `Authorization: Bearer <CRON_SECRET>` when the CRON_SECRET env var is set.
+// GET is restricted to the Bearer secret. A cookie-authorized GET is
+// CSRF-reachable under SameSite=Lax, which would let a link an admin clicks
+// spend the day's Apify budget.
 export async function GET(req: NextRequest) {
+  if (!hasValidCronBearer(req)) {
+    return NextResponse.json(
+      { error: "Use POST for interactive refresh." },
+      { status: 405, headers: { Allow: "POST" } },
+    );
+  }
   return runRefresh(req);
 }

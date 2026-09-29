@@ -256,6 +256,18 @@ function passes(f: FilterState, job: Job, except?: string, budgetBuckets?: Budge
   return true;
 }
 
+// Presence heartbeat interval. Each beat costs one DB read + one DB write, so
+// this directly controls how often an open tab wakes the scale-to-zero
+// database. Keep it well above a minute; /api/sessions/track's "Active"
+// threshold must stay above it.
+const HEARTBEAT_MS = 5 * 60_000;
+
+// Backoff for the empty-feed recovery poll. The previous fixed 60 s retry
+// re-ran the whole job fetch forever from every open tab whenever the feed was
+// empty — including when it was empty because the database was unreachable.
+const RECOVERY_MIN_MS = 2 * 60_000;
+const RECOVERY_MAX_MS = 30 * 60_000;
+
 export default function Home() {
   return (
     <React.Suspense fallback={<div style={styles.splashLoad}>Loading…</div>}>
@@ -283,9 +295,20 @@ function HomeContent() {
   }, []);
 
   // Session heartbeat — keeps the session marked active & records presence.
+  //
+  // COST: every beat is a database read plus a write. At the previous 90 s
+  // interval an open tab wrote ~960 times a day, which kept the Neon compute
+  // awake continuously and defeated scale-to-zero — the single largest
+  // compute-hour driver in the system. Presence does not need second-level
+  // resolution, so this is 5 minutes, and it pauses while the tab is hidden.
+  // The "Active" threshold in /api/sessions/track GET must stay above it.
   useEffect(() => {
     if (!authed) return;
-    const idle = setInterval(() => trackActivity('heartbeat'), 90_000);
+    const beat = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      trackActivity('heartbeat');
+    };
+    const idle = setInterval(beat, HEARTBEAT_MS);
     return () => clearInterval(idle);
   }, [authed]);
 
@@ -302,6 +325,9 @@ function HomeContent() {
   const [quickFilter, setQuickFilter] = useState<'all' | 'new' | 'hot' | 'applied'>('all');
   const [page, setPage] = useState(1);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
+  // Set when the feed request itself failed — distinct from "the feed returned
+  // zero jobs", which is what maintenanceMode means.
+  const [feedError, setFeedError] = useState<string | null>(null);
 
   // Persist filter state across navigation/refresh (per-tab sessionStorage).
   useEffect(() => {
@@ -436,6 +462,11 @@ function HomeContent() {
         params.set('limit', '500');
         if (cursor) params.set('cursor', cursor);
         const res = await fetch(`/api/jobs?${params.toString()}`);
+        // A failing feed must not read as "no jobs". /api/jobs now returns a
+        // real status on failure; treat that as an error, not as an empty
+        // result, so the UI stops claiming a sync is in progress when the
+        // database is actually unreachable.
+        if (!res.ok) throw new Error(`feed unavailable (${res.status})`);
         const json = await res.json();
         const page: Job[] = Array.isArray(json) ? json : json.jobs ?? [];
         allJobs.push(...page);
@@ -461,9 +492,15 @@ function HomeContent() {
       }));
       setPage(1);
       setJobs(cleaned);
+      setFeedError(null);
       setMaintenanceMode(cleaned.length === 0);
     } catch (err) {
       console.error('Failed to fetch jobs', err);
+      // "The feed is down" and "the feed is empty" are different states and
+      // the user is owed the difference. Previously both rendered the
+      // "Sync in progress" screen.
+      setFeedError('We could not reach the job feed. This is on our side, not yours.');
+      setMaintenanceMode(false);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -471,13 +508,22 @@ function HomeContent() {
 
   useEffect(() => { void fetchJobs(); }, [fetchJobs]);
 
-  // Poll for recovery when in maintenance mode — auto-recovers once jobs
-  // become available in the database.
+  // Retry when the feed is empty or unreachable, with exponential backoff.
+  // A fixed 60 s retry re-ran the whole fetch forever from every open tab —
+  // including while the database was down, which is exactly when hammering it
+  // helps least.
   useEffect(() => {
-    if (!maintenanceMode) return;
-    const id = setInterval(() => { void fetchJobs(true); }, 60_000);
-    return () => clearInterval(id);
-  }, [maintenanceMode, fetchJobs]);
+    if (!maintenanceMode && !feedError) return;
+    let delay = RECOVERY_MIN_MS;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      void fetchJobs(true);
+      delay = Math.min(delay * 2, RECOVERY_MAX_MS);
+      timer = setTimeout(tick, delay);
+    };
+    timer = setTimeout(tick, delay);
+    return () => clearTimeout(timer);
+  }, [maintenanceMode, feedError, fetchJobs]);
 
   // Real freshness telemetry — when the last successful sync actually ran and
   // the adaptive cadence derived from real posting activity.
@@ -571,6 +617,42 @@ function HomeContent() {
       <div style={styles.splashLoad}>
         <div style={styles.spinner} />
         <p style={{ marginTop: 16, color: '#64748b', fontSize: 14 }}>Loading opportunities…</p>
+      </div>
+    );
+  }
+
+  // Feed unreachable — an honest error, NOT the "setting up your feed" screen.
+  // The two were previously indistinguishable because /api/jobs answered every
+  // failure with 200 and an empty array.
+  if (feedError && jobs.length === 0) {
+    return (
+      <div style={styles.page} className="lh-page">
+        <div style={styles.shell}>
+          <header style={styles.header}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <Logo size={44} />
+              <div>
+                <h1 style={styles.brand}>Lead Hunter</h1>
+              </div>
+            </div>
+            <ThemeToggle />
+          </header>
+          <div style={{ padding: '56px 24px', textAlign: 'center' }} role="alert">
+            <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 10 }} className="lh-h">
+              Job feed unavailable
+            </h2>
+            <p style={{ fontSize: 14, maxWidth: 460, margin: '0 auto 20px' }} className="lh-muted">
+              {feedError} We are retrying automatically; nothing has been lost.
+            </p>
+            <button
+              type="button"
+              onClick={() => { void fetchJobs(); }}
+              style={styles.bannerBtn}
+            >
+              Try again now
+            </button>
+          </div>
+        </div>
       </div>
     );
   }

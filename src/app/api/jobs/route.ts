@@ -4,6 +4,19 @@ import { Prisma } from '@prisma/client';
 
 export const maxDuration = 30;
 
+// Free-text search fans out to 4 ILIKE predicates per token, none of which an
+// index can serve. Without a ceiling, `?q=` with 200 tokens becomes 800
+// case-insensitive substring scans in one unauthenticated request.
+const MAX_SEARCH_TOKENS = 8;
+const MAX_TOKEN_LEN = 40;
+
+/** Parse an integer query param, clamped; falls back on anything unparseable. */
+function clampInt(raw: string | null, fallback: number, min: number, max: number): number {
+  const n = parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, min), max);
+}
+
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
@@ -14,7 +27,10 @@ export async function GET(req: NextRequest) {
     const jobType = url.searchParams.get('jobType');
     const country = url.searchParams.get('country');
     const cursor = url.searchParams.get('cursor');
-    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 500);
+    // parseInt alone yields NaN for "abc" and a negative for "-5", both of
+    // which reach Prisma as an invalid `take` and surface as a silent empty
+    // result. Clamp to a real range instead.
+    const limit = clampInt(url.searchParams.get('limit'), 50, 1, 500);
     const countOnly = url.searchParams.get('count') === '1';
     const jobId = url.searchParams.get('id');
 
@@ -89,7 +105,10 @@ export async function GET(req: NextRequest) {
     }
 
     if (q && q.trim()) {
-      const tokens = q.trim().split(/\s+/).filter(Boolean);
+      const tokens = q.trim().slice(0, 200).split(/\s+/)
+        .filter(Boolean)
+        .map(t => t.slice(0, MAX_TOKEN_LEN))
+        .slice(0, MAX_SEARCH_TOKENS);
       if (tokens.length > 0) {
         where.OR = tokens.map(t => ({
           OR: [
@@ -102,8 +121,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    if (minScore) {
-      where.score = { gte: parseInt(minScore, 10) };
+    if (minScore !== null && minScore !== '') {
+      where.score = { gte: clampInt(minScore, 0, 0, 100) };
     }
 
     if (jobType && jobType !== 'all') {
@@ -276,7 +295,14 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ jobs, nextCursor, hasMore });
   } catch (error) {
+    // A failure must NOT look like "there are no jobs". Returning 200 with an
+    // empty array made a database outage render as the dashboard's "Setting up
+    // your job feed — sync in progress" screen, which then retried forever.
+    // The client needs to be able to tell these apart, so fail with a status.
     console.error('API Error:', error);
-    return NextResponse.json({ jobs: [], nextCursor: null, hasMore: false });
+    return NextResponse.json(
+      { jobs: [], nextCursor: null, hasMore: false, error: 'Job feed is temporarily unavailable.' },
+      { status: 503 },
+    );
   }
 }

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import crypto from 'crypto';
 import { JobPipeline } from '../../../providers/JobPipeline';
 import { prisma } from '@/lib/db';
 import { isAdminRequest } from '@/lib/adminAuth';
+import { hasValidCronBearer } from '@/lib/cronAuth';
+import { acquireLock, releaseLock } from '@/lib/runLock';
 import { getSyncCooldownMs } from '@/lib/syncSchedule';
 import { pruneMarketFacts } from '@/lib/marketFacts';
 
@@ -16,40 +17,11 @@ const LOCK_TTL_MS = 15 * 60 * 1000; // 15 minutes; release-on-finally plus TTL s
 // the sources or is skipped. force=true is reserved for the admin UI.
 const SYNC_TS_KEY = 'last_sync_successful';
 
-function timingSafeSecretEqual(a: string, b: string): boolean {
-  const aHash = crypto.createHash('sha256').update(a).digest();
-  const bHash = crypto.createHash('sha256').update(b).digest();
-  return crypto.timingSafeEqual(aHash, bHash);
-}
 
-// Prevent overlapping sync runs (scheduled ticks and admin-triggered runs all
-// share this lock). Uses SystemKv with a TTL so a crashed run cannot wedge the
-// pipeline permanently.
-async function acquireSyncLock(): Promise<boolean> {
-  try {
-    const now = Date.now();
-    const existing = await prisma.systemKv.findUnique({ where: { key: LOCK_KEY } });
-    if (existing) {
-      try {
-        const parsed = JSON.parse(existing.value) as { startedAt: number };
-        if (now - parsed.startedAt < LOCK_TTL_MS) return false;
-      } catch { /* treat corrupt/stale record as free */ }
-    }
-    await prisma.systemKv.upsert({
-      where: { key: LOCK_KEY },
-      update: { value: JSON.stringify({ startedAt: now }) },
-      create: { key: LOCK_KEY, value: JSON.stringify({ startedAt: now }) },
-    });
-    return true;
-  } catch {
-    // If lock infrastructure fails, fail-open rather than blocking sync entirely.
-    return true;
-  }
-}
-
-async function releaseSyncLock(): Promise<void> {
-  await prisma.systemKv.delete({ where: { key: LOCK_KEY } }).catch(() => {});
-}
+// Overlap prevention lives in lib/runLock: a single-statement conditional
+// insert, so two ticks arriving together cannot both win. It fails CLOSED —
+// a sync that cannot prove it holds the lock does not run, because a
+// concurrent run would spend the Apify budget twice.
 
 async function cleanupStaleSessions(): Promise<number> {
   try {
@@ -65,19 +37,9 @@ async function cleanupStaleSessions(): Promise<number> {
 
 async function runSync(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('authorization');
-    const expectedSecret = process.env.CRON_SECRET;
-
     // Fail-closed: authorize only with a valid Bearer CRON_SECRET (Vercel cron /
     // GitHub Actions) or a valid admin session cookie (manual sync from the UI).
-    let authorized = false;
-    if (authHeader && expectedSecret) {
-      const providedSecret = authHeader.replace(/^Bearer\s+/i, '').trim();
-      authorized = timingSafeSecretEqual(providedSecret, expectedSecret);
-    }
-    if (!authorized && (await isAdminRequest())) {
-      authorized = true;
-    }
+    const authorized = hasValidCronBearer(req) || (await isAdminRequest());
     if (!authorized) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -87,7 +49,8 @@ async function runSync(req: NextRequest) {
     // manual refresh. The cron never sends it.
     const force = url.searchParams.get('force') === 'true';
 
-    if (!(await acquireSyncLock())) {
+    const lock = await acquireLock(LOCK_KEY, LOCK_TTL_MS);
+    if (!lock) {
       return NextResponse.json({ error: 'Sync already in progress' }, { status: 429 });
     }
 
@@ -165,7 +128,7 @@ async function runSync(req: NextRequest) {
         sessionsCleaned,
       });
     } finally {
-      await releaseSyncLock();
+      await releaseLock(lock);
     }
   } catch (err) {
     console.error('API sync error:', err);
@@ -177,8 +140,17 @@ export async function POST(req: NextRequest) {
   return runSync(req);
 }
 
-// Vercel Cron invokes the configured path with a GET request and sends
-// `Authorization: Bearer <CRON_SECRET>` when the CRON_SECRET env var is set.
+// GET is reachable by CSRF: SameSite=Lax sends cookies on a cross-site
+// top-level GET navigation, so an admin merely clicking a link could trigger
+// `?force=true` — draining the day's Apify budget and running the retention
+// deleteMany. GET is therefore accepted ONLY with a valid Bearer secret (how
+// schedulers call it); a cookie session cannot authorize it.
 export async function GET(req: NextRequest) {
+  if (!hasValidCronBearer(req)) {
+    return NextResponse.json(
+      { error: 'Use POST for interactive sync.' },
+      { status: 405, headers: { Allow: 'POST' } },
+    );
+  }
   return runSync(req);
 }

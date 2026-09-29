@@ -6,6 +6,7 @@ import { isAuthenticated } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { formatDateTime12, formatTime12, timeAgo } from '@/lib/format';
+import { safeExternalUrl } from '@/lib/safeUrl';
 
 interface Job {
   id: string;
@@ -260,7 +261,14 @@ export default function JobDetailPage() {
       }
     }
     setJob(prev => prev ? { ...prev, viewed: true } : prev);
-    window.open(job.url, '_blank', 'noopener,noreferrer');
+    // Defence in depth: ingestion rejects non-http(s) URLs, but window.open is
+    // an imperative sink that React does not sanitise, so re-check here.
+    const target = safeExternalUrl(job.url);
+    if (!target) {
+      setError('This listing has no usable source link.');
+      return;
+    }
+    window.open(target, '_blank', 'noopener,noreferrer');
   };
 
   const markApplied = async () => {

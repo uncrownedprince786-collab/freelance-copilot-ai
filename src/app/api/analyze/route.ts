@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { MultiAI, JobAnalysis } from '../../../services/ai/MultiAI';
 import { prisma } from '@/lib/db';
-import { isAuthenticatedRequest } from '@/lib/adminAuth';
+import { getSessionClaims } from '@/lib/adminAuth';
+import { consumeQuota, quotaSubject } from '@/lib/rateLimit';
 import { clientKeyOf } from '@/lib/marketFacts';
 import { getRawJobs } from '@/lib/jobsCache';
 import {
@@ -24,20 +25,25 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 interface CacheEntry { data: unknown; ts: number; }
 const memCache = new Map<string, CacheEntry>();
 
-// Simple in-memory rate limiter — max 30 req / minute per IP
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+// Durable LLM spend quota.
+//
+// This route was the most expensive hole in the system: a guest cookie is free
+// and unlimited to mint, the prompt was built from the REQUEST BODY rather than
+// from the database, and the per-IP limiter was an in-memory Map (per-lambda,
+// reset on every cold start, keyed on a client-supplied header). That combined
+// into a free general-purpose LLM proxy on the owner's API keys at roughly
+// 15k input tokens per call.
+//
+// Two fixes, both needed: the prompt now comes from the stored listing (below),
+// and the quota is a shared counter charged to the signed session.
+const ANALYZE_MAX_PER_SESSION = 40;
+const ANALYZE_WINDOW_MS = 60 * 60_000;
 
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 });
-    return false;
-  }
-  entry.count++;
-  if (entry.count > 30) return true;
-  return false;
-}
+// Upper bound on the description handed to a provider. It has to stay large
+// because client instructions ("start your proposal with SMILE") often sit at
+// the very end of a long posting, but it is no longer attacker-chosen: it
+// bounds text that came out of our own database.
+const MAX_DESC_CHARS = 20_000;
 
 const secureHeaders = {
   'Content-Type': 'application/json',
@@ -156,19 +162,25 @@ async function detectRepeatClient(opportunityId: string): Promise<{ repeatClient
 }
 
 export async function POST(request: NextRequest) {
-  // Rate limiting
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
-  if (isRateLimited(ip)) {
-    return NextResponse.json(
-      { error: 'Too many requests. Please wait a minute.' },
-      { status: 429, headers: secureHeaders },
-    );
-  }
-
   // Require a valid session (admin cookie or guest cookie) to prevent
   // unauthenticated callers from burning AI credits.
-  if (!(await isAuthenticatedRequest())) {
+  const claims = await getSessionClaims();
+  if (!claims) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: secureHeaders });
+  }
+
+  // Durable, shared quota charged to the signed session (falling back to the
+  // right-most forwarded IP). Fails closed.
+  const subject = quotaSubject(
+    claims.role === 'admin' ? 'admin' : claims.guestId,
+    request.headers.get('x-forwarded-for'),
+  );
+  const quota = await consumeQuota('analyze', subject, ANALYZE_MAX_PER_SESSION, ANALYZE_WINDOW_MS);
+  if (!quota.allowed) {
+    return NextResponse.json(
+      { error: 'Analysis limit reached for this session. Please try again later.' },
+      { status: 429, headers: { ...secureHeaders, 'Retry-After': String(quota.resetInSec) } },
+    );
   }
 
   // Input validation
@@ -183,27 +195,55 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Request body must be an object.' }, { status: 400, headers: secureHeaders });
   }
 
-  const { title, description, platform, budget, clientName, opportunityId, skills, totalSpent, jobsPosted, totalHires, rating, budgetMin, budgetMax, budgetType, proposalCount, interviewingCount, experienceLevel, duration, connectsRequired, paymentVerified } = body as Record<string, unknown>;
+  const { platform, budget, clientName, opportunityId, totalSpent, jobsPosted, totalHires, rating, budgetMin, budgetMax, budgetType, proposalCount, interviewingCount, experienceLevel, duration, connectsRequired, paymentVerified } = body as Record<string, unknown>;
 
-  // Sanitize — strip any HTML/script tags, enforce length limits. The full
-  // description is read (up to 60k chars) because client instructions can sit
-  // at the very end of a long posting and must not be truncated away.
+  // Sanitize — strip any HTML/script tags, enforce length limits.
   const sanitize = (s: unknown, max = 500): string =>
     typeof s === 'string'
       ? s.replace(/<[^>]*>/g, '').trim().slice(0, max)
       : '';
 
-  const safeTitle = sanitize(title, 300);
-  if (!safeTitle) {
-    return NextResponse.json({ error: 'title is required.' }, { status: 400, headers: secureHeaders });
+  const safeOpportunityId = sanitize(opportunityId, 64) || '';
+
+  // The text that reaches an LLM provider comes from the DATABASE, never from
+  // the request body. Previously `title` and `description` were taken straight
+  // from the caller, so anyone holding a free guest cookie could submit 60k
+  // characters of arbitrary text and have it billed to the owner's API keys.
+  // An analysis is now only possible for a listing this system actually stores.
+  if (!safeOpportunityId) {
+    return NextResponse.json(
+      { error: 'opportunityId is required.' },
+      { status: 400, headers: secureHeaders },
+    );
   }
 
-  const safeDesc = sanitize(description, 60000);
+  const stored = await prisma.opportunity.findUnique({
+    where: { id: safeOpportunityId },
+    select: { title: true, description: true, skills: true },
+  }).catch(() => null);
+
+  if (!stored) {
+    return NextResponse.json(
+      { error: 'Unknown opportunity.' },
+      { status: 404, headers: secureHeaders },
+    );
+  }
+
+  const safeTitle = sanitize(stored.title, 300);
+  if (!safeTitle) {
+    return NextResponse.json({ error: 'Stored listing has no title.' }, { status: 422, headers: secureHeaders });
+  }
+
+  const safeDesc = sanitize(stored.description, MAX_DESC_CHARS);
+  const safeSkills = (stored.skills ? stored.skills.split(',') : [])
+    .map(s => sanitize(s, 40))
+    .filter(Boolean);
+
+  // Presentational / signal fields may still come from the caller: they are
+  // not interpolated as free text into a prompt, and they are clamped below.
   const safePlatform = sanitize(platform, 50) || 'Unknown';
   const safeBudget = sanitize(budget, 100) || 'Negotiable';
   const safeClientName = sanitize(clientName, 100);
-  const safeOpportunityId = sanitize(opportunityId, 64) || '';
-  const safeSkills = Array.isArray(skills) ? skills.map(s => sanitize(s, 40)).filter(Boolean) : [];
   const safeBudgetType = sanitize(budgetType, 20);
   const safeExperienceLevel = sanitize(experienceLevel, 40);
   const safeDuration = sanitize(duration, 40);

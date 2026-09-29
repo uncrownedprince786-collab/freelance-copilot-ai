@@ -2,6 +2,11 @@ import { JobProvider, ProviderRunStatus } from "./JobProvider";
 import { Job } from "../types/job";
 import { getApifyBudgetRemaining, consumeApifyBudget } from "../lib/apifyBudget";
 
+// Hard deadline for one Apify run-sync call. The actor is synchronous, so a
+// hung run would otherwise hold the sync lock until the platform kills the
+// function.
+const APIFY_REQUEST_TIMEOUT_MS = 90_000;
+
 // Upwork reports competition as an exact number, a ceiling band ("50+"), range
 // bands ("0 to 5", "5 to 10", "20 to 50"), or phrases like "Be the first to
 // apply". Range bands carry no exact value: coercing them to their numeric floor
@@ -175,6 +180,15 @@ export class ApifyUpworkProvider implements JobProvider {
 
       let rawItems: any[] | null = null; // eslint-disable-line @typescript-eslint/no-explicit-any
       for (const token of tokenOrder) {
+        // EVERY attempt is a separately billed Apify run, including a failover
+        // retry on another account. Checking the budget once per query (above)
+        // and then consuming it once per attempt let a single query spend one
+        // unit per configured token — up to 3x the intended rate. Re-check
+        // before each attempt so the cap is the cap.
+        if ((await getApifyBudgetRemaining()) <= 0) {
+          skippedQueries = Math.max(skippedQueries, queries.length - qi);
+          break;
+        }
         const res = await this.runQuery(query, token, maxResults);
         if (res.exhausted) {
           this.unavailableTokens.add(token);
@@ -207,12 +221,15 @@ export class ApifyUpworkProvider implements JobProvider {
         const spentVal = item.clientTotalSpent ? `$${Number(item.clientTotalSpent).toLocaleString()}` : '';
         const description = this.cleanText(item.descriptionMarkdown || item.description || item.summary || item.jobDescription || '');
 
-        let connects = item.connectsRequired ?? null;
-        if (connects == null && item.budgetAmount) {
-          connects = item.budgetAmount >= 1000 ? 16 : (item.budgetAmount >= 500 ? 12 : 8);
-        } else if (connects == null && item.jobType === 'HOURLY') {
-          connects = 12;
-        }
+        // Connects required to bid is a SOURCE FACT or it is unknown. It used
+        // to be invented from the budget (>=1000 -> 16, >=500 -> 12, else 8)
+        // when the source omitted it, and the UI then displayed that guess as
+        // "Bid Cost — N connects" with no indication it was inferred. An
+        // unknown value stays null and the UI must say so.
+        const connects: number | null =
+          typeof item.connectsRequired === 'number' && Number.isFinite(item.connectsRequired)
+            ? item.connectsRequired
+            : null;
 
         const job: Job = {
           id: item.jobId || item.contentHash || normalizedUrl,
@@ -249,7 +266,15 @@ export class ApifyUpworkProvider implements JobProvider {
             country: country === 'Remote' ? 'Remote' : country || 'Remote',
             rating: typeof item.clientRating === 'number' ? item.clientRating : (typeof item.clientRating === 'string' ? Number(item.clientRating) || null : null),
             totalSpent: typeof item.clientTotalSpent === 'number' ? item.clientTotalSpent : null,
-            jobsPosted: typeof item.clientReviewCount === 'number' ? item.clientReviewCount : null,
+            // `clientReviewCount` is the number of REVIEWS the client has
+            // received, not the number of jobs they have posted. Mapping it to
+            // jobsPosted mislabelled one source fact as another wherever the
+            // UI prints "jobs posted". Prefer a real jobs-posted field; fall
+            // back to null rather than to the review count.
+            jobsPosted: typeof item.clientJobsPosted === 'number'
+              ? item.clientJobsPosted
+              : (typeof item.clientTotalJobsPosted === 'number' ? item.clientTotalJobsPosted : null),
+            reviewCount: typeof item.clientReviewCount === 'number' ? item.clientReviewCount : null,
             totalHires: typeof item.totalHires === 'number' ? item.totalHires : null,
             paymentVerified: item.clientPaymentVerified ?? null,
             lastActivityAt: item.lastActivityAt ? new Date(item.lastActivityAt) : null,
@@ -302,21 +327,32 @@ export class ApifyUpworkProvider implements JobProvider {
     maxResults: number
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): Promise<{ items: any[] | null; exhausted: boolean }> {
-    const endpoint = `https://api.apify.com/v2/actors/blackfalcondata~upwork-scraper/run-sync-get-dataset-items?token=${token}`;
+    // The token goes in an Authorization header, NOT in the query string.
+    // Query strings are recorded by CDN and function access logs, outbound
+    // proxies and APM tooling; an Authorization header is not.
+    const endpoint =
+      "https://api.apify.com/v2/actors/blackfalcondata~upwork-scraper/run-sync-get-dataset-items";
     try {
       // Each query attempt is a billed Apify run (pay-per-event), so consume
       // the daily budget here — after the availability check above and once for
       // every account retried.
       const remaining = await consumeApifyBudget();
       console.log(`[ApifyUpworkProvider] Fetching Upwork jobs for: "${query}" (account ...${token.slice(-4)}, budget remaining ${remaining})...`);
+      // run-sync-get-dataset-items blocks until the actor finishes. Without a
+      // deadline a stuck actor holds the sync lock and burns the whole
+      // serverless function budget.
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           query,
           maxResults,
           sort: "recency",
         }),
+        signal: AbortSignal.timeout(APIFY_REQUEST_TIMEOUT_MS),
       });
 
       if (!res.ok) {

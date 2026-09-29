@@ -139,11 +139,19 @@ async function generateWithGemini(prompt: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return '';
   try {
+    // The key goes in a header, not the query string. A key in a URL is
+    // recorded by CDN and function access logs, outbound proxies and APM
+    // tooling, and leaks via Referer on redirect. Every other Gemini call in
+    // this codebase already uses the SDK, which sends a header; this one route
+    // hand-rolled the request and put the key in the URL.
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.7, maxOutputTokens: 600 },

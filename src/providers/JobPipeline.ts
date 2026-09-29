@@ -5,6 +5,7 @@ import { FreelancerProvider } from "./FreelancerProvider";
 import { logCronRun } from "../lib/cronLogger";
 import { recordMarketFacts } from "../lib/marketFacts";
 import { prisma } from "../lib/db";
+import { isSafeExternalUrl } from "../lib/safeUrl";
 
 export class JobPipeline {
   private providers: JobProvider[] = [
@@ -50,30 +51,57 @@ export class JobPipeline {
     console.log(`[JobPipeline] Apify (Upwork): ${apifyJobs.length} jobs (failed=${apifyFailed}).`);
     fetchedJobs.push(...apifyJobs);
 
-    // Freelancer (complementary source)
-    const freelancerJobs = await this.providers[1].fetchJobs();
-    console.log(`[JobPipeline] Freelancer: ${freelancerJobs.length} jobs.`);
+    // Freelancer (complementary source). Isolated like Apify: an exception
+    // here used to abort the entire pipeline before the save, the market
+    // facts, and the cron log — so one broken source silently took down
+    // ingestion for every source.
+    let freelancerJobs: Job[] = [];
+    let freelancerFailed = false;
+    let freelancerFailureReason = '';
+    try {
+      freelancerJobs = await this.providers[1].fetchJobs();
+    } catch (err: unknown) {
+      freelancerFailed = true;
+      freelancerFailureReason = err instanceof Error ? err.message : String(err);
+      console.error('[JobPipeline] Freelancer fetch threw:', freelancerFailureReason);
+    }
+    console.log(`[JobPipeline] Freelancer: ${freelancerJobs.length} jobs (failed=${freelancerFailed}).`);
     fetchedJobs.push(...freelancerJobs);
 
     // Step 3: Local 7-Day Filter & Hard Filters
     console.log('[JobPipeline] Step 3: Applying 7-Day Age Filter & Hard Filters...');
     const validFetched = fetchedJobs.filter(job => this.applyHardFilters(job));
 
-    // Refresh volatile competition signals on already-stored jobs
+    // Refresh volatile competition signals on already-stored jobs.
+    //
+    // Rows whose signals actually CHANGED are collected here. Everything else
+    // in the store is byte-identical to what is already persisted, and used to
+    // be rewritten anyway — ~5000 sequential upserts per sync, ~48 ticks a day,
+    // for rows nothing had touched. Only dirty rows are written now.
     const storeByUrl = new Map<string, Job>();
     activeStore.forEach(j => { if (j.url) storeByUrl.set(j.url, j); });
+    const dirtyUrls = new Set<string>();
     for (const f of validFetched) {
       const ex = f.url ? storeByUrl.get(f.url) : undefined;
       if (ex) {
+        let changed = false;
         if (
           typeof f.proposalCount === 'number' &&
           f.proposalCount > 0 &&
           (typeof ex.proposalCount !== 'number' || f.proposalCount > ex.proposalCount)
         ) {
           ex.proposalCount = f.proposalCount;
+          changed = true;
         }
-        if (typeof f.interviewingCount === 'number' && f.interviewingCount > 0) ex.interviewingCount = f.interviewingCount;
-        if (typeof f.hiresCount === 'number' && f.hiresCount > 0) ex.hiresCount = f.hiresCount;
+        if (typeof f.interviewingCount === 'number' && f.interviewingCount > 0 && f.interviewingCount !== ex.interviewingCount) {
+          ex.interviewingCount = f.interviewingCount;
+          changed = true;
+        }
+        if (typeof f.hiresCount === 'number' && f.hiresCount > 0 && f.hiresCount !== ex.hiresCount) {
+          ex.hiresCount = f.hiresCount;
+          changed = true;
+        }
+        if (changed && ex.url) dirtyUrls.add(ex.url);
       }
     }
 
@@ -102,7 +130,15 @@ export class JobPipeline {
     const finalCollection = [...brandNewJobs, ...activeStore];
     finalCollection.sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
 
-    await this.saveStore(finalCollection);
+    // Write ONLY what changed: brand-new rows, plus stored rows whose
+    // competition signals moved. Untouched rows are already correct in the
+    // database and rewriting them costs a round trip each for no effect.
+    const toPersist = [
+      ...brandNewJobs,
+      ...activeStore.filter(j => j.url && dirtyUrls.has(j.url)),
+    ];
+    console.log(`[JobPipeline] Persisting ${toPersist.length} rows (${brandNewJobs.length} new, ${toPersist.length - brandNewJobs.length} updated) out of ${finalCollection.length} active.`);
+    await this.saveStore(toPersist);
 
     // DB-level retention enforcement — remove all jobs older than 7 days
     try {
@@ -157,16 +193,25 @@ export class JobPipeline {
         });
       await Promise.all([
         upsert('provider:apify', { lastRun: now, failed: apifyFailed, reason: apifyFailureReason || null, count: apifyJobs.length }),
-        upsert('provider:freelancer', { lastRun: now, failed: false, count: freelancerJobs.length }),
+        upsert('provider:freelancer', { lastRun: now, failed: freelancerFailed, reason: freelancerFailureReason || null, count: freelancerJobs.length }),
         upsert('pipeline:lastRun', { lastRun: now, total: fetchedJobs.length, new: brandNewJobs.length, active: finalCollection.length }),
       ]);
     } catch { /* non-fatal */ }
 
+    // A run where a source failed is a WARNING, not a SUCCESS — /cron-logs
+    // could not previously distinguish "no new jobs" from "a source is down".
+    const anySourceFailed = apifyFailed || freelancerFailed;
+    const failureNotes = [
+      apifyFailed ? `Apify: ${apifyFailureReason || 'failed'}` : '',
+      freelancerFailed ? `Freelancer: ${freelancerFailureReason || 'failed'}` : '',
+    ].filter(Boolean).join('; ');
+
     await logCronRun({
-      status: 'SUCCESS',
+      status: anySourceFailed ? 'WARNING' : 'SUCCESS',
       jobsFetched: fetchedJobs.length,
       newJobsAdded: brandNewJobs.length,
-      sourceSummary: `Apify (${apifyJobs.length}), Freelancer (${freelancerJobs.length})`
+      sourceSummary: `Upwork (${apifyJobs.length}), Freelancer (${freelancerJobs.length})`
+        + (failureNotes ? ` — ${failureNotes}` : ''),
     });
 
     return { jobs: finalCollection, newJobsAdded: brandNewJobs.length };
@@ -226,7 +271,14 @@ export class JobPipeline {
 
   private async saveStore(jobs: Job[]) {
     for (const job of jobs) {
-      if (!job.url) continue;
+      // Reject anything that is not an absolute http(s) URL. A scraped
+      // `javascript:` / `data:` URL would otherwise be stored and later handed
+      // to window.open() on the job detail page, which executes it in a window
+      // inheriting our origin.
+      if (!isSafeExternalUrl(job.url)) {
+        if (job.url) console.warn('[JobPipeline] Skipping job with unsafe URL:', String(job.url).slice(0, 120));
+        continue;
+      }
       try {
         const budgetStr = typeof job.budget === 'object' ? JSON.stringify(job.budget) : (job.budget || 'Negotiable');
         const skillsStr = Array.isArray(job.skills) ? job.skills.join(',') : '';
