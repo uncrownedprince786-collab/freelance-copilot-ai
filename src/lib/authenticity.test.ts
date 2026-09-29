@@ -227,3 +227,34 @@ test('assessment is pure — same input, same verdict', () => {
   const row = upwork();
   assert.deepEqual(assessAuthenticity(row, NOW), assessAuthenticity(row, NOW));
 });
+
+// ── Repeated reposting ─────────────────────────────────────────────────
+
+test('a heavily reposted listing is flagged as suspicious', () => {
+  // The product exists to save someone scrolling. The largest live cluster
+  // is five postings of one Android game project — exactly the thing that
+  // wastes an afternoon.
+  const a = assessAuthenticity(upwork({ clusterSize: 5 }), NOW);
+  assert.equal(a.status, 'suspicious');
+  assert.ok(a.warnings.includes('heavily_reposted'));
+});
+
+test('a listing posted twice is noted, not condemned', () => {
+  // A client re-listing after a quiet week is ordinary.
+  const a = assessAuthenticity(upwork({ clusterSize: 2 }), NOW);
+  assert.notEqual(a.status, 'suspicious');
+  assert.ok(a.warnings.includes('repost_cluster'));
+});
+
+test('a standalone listing carries no repost warning', () => {
+  for (const size of [1, undefined, null]) {
+    const a = assessAuthenticity(upwork({ clusterSize: size as number }), NOW);
+    assert.ok(!a.warnings.includes('repost_cluster'));
+    assert.ok(!a.warnings.includes('heavily_reposted'));
+  }
+});
+
+test('the repost signal never overrides a structural rejection', () => {
+  const a = assessAuthenticity(upwork({ clusterSize: 9, title: '' }), NOW);
+  assert.equal(a.status, 'rejected');
+});

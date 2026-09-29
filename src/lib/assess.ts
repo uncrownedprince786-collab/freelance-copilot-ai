@@ -16,6 +16,9 @@ import { LeadScoreInput, scoreLead } from './leadScore';
  */
 
 export interface AssessmentInput extends AuthenticityInput, LeadScoreInput {
+  /** Duplicate-cluster size, when known. Ingestion does not know it —
+   *  clustering needs every row — so it arrives on the assessment pass. */
+  clusterSize?: number | null;
   /** When the competition figure was captured. See freshness.ts — it is a
    *  snapshot taken shortly after posting and never refreshed. */
   competitionObservedAt?: Date | null;

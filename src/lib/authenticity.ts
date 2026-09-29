@@ -91,7 +91,9 @@ export type AuthenticityWarning =
   | 'no_client_data_published'
   | 'payment_verification_not_published'
   | 'proposal_count_at_source_cap'
-  | 'stale_posting';
+  | 'stale_posting'
+  | 'repost_cluster'
+  | 'heavily_reposted';
 
 export interface AuthenticityInput {
   title: string;
@@ -107,6 +109,9 @@ export interface AuthenticityInput {
   jobsPosted?: number | null;
   skills?: string | null;
   paymentVerified?: boolean | null;
+  /** How many records share this listing's duplicate cluster, itself
+   *  included. 1 or undefined means it stands alone. */
+  clusterSize?: number | null;
 }
 
 export interface AuthenticityAssessment {
@@ -126,6 +131,16 @@ export const AUTHENTICITY_RULES = {
   /** Both sources stop counting here, so the ceiling is a reporting artefact
    *  and not a real competition measurement. */
   proposalCap: 50,
+  /**
+   * Cluster size at which repeated reposting becomes a reason to warn.
+   *
+   * The product exists to save someone scrolling. A listing whose text has
+   * been posted four or more times is, in practice, the thing that wastes
+   * that person's afternoon: measured, the largest live cluster is five
+   * postings of one Android game project. Two postings is ordinary — a
+   * client re-listing after a quiet week — so the bar sits above it.
+   */
+  heavyRepostCluster: 4,
   /**
    * How many CORROBORATING signals lift a listing above `uncertain`.
    *
@@ -244,8 +259,24 @@ export function assessAuthenticity(
     warnings.push('payment_verification_not_published');
   }
 
+  // ── Repost behaviour. This is the one genuine bad-actor signal available
+  // from stored data: the duplicate clusters are already computed, and a
+  // listing whose text has been posted repeatedly is exactly what a user
+  // would want filtered out of a scroll. Absent at ingest — clustering needs
+  // a view of every row — and filled in by the assessment pass.
+  const clusterSize = typeof row.clusterSize === 'number' ? row.clusterSize : 1;
+  if (clusterSize >= AUTHENTICITY_RULES.heavyRepostCluster) {
+    warnings.push('heavily_reposted');
+  } else if (clusterSize > 1) {
+    warnings.push('repost_cluster');
+  }
+
   // ── Verdict
-  if (warnings.includes('offsite_contact_request') || warnings.includes('future_posting_time')) {
+  if (
+    warnings.includes('offsite_contact_request') ||
+    warnings.includes('future_posting_time') ||
+    warnings.includes('heavily_reposted')
+  ) {
     return { status: 'suspicious', signals, warnings };
   }
   // There is deliberately no "thin text + no budget = spam" rule. It reads

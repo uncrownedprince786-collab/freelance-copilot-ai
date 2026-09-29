@@ -134,6 +134,25 @@ export async function runAssessmentPass(
   opts: { apply?: boolean; now?: Date } = {},
 ): Promise<AssessmentResult> {
   const now = opts.now ?? new Date();
+
+  // Cluster sizes in one grouped query, so authenticity can see repeated
+  // reposting without a per-row lookup. Only clustered rows appear; anything
+  // absent stands alone.
+  const clusterSizes = new Map<string, number>();
+  try {
+    const rows = await prisma.opportunity.groupBy({
+      by: ['duplicateClusterId'],
+      where: { duplicateClusterId: { not: null } },
+      _count: { _all: true },
+    });
+    for (const r of rows) {
+      if (r.duplicateClusterId) clusterSizes.set(r.duplicateClusterId, r._count._all);
+    }
+  } catch {
+    // Clustering has not run yet, or the query failed. Assessment proceeds
+    // without the repost signal rather than failing outright.
+  }
+
   const writes: Array<{ id: string; data: Record<string, unknown> }> = [];
   const bands: Record<string, number> = {};
   const statuses: Record<string, number> = {};
@@ -150,6 +169,7 @@ export async function runAssessmentPass(
         skills: true, experienceLevel: true, proposalCount: true, clientSpend: true,
         clientRating: true, jobsPosted: true, paymentVerified: true, sourceJobId: true,
         postedAt: true, firstSeenAt: true, createdAt: true,
+        duplicateClusterId: true,
         authenticityStatus: true, authenticitySignals: true, authenticityWarnings: true,
         leadScore: true, leadBand: true, leadReasons: true, leadRisks: true,
       },
@@ -177,6 +197,9 @@ export async function runAssessmentPass(
         jobsPosted: row.jobsPosted,
         paymentVerified: row.paymentVerified,
         postedAt: row.postedAt,
+        clusterSize: row.duplicateClusterId
+          ? (clusterSizes.get(row.duplicateClusterId) ?? 1)
+          : 1,
       }, now);
 
       bands[next.leadBand] = (bands[next.leadBand] ?? 0) + 1;
