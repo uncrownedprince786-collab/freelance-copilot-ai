@@ -307,7 +307,7 @@ the source omits it, and `client.jobsPosted` populated from
 | brain.md rewritten as source of truth (§2) | **complete** |
 | Baseline verification | typecheck ✅ · lint ✅ · tests ✅ · build ✅ at `cdfbb54` |
 | Phase 1 — critical security + cost + test gate | **complete** — `27eb93a` |
-| Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **in progress** — migration + identity layer done (`00ac705`, `cdfbb54`); clustering, authenticity and lead scoring not started |
+| Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **complete in code, unapplied** — every engine built and tested; nothing has touched the database and no UI reads it |
 | Phase 3 — Neon/Apify cost reduction (remainder) | not started |
 | Phase 4 — UX revamp, chatbot deterministic-first | not started |
 
@@ -322,13 +322,16 @@ applied to production**, and the ingestion code on this branch now writes the
 columns it creates. Deploying this branch before applying the migration would
 break every ingest.
 
-    1. apply the migration        (prisma migrate deploy)
-    2. npm run backfill:identity  (dry run first — it is dry by default)
+    1. apply the migration              (prisma migrate deploy)
+    2. npm run backfill:identity        -- read the dry-run report
     3. npm run backfill:identity -- --apply
-    4. deploy
+    4. npm run cluster:duplicates       -- read it, then -- --apply
+    5. npm run assess                   -- read it, then -- --apply
+    6. deploy
 
-Step 2 is safe to run repeatedly: it only ever writes a column that is still
-NULL.
+Every script is dry by default, idempotent, and writes only where a value
+actually changes. Steps 4 and 5 should then run on a schedule, because
+freshness decays and new rows arrive.
 
 ### Phase 1 — what shipped (`27eb93a`)
 
@@ -438,17 +441,155 @@ split will keep producing duplicates for as long as the URL is the only
 identity, and Freelancer source-id coverage goes from 13% to effectively
 complete for new rows.
 
-**Not done in this phase:** duplicate clustering and canonical selection,
-the authenticity engine, lead scoring, freshness states. The columns exist and
-carry documented defaults (`duplicateStatus: unknown`,
-`authenticityStatus: uncertain`, `leadScore: null`); nothing computes them yet,
-and nothing in the UI reads them.
+### Phase 2 — duplicate clustering (`1f84165`)
 
-**Not verified:** `scripts/backfill-identity.ts` has never been executed.
-Production does not have the columns yet, and there is no local Postgres server
-to rehearse against (Docker needs elevation on this machine; PGlite is not a
-server Prisma can dial). Its logic is `identity.ts`, which is tested, and its
-dry-run path is the same code as the probe that produced the numbers above.
+Nothing is deleted, hidden or merged. Clustering assigns a cluster, a
+canonical member, a confidence and the reason codes behind the verdict.
+
+**The finding.** Across 661,914 same-platform pairs: 39 share an exactly
+normalised title, 5 more are 0.80–0.99 similar, 47 are 0.60–0.79 — but only
+**1** matches on `contentHash`. The gap is Freelancer's own repost
+convention, which changes the TITLE and leaves the description
+byte-identical:
+
+    "Independent B2B Sales Representative — U.S. Market"
+    "Independent B2B Sales Representative — U.S. Market -- 2"
+    "Edit Engaging Promotional Video - 29/09/2026 01:13 EDT"
+    "Edit Engaging Promotional Video - 28/09/2026 14:13 EDT"
+
+Folding the marker into `contentHash` would be wrong: a repost is a real
+second posting, sometimes at a different budget, and Level 3 must keep
+meaning "byte-identical". The marker is stripped for BLOCKING and scored as a
+signal instead.
+
+Scoring is additive with a reason code per contribution. Only an exact
+content match reaches 1.0. **Title evidence alone can never reach the
+duplicate threshold** — "Digital Marketing Project" and "Digital marketing"
+score 0.67 on title and 0.00 on description and are two different jobs. An
+exact title plus one independent agreement is reported as `possible_duplicate`
+at capped confidence: a lead to check, not a finding.
+
+Canonical selection tries rules in order and names the one that decided.
+Earliest-*seen* is deliberately not first — different sources discover the
+same posting at different times, so first-seen order is this database's
+history, not the job's. No reason string may claim to know the original job;
+a test enforces it.
+
+Dry run, all 1,332 rows, 22ms: **20 clusters, 48 rows clustered** (22
+duplicate, 6 possible, 20 canonical), 1,284 independent. Largest cluster is 5
+postings of one Android game project. 3.6% of inventory, invisible to a
+URL-keyed pipeline.
+
+### Phase 2 — authenticity (`ad904fb`)
+
+Deterministic, no model. Three measurements shaped it:
+
+- **`paymentVerified` is false on all 1,332 rows.** It is mapped from
+  `item.clientPaymentVerified`, and nothing stored has it true. Whether the
+  actor omits it or every client really is unverified cannot be determined,
+  because `rawPayload` keeps six curated keys and discards the source
+  payload. Recorded as "the source did not publish it", never as "unverified".
+- **Freelancer publishes no client signal at all** (0/1,134 for spend,
+  rating, jobs-posted, country, skills, experience). Client evidence
+  strengthens a verdict; its absence is a warning, never a penalty.
+- **Nothing is ever returned as `verified`.** That status means the source
+  URL was re-fetched and confirmed. This system does not do that, so claiming
+  it would be a lie. A test asserts `verified` is unreachable.
+
+The threshold needed a second pass: counting all signals rated 96.5% of the
+table `supported`, because every well-formed row has a usable URL, a coherent
+time, a substantive description and a stated budget. Those four are baseline
+coherence. `supported` now needs two *corroborating* signals.
+
+A speculative rule was removed rather than shipped — "thin text + no budget =
+spam" could only fire on a shape nobody has observed, since zero live rows
+have an unstated budget.
+
+Dry run: **uncertain 953** (all Freelancer, no source id, no client data),
+**supported 333**, **suspicious 46** (all offsite contact requests),
+rejected 0, stale 0. Those 953 are the measurable payoff of the collector
+fix — one corroborating signal today, two after the next scrape.
+
+### Phase 2 — freshness and lead scoring (`fbe87c8`)
+
+**Measured:** capture lag is 1.0h (Upwork) / 2.3h (Freelancer). Upwork
+proposal counts roughly DOUBLE between the first hour and the first six. So
+decay is steep early: half-life 48h with a 0.05 floor, giving 0.71 at one day
+and 0.35 at three, which keeps the older half of the feed rankable rather than
+flattened. States: just_posted / fresh / active / aging / stale / expired,
+plus `unknown` — and `freshnessFactor` returns null rather than inventing an
+age it does not have.
+
+**The honesty bug.** Proposal counts do not grow with a row's age — flat at
+18/21/25/19/22/22/22/21 across the 1h→5d+ buckets. With a 1–2h capture lag
+that can only mean the count is captured shortly after posting and **never
+refreshed**. A five-day-old listing still shows its two-hour figure. The
+assistant currently says "only 3 proposals so far", which reads as live and
+is not. `competitionObservation` returns the count with the age of the
+observation and an `outdated` flag; tests assert "so far" is never produced
+and that an absent count never renders as zero.
+
+**Lead scoring**, two rules from the data:
+
+- *Only evaluable dimensions count.* A fixed-weight model would dock 85% of
+  inventory for a gap in the source's reporting. Each dimension scores only
+  when its inputs exist, the total normalises over what ran, and `coverage`
+  reports how much. Missing data is a risk, never a subtraction.
+- *Budgets are not comparable as raw numbers.* 437 rows in ₹ (avg min
+  ₹39,037), 334 in $ (avg min $795), 51 €, 24 £, and **all 198 Upwork rows
+  carry no currency at all**. Raw ranking puts a ₹39,000 job ~49× above a
+  $795 one. Budgets are banded in approximate USD with coarse dated rates,
+  each band spanning 4–5×, so FX drift cannot reband a job. A missing
+  currency is assumed USD only on Upwork, and that assumption is surfaced as
+  a risk.
+
+Below 40% coverage the score is null and the band is `insufficient_data`.
+
+Dry run: **high 49, promising 198, moderate 584, low 498, insufficient 3**;
+average coverage 0.76. Freshness: fresh 39, active 128, aging 384, stale 759,
+expired 22. The worst-scoring listings are the `-- 3` / `-- 6` repost chains.
+
+> Against the product's promise of fresh leads: **781 of 1,332 rows (59%) are
+> stale or expired** by these thresholds. That is a scheduling and retention
+> question, not a scoring one — see Phase 3.
+
+### Phase 2 — assessment wiring (`6f49d77`)
+
+`assessListing` is one function producing every quality column, called by
+both ingestion paths so they cannot drift. Assessment happens at ingest so
+the feed can rank in SQL rather than in memory; at ingest
+`competitionObservedAt` is now, the one moment the proposal count is current.
+
+`scripts/assess-listings.ts` recomputes stored rows as freshness decays, and
+there passes `firstSeenAt` as the observation time — passing `now` would
+claim a five-day-old figure is current.
+
+The cost is the write, not the arithmetic. `assessmentChanged` suppresses
+writes where only the score drifted a point or two, which every row does
+every hour. `leadScoredAt` is excluded from the comparison: it changes every
+run by definition, so counting it would mark every row dirty and defeat the
+check.
+
+### What is NOT done, and what is NOT verified
+
+**Not built:** the UI does not read any of these columns. The feed still
+sorts by `createdAt`, there is no separate Latest vs Recommended (§23), the
+job detail page does not distinguish source fact from derived value (§26,
+§56), Trending is untouched (§28), and the clustering pass is not wired into
+the sync cron.
+
+**Not applied:** the migration has never run against production, so none of
+these columns exist there yet and none of the three scripts
+(`backfill:identity`, `cluster:duplicates`, `assess`) has ever been executed
+against a real database. Their pure logic is unit-tested and their dry-run
+paths are the same code that produced every number above, but the write paths
+are unexercised. There is no local Postgres server to rehearse them against:
+Docker needs elevation on this machine, and PGlite is not a server Prisma can
+dial.
+
+**Sharp edge:** the ingestion code on this branch now writes columns the
+migration creates. Running `npm run sync` or deploying this branch before
+applying the migration will fail on every write.
 
 ### Known-accepted dependency advisories
 
@@ -476,7 +617,14 @@ npm run check-quota   # Apify quota probe
 
 npm run backfill:identity            # dry run: report what would change
 npm run backfill:identity -- --apply # write it (idempotent, NULL-only)
+npm run cluster:duplicates           # dry run: duplicate clusters
+npm run cluster:duplicates -- --apply
+npm run assess                       # dry run: authenticity + lead scores
+npm run assess -- --apply
 ```
+
+All three write scripts are dry by default and print a full report before
+they would change anything.
 
 **Required env** (see `.env.example`): `DATABASE_URL`, `CRON_SECRET`,
 `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `APIFY_TOKEN[2,3]`, and at least one of

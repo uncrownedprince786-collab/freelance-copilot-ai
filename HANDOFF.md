@@ -15,7 +15,7 @@ The branch tip is green and verified:
 
     typecheck   clean
     lint        0 errors, 7 pre-existing warnings
-    tests       77 unit + 21 PGlite + 77 grounding + 9 ranking, all passing
+    tests       159 unit + 21 PGlite + 77 grounding + 9 ranking, all passing
     build       OK
 
 That was not true of the previous tip (`7b3755a`/`82d464f`), which did not
@@ -23,38 +23,50 @@ compile. `5f82a95` fixed it — see the commit message for the three defects.
 
 ## Where it stopped
 
-Phase 2 is partly done. Shipped: the migration, the identity layer
-(`src/lib/identity.ts`), identity-based ingestion (`src/lib/ingestIdentity.ts`)
-and the backfill script. See brain.md §8 "Phase 2 — what shipped so far" for
-the methodology and the measured numbers.
+**Phase 2 is complete in code and has never touched the database.** Built and
+tested: the migration, job identity, identity-based ingestion, duplicate
+clustering, the authenticity engine, freshness, lead scoring, and the
+assessment pass that writes the quality columns. brain.md §8 has the
+methodology and every measured number behind them.
 
-Not started, in the order they should probably be taken:
+It stopped at the point where the next step needs a decision rather than more
+code: applying the migration to production. The standing constraints forbid
+running migrations against production from this work, so that call is the
+repo owner's.
 
-1. **Duplicate clustering and canonical selection.** Columns exist
-   (`duplicateClusterId`, `canonicalJobId`, `duplicateStatus`,
-   `duplicateConfidence`, `canonicalReason`) and default to `unknown`. Nothing
-   computes them. The three measured title-collision pairs in brain.md are the
-   test cases to build against — one exact-content pair, one rewritten repost,
-   one pair of genuinely distinct jobs.
-2. **Authenticity engine.** `authenticityStatus` defaults to `uncertain` for
-   every row and nothing changes it.
-3. **Lead scoring.** `leadScore` is null everywhere, by design — an unscored
-   row must not carry a fabricated default.
-4. **Freshness states**, then the UI work (§24–29) and the chatbot (§30–31).
+Not started:
+
+1. **UI (§23–29).** Nothing reads the new columns. The feed still sorts by
+   `createdAt`; there is no separate Latest vs Recommended; the job detail
+   page does not distinguish source fact from derived value; Trending is
+   untouched.
+2. **Cron wiring.** `cluster:duplicates` and `assess` are scripts, not
+   scheduled passes.
+3. **Phase 3** — Apify/Neon cost reduction, adaptive scheduling, source
+   health. Note the measurement that motivates it: 781 of 1,332 live rows
+   (59%) are already stale or expired.
 
 ## Before deploying — rollout order
 
 The migration has not been applied to production, and the ingestion code on
-this branch writes the columns it creates. Deploying first would break ingest.
+this branch writes the columns it creates. **Running `npm run sync` or
+deploying this branch before applying the migration will fail on every
+write.**
 
-    1. apply the migration        (prisma migrate deploy)
-    2. npm run backfill:identity  (dry by default — read the report)
+    1. apply the migration              (prisma migrate deploy)
+    2. npm run backfill:identity        -- read the dry-run report
     3. npm run backfill:identity -- --apply
-    4. deploy
+    4. npm run cluster:duplicates       -- read it, then -- --apply
+    5. npm run assess                   -- read it, then -- --apply
+    6. deploy
 
-`scripts/backfill-identity.ts` has never actually been executed: production
-does not have the columns yet, and there is no local Postgres server here to
-rehearse against. Read its dry-run output before trusting it.
+Every script is dry by default, idempotent, and writes only where a value
+actually changes. None of their write paths has ever been executed: production
+does not have the columns, and there is no local Postgres server here to
+rehearse against (Docker needs elevation; PGlite is not a server Prisma can
+dial). The pure logic behind them is unit-tested, and their dry-run paths are
+the same code that produced every number in brain.md — but read each report
+before passing `--apply`.
 
 ## Resuming
 
