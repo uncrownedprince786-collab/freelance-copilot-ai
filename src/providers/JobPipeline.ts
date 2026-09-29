@@ -7,6 +7,7 @@ import { recordMarketFacts } from "../lib/marketFacts";
 import { prisma } from "../lib/db";
 import { isSafeExternalUrl } from "../lib/safeUrl";
 import { identityFields, resolveIdentity, sourcePostedAt } from "../lib/ingestIdentity";
+import { assessListing } from "../lib/assess";
 
 export class JobPipeline {
   private providers: JobProvider[] = [
@@ -315,7 +316,33 @@ export class JobPipeline {
           description: job.description,
           sourceJobId: job.sourceJobId,
         });
-        const idFields = identityFields(identity, sourcePostedAt(job.postedAt, seenAt), seenAt);
+        const postedAtValue = sourcePostedAt(job.postedAt, seenAt);
+        const idFields = identityFields(identity, postedAtValue, seenAt);
+
+        // Authenticity and lead score are computed here rather than at read
+        // time so the feed can rank and filter on them in SQL. They are
+        // recomputed by scripts/assess-listings.ts as freshness decays; see
+        // assess.ts for why a small drift does not trigger a write.
+        // `competitionObservedAt` is now, because the proposal count in this
+        // payload is what the source is reporting at this moment — it is the
+        // only point in the system where that figure is actually fresh.
+        const assessment = assessListing({
+          platform: job.platform || 'Upwork',
+          title: job.title || 'Untitled Job',
+          description: job.description || '',
+          url: job.url,
+          budget: budgetStr,
+          sourceJobId: identity.sourceJobId,
+          skills: skillsStr,
+          experienceLevel: job.experienceLevel || '',
+          proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
+          competitionObservedAt: seenAt,
+          clientSpend: job.clientSpend || '',
+          clientRating: clientObj.rating ? String(clientObj.rating) : '',
+          jobsPosted: clientObj.jobsPosted ?? null,
+          paymentVerified: clientObj.paymentVerified === true,
+          postedAt: postedAtValue,
+        }, seenAt);
 
         const updateData = {
           title: job.title || 'Untitled Job',
@@ -341,6 +368,7 @@ export class JobPipeline {
           applied: job.applied || false,
           rawPayload: JSON.stringify(payload),
           ...idFields,
+          ...assessment,
         };
 
         const createData = {
@@ -370,6 +398,7 @@ export class JobPipeline {
           applied: job.applied || false,
           rawPayload: JSON.stringify(payload),
           ...idFields,
+          ...assessment,
           // createdAt has always been the retention anchor; firstSeenAt makes
           // that explicit. Create-only — an update must never move it.
           firstSeenAt: seenAt,

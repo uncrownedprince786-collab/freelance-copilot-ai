@@ -4,6 +4,7 @@ import { FreelancerCollector } from "./FreelancerCollector";
 import { prisma } from "@/lib/db";
 import { RawOpportunity } from "./types";
 import { identityFields, resolveIdentity, sourcePostedAt } from "@/lib/ingestIdentity";
+import { assessListing } from "@/lib/assess";
 
 // In-scope CLI collection sources: Upwork + Freelancer only. Generic/public
 // remote feeds were intentionally removed to keep collection focused.
@@ -143,7 +144,28 @@ export async function runAllCollectors(): Promise<{
         description: item.description,
         sourceJobId: item.sourceJobId,
       });
-      const idFields = identityFields(identity, sourcePostedAt(postedAt, seenAt), seenAt);
+      const postedAtValue = sourcePostedAt(postedAt, seenAt);
+      const idFields = identityFields(identity, postedAtValue, seenAt);
+
+      // Same assessment as JobPipeline, from the same module, so the two
+      // ingestion paths cannot disagree about a listing's quality.
+      const assessment = assessListing({
+        platform: item.platform,
+        title: item.title?.trim() || "Untitled Job",
+        description: item.description?.trim() || "",
+        url: item.url,
+        budget: cleanedBudget,
+        sourceJobId: identity.sourceJobId,
+        skills: Array.isArray(item.skills) ? item.skills.join(",") : null,
+        experienceLevel: item.experienceLevel ?? null,
+        proposalCount: typeof item.proposalCount === "number" ? item.proposalCount : null,
+        competitionObservedAt: seenAt,
+        clientSpend: item.clientSpend ?? null,
+        clientRating: item.rating != null ? String(item.rating) : null,
+        jobsPosted: item.jobsPosted ?? null,
+        paymentVerified: item.paymentVerified ?? false,
+        postedAt: postedAtValue,
+      }, seenAt);
 
       const updateData = {
         title: item.title?.trim() || "Untitled Job",
@@ -156,6 +178,7 @@ export async function runAllCollectors(): Promise<{
         clientReviews: item.clientReviews,
         connections: item.connections,
         ...idFields,
+        ...assessment,
       };
 
       const createData = {
@@ -175,6 +198,7 @@ export async function runAllCollectors(): Promise<{
         connections: item.connections,
         rawPayload: legacyPayload,
         ...idFields,
+        ...assessment,
         firstSeenAt: seenAt,
       };
 
