@@ -6,11 +6,14 @@ import {
   shouldSpendDiscoveryNow,
 } from '@/lib/apifyAllocation';
 
-/** Billed Apify runs one discovery pass costs. Mirrors the query list in
- *  ApifyUpworkProvider; kept configurable so the two can be tuned together. */
+/** Billed Apify runs one discovery pass costs.
+ *
+ *  This is 1, not 4: the provider batches its whole query list into a single
+ *  Actor-Start. It stays configurable because the number is a property of how
+ *  the provider calls the actor, and the two have to be tuned together. */
 function getApifyQueriesPerRun(): number {
   const n = Number(process.env.APIFY_QUERIES_PER_RUN);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 4;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
 }
 
 // Adaptive sync cadence. The schedulers (GitHub Actions + Vercel cron) fire

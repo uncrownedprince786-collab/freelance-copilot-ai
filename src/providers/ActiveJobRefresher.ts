@@ -25,7 +25,11 @@ import { logCronRun } from "../lib/cronLogger";
 //   so a single run can never balloon.
 // - Never creates duplicates and never overwrites a stored value with a missing
 //   one: a field is only written when the provider returned a usable value.
-const REFRESH_MAX_RESULTS = 12;   // per Upwork query (matches the sync fetch)
+// Incremental mode means the actor emits only listings that are new or whose
+// tracked content changed, and only emitted results are billed. Refresh is
+// therefore close to free now: a pass where nothing changed costs one run
+// start and no result fees. The cap is a safety bound on a burst.
+const REFRESH_MAX_RESULTS = 25;   // safety cap, not a cost driver
 const REFRESH_TOTAL_CAP = 60;     // hard ceiling on Upwork results per refresh run
 const REFRESH_BATCH = 30;         // existing jobs patched per run
 const REFRESH_TIME_LIMIT_MS = 90_000; // strict execution ceiling

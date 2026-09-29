@@ -742,6 +742,55 @@ Also fixed: the three scripts needed `--conditions=react-server`, because
 the flag and will throw the same error — untested here because running it
 would spend Apify quota.
 
+### Apify — rebuilt around the actor's own cost controls
+
+**Pricing, verified on the actor page rather than assumed:**
+blackfalcondata/upwork-scraper is pay-per-event at **$0.001 per run start +
+$0.001 per emitted result**, against $5/month of free credit. The figure
+previously written in a code comment turned out to be correct.
+
+**What was wrong was how the budget was spent.** Two actor features were
+unused:
+
+- *Batch searches.* Passing an ARRAY of queries runs them together for ONE
+  Actor-Start instead of N. The integration issued its four search terms as
+  four separate billed runs.
+- *Incremental mode.* With a stable `stateKey` the actor emits only listings
+  that are new or whose tracked content changed. Without it we bought the
+  same listings on every pass.
+
+**Measured waste:** ~50 records returned per day against ~28 genuinely new
+Upwork rows — roughly 44% of result spend bought listings already stored.
+And because four billed runs per pass exhausted a 16/day cap, only **2
+discovery passes a day actually ran**, so Upwork data could be twelve hours
+stale.
+
+**After:** one batched, incremental run per pass.
+
+| | Before | After |
+|---|---|---|
+| Billed runs per pass | 4 | **1** |
+| Results billed per pass | 32 | only new/changed (~3) |
+| Cost per pass | ~$0.036 | ~$0.004 |
+| Discovery passes affordable | 2/day | every sync (~10/day) |
+| Monthly cost | ~$4.30 (86% of $5) | **~$1.30 (26%)** |
+
+So the data gets roughly **5× fresher while costing about 70% less** — not a
+trade-off, because the old spend was mostly buying duplicates.
+
+A side effect worth verifying once it has run: incremental mode emits
+records whose tracked content *changed*, so a listing whose proposal count
+moves should now come back on its own. If that holds it partly repairs the
+never-refreshed competition figure. It is **not yet confirmed** — the actor
+does not document precisely which fields it tracks — so nothing in the UI
+claims it.
+
+Caveats recorded in the code: incremental state is held per Apify account,
+so the token order prefers the primary and fails over only on error (a
+switch costs one re-baseline, never a missed listing); and an empty pass is
+now the *normal* outcome, so it must never be treated as a source failure —
+there is a test for that.
+
 ### Open issues — none of these are fixed
 
 Carried out of the Phase 4 integration. Each was verified, none is
