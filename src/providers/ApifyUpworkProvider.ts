@@ -1,6 +1,7 @@
 import { JobProvider, ProviderRunStatus } from "./JobProvider";
 import { Job } from "../types/job";
 import { getApifyBudgetRemaining, consumeApifyBudget } from "../lib/apifyBudget";
+import { ApifyPurpose, canSpend } from "../lib/apifyAllocation";
 
 // Hard deadline for one Apify run-sync call. The actor is synchronous, so a
 // hung run would otherwise hold the sync lock until the platform kills the
@@ -130,7 +131,7 @@ export class ApifyUpworkProvider implements JobProvider {
   // `opts` is only used by the Active Job Refresh flow, which fetches a wider
   // recency window to catch older-but-still-active listings. The new-job sync
   // calls fetchJobs() with no args, so its behavior is unchanged (12 / 60).
-  async fetchJobs(opts?: { maxResults?: number; totalCap?: number }): Promise<Job[]> {
+  async fetchJobs(opts?: { maxResults?: number; totalCap?: number; purpose?: ApifyPurpose }): Promise<Job[]> {
     if (this.tokens.length === 0) {
       console.warn('[ApifyUpworkProvider] APIFY_TOKEN / APIFY_TOKEN2 / APIFY_TOKEN3 are missing in environment.');
       this.lastRunStatus = { failed: true, reason: 'no APIFY token configured', queriesTotal: 0, queriesFailed: 0 };
@@ -156,6 +157,12 @@ export class ApifyUpworkProvider implements JobProvider {
 
     const maxResults = opts?.maxResults ?? 8;
     const totalCap = opts?.totalCap ?? 60;
+    // Discovery may spend the whole remaining budget; refresh may only spend
+    // what is above the discovery reserve. Re-checking a listing already in
+    // the database must never consume the budget needed to find a new one —
+    // Upwork yields 66% useful leads against Freelancer's 10%, and the
+    // proposal counts refresh exists to update are measured not to move.
+    const purpose: ApifyPurpose = opts?.purpose ?? 'discovery';
     // One contiguous slice per account: N tokens -> each serves an equal share
     // of the query list (deterministic); 1 token -> one slice serves everything.
     const slice = computeSliceSize(queries.length, this.tokens.length);
@@ -166,7 +173,7 @@ export class ApifyUpworkProvider implements JobProvider {
       // Daily free-tier budget: stop launching billed Apify runs once the cap
       // is hit. Sync runs first in the cron, so new-job ingestion gets
       // priority; the refresh shares the same pool and skips when it is empty.
-      if ((await getApifyBudgetRemaining()) <= 0) {
+      if (!canSpend(purpose, await getApifyBudgetRemaining())) {
         skippedQueries = queries.length - qi;
         break;
       }
@@ -185,7 +192,7 @@ export class ApifyUpworkProvider implements JobProvider {
         // and then consuming it once per attempt let a single query spend one
         // unit per configured token — up to 3x the intended rate. Re-check
         // before each attempt so the cap is the cap.
-        if ((await getApifyBudgetRemaining()) <= 0) {
+        if (!canSpend(purpose, await getApifyBudgetRemaining())) {
           skippedQueries = Math.max(skippedQueries, queries.length - qi);
           break;
         }

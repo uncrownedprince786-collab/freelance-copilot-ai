@@ -141,6 +141,8 @@ export class ActiveJobRefresher {
             ? await (p as ApifyUpworkProvider).fetchJobs({
                 maxResults: REFRESH_MAX_RESULTS,
                 totalCap: REFRESH_TOTAL_CAP,
+                // Refresh spends only what is above the discovery reserve.
+                purpose: "refresh",
               })
             : await p.fetchJobs();
         fetched.push(...jobs);
