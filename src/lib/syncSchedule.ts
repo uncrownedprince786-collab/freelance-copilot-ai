@@ -1,4 +1,17 @@
 import { prisma } from '@/lib/db';
+import { getApifyBudgetRemaining, getApifyDailyBudget } from '@/lib/apifyBudget';
+import {
+  bestDiscoveryHours,
+  discoverySlots,
+  shouldSpendDiscoveryNow,
+} from '@/lib/apifyAllocation';
+
+/** Billed Apify runs one discovery pass costs. Mirrors the query list in
+ *  ApifyUpworkProvider; kept configurable so the two can be tuned together. */
+function getApifyQueriesPerRun(): number {
+  const n = Number(process.env.APIFY_QUERIES_PER_RUN);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 4;
+}
 
 // Adaptive sync cadence. The schedulers (GitHub Actions + Vercel cron) fire
 // frequently; the sync route itself decides whether a full fetch is due using
@@ -132,4 +145,84 @@ export async function getScheduleLabel(): Promise<string> {
     return `${h12}${h < 12 ? ' AM' : ' PM'} UTC`;
   };
   return `Peak (${hours.map(fmt).join(', ')}): ~${peakMin} min · Off-peak: ~${offPeakH} h`;
+}
+
+/**
+ * Observed discovery yield per UTC hour, from the recorded run history.
+ *
+ * Refresher runs are excluded: they add no new jobs by design, so counting
+ * them would drag every hour they touch toward zero and make the
+ * distribution meaningless. (Mis-reading those runs as wasted was the first
+ * conclusion drawn from this table, and it was wrong.)
+ *
+ * Aggregated in SQL — 24 rows back, not the whole log.
+ */
+export async function discoveryYieldByHour(): Promise<
+  Array<{ hour: number; avgNewJobs: number; runs: number }>
+> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ hour: number; runs: bigint; avg_new: number | null }>>`
+      SELECT EXTRACT(HOUR FROM "timestamp")::int AS hour,
+             COUNT(*)                            AS runs,
+             AVG("newJobsAdded")                 AS avg_new
+        FROM "cron_logs"
+       WHERE "sourceSummary" NOT LIKE 'refresher%'
+       GROUP BY 1
+    `;
+    return rows.map(r => ({
+      hour: Number(r.hour),
+      runs: Number(r.runs),
+      avgNewJobs: r.avg_new == null ? 0 : Number(r.avg_new),
+    }));
+  } catch {
+    // No history is a reason not to concentrate spend, never a reason to
+    // stop scraping. The caller treats an empty list as "no basis".
+    return [];
+  }
+}
+
+/**
+ * Should this run spend billed Apify queries on new-job discovery?
+ *
+ * Measured yield varies from 3.4 new jobs per run at 03:00 UTC to 20.8 at
+ * 06:00 — a factor of six at the same price — while the daily budget only
+ * covers four discovery runs. Concentrating spend in the richest hours is
+ * the difference between buying the 06:00 hour and buying the 03:00 one.
+ *
+ * Fails OPEN. If the history cannot be read or the budget cannot be
+ * checked, discovery proceeds on the normal cadence: a telemetry problem
+ * must never silently stop ingestion.
+ */
+export async function shouldRunApifyDiscovery(
+  now: Date = new Date(),
+): Promise<{ allowed: boolean; reason: string }> {
+  try {
+    const [remaining, history] = await Promise.all([
+      getApifyBudgetRemaining(),
+      discoveryYieldByHour(),
+    ]);
+    const queriesPerRun = getApifyQueriesPerRun();
+    const slots = discoverySlots(getApifyDailyBudget(), queriesPerRun);
+    const topHours = bestDiscoveryHours(history, slots);
+    const hour = now.getUTCHours();
+
+    const allowed = shouldSpendDiscoveryNow({
+      hour,
+      topHours,
+      remaining,
+      queriesPerRun,
+      hoursLeftToday: 24 - hour,
+    });
+
+    if (allowed) return { allowed: true, reason: 'ok' };
+    if (remaining < queriesPerRun) {
+      return { allowed: false, reason: `daily Apify budget too low for a full run (${remaining} left)` };
+    }
+    return {
+      allowed: false,
+      reason: `hour ${hour}:00 UTC is outside the ${slots} highest-yield hours and the budget is reserved for them`,
+    };
+  } catch {
+    return { allowed: true, reason: 'schedule check unavailable; proceeding on the normal cadence' };
+  }
 }

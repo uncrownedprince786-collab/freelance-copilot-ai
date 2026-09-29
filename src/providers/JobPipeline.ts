@@ -9,6 +9,7 @@ import { isSafeExternalUrl } from "../lib/safeUrl";
 import { identityFields, hasMaterialChange, resolveIdentity, sourcePostedAt } from "../lib/ingestIdentity";
 import { assessListing } from "../lib/assess";
 import { recordSourceRun } from "../lib/sourceHealthStore";
+import { shouldRunApifyDiscovery } from "../lib/syncSchedule";
 
 export class JobPipeline {
   private providers: JobProvider[] = [
@@ -43,10 +44,21 @@ export class JobPipeline {
     let apifyFailed = false;
     let apifyFailureReason = '';
     const apifyStartedAt = Date.now();
+    // Spend the billed budget in the hours that actually yield. Recorded
+    // history shows 3.4 new jobs per run at 03:00 UTC against 20.8 at 06:00,
+    // and the daily budget only covers four discovery runs — so an
+    // unscheduled 03:00 run buys the worst hour at the same price as the
+    // best. Fails open: a telemetry problem must not stop ingestion.
+    const discovery = await shouldRunApifyDiscovery();
     try {
-      apifyJobs = await apifyProvider.fetchJobs();
-      apifyFailed = apifyProvider.lastRunStatus?.failed === true;
-      apifyFailureReason = apifyProvider.lastRunStatus?.reason ?? '';
+      if (!discovery.allowed) {
+        apifyFailureReason = discovery.reason;
+        console.log('[JobPipeline] Apify discovery skipped:', discovery.reason);
+      } else {
+        apifyJobs = await apifyProvider.fetchJobs();
+        apifyFailed = apifyProvider.lastRunStatus?.failed === true;
+        apifyFailureReason = apifyProvider.lastRunStatus?.reason ?? '';
+      }
     } catch (err: unknown) {
       apifyFailed = true;
       apifyFailureReason = err instanceof Error ? err.message : String(err);
@@ -59,7 +71,10 @@ export class JobPipeline {
     // is the number that should decide where scraping effort goes — record
     // counts rank the high-volume source first, which the measured yield
     // says is exactly backwards.
-    await recordSourceRun('apify', {
+    // A deliberate schedule skip is not a source failure and must not count
+    // toward the backoff streak — that would eventually retire a healthy
+    // source for doing exactly what it was told.
+    if (discovery.allowed) await recordSourceRun('apify', {
       ok: !apifyFailed,
       reason: apifyFailureReason || null,
       records: apifyJobs.length,

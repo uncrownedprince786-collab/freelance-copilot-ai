@@ -112,3 +112,39 @@ export function discoverySlots(dailyBudget: number, queriesPerRun: number): numb
   if (queriesPerRun <= 0) return 0;
   return Math.floor(Math.max(0, dailyBudget) / queriesPerRun);
 }
+
+/**
+ * Should discovery spend a billed run in this hour?
+ *
+ * A top-yield hour is always funded. Outside one, spending is allowed only
+ * when there is more budget left than the remaining top hours will need —
+ * so surplus is used rather than wasted, and a quiet hour can never eat the
+ * budget a rich hour is waiting for.
+ *
+ * The "wasted" half matters: concentrating spend into four hours and then
+ * stopping would leave the budget unspent whenever one of those runs failed
+ * or the cron did not fire. Reserving exactly what the remaining rich hours
+ * need, and releasing the rest, keeps the allowance fully used without
+ * letting 03:00 outbid 06:00.
+ */
+export function shouldSpendDiscoveryNow(args: {
+  hour: number;
+  topHours: Set<number> | null;
+  remaining: number;
+  queriesPerRun: number;
+  /** UTC hours still ahead today, including the current one. */
+  hoursLeftToday: number;
+}): boolean {
+  const { hour, topHours, remaining, queriesPerRun, hoursLeftToday } = args;
+  if (remaining < queriesPerRun) return false;
+  // No usable history means no basis to concentrate. Spend on the normal
+  // cadence rather than inventing a schedule.
+  if (!topHours || topHours.size === 0) return true;
+  if (topHours.has(hour)) return true;
+
+  // How many rich hours are still ahead today (excluding this one)?
+  const richAhead = [...topHours].filter(
+    h => h > hour && h < hour + Math.max(0, hoursLeftToday),
+  ).length;
+  return remaining >= (richAhead + 1) * queriesPerRun;
+}

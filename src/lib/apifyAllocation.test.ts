@@ -122,3 +122,61 @@ test('malformed hours are ignored rather than trusted', () => {
   const hours = bestDiscoveryHours(bad, 4)!;
   for (const h of hours) assert.ok(h >= 0 && h < 24, `bad hour leaked: ${h}`);
 });
+
+// ── Spending decision ──────────────────────────────────────────────────
+
+import { shouldSpendDiscoveryNow } from './apifyAllocation';
+
+const TOP = new Set([2, 6, 12, 13]);
+
+test('a top-yield hour is always funded', () => {
+  for (const hour of TOP) {
+    assert.equal(
+      shouldSpendDiscoveryNow({ hour, topHours: TOP, remaining: 4, queriesPerRun: 4, hoursLeftToday: 24 - hour }),
+      true,
+    );
+  }
+});
+
+test('a quiet hour cannot eat the budget a rich hour is waiting for', () => {
+  // 02:00, three rich hours still ahead (6, 12, 13) needing 12 queries.
+  // Only 8 left, so a non-rich hour must not spend.
+  assert.equal(
+    shouldSpendDiscoveryNow({ hour: 3, topHours: TOP, remaining: 8, queriesPerRun: 4, hoursLeftToday: 21 }),
+    false,
+  );
+});
+
+test('surplus above what the rich hours need is spent, not wasted', () => {
+  // Same position, but the budget covers the three rich hours AND this run.
+  assert.equal(
+    shouldSpendDiscoveryNow({ hour: 3, topHours: TOP, remaining: 16, queriesPerRun: 4, hoursLeftToday: 21 }),
+    true,
+  );
+});
+
+test('late in the day with no rich hours left, surplus is released', () => {
+  assert.equal(
+    shouldSpendDiscoveryNow({ hour: 22, topHours: TOP, remaining: 4, queriesPerRun: 4, hoursLeftToday: 2 }),
+    true,
+  );
+});
+
+test('a run that cannot be paid for in full is not started', () => {
+  assert.equal(
+    shouldSpendDiscoveryNow({ hour: 6, topHours: TOP, remaining: 3, queriesPerRun: 4, hoursLeftToday: 18 }),
+    false,
+  );
+});
+
+test('with no usable history, the normal cadence applies', () => {
+  // No basis to concentrate is not a reason to stop scraping.
+  assert.equal(
+    shouldSpendDiscoveryNow({ hour: 3, topHours: null, remaining: 4, queriesPerRun: 4, hoursLeftToday: 21 }),
+    true,
+  );
+  assert.equal(
+    shouldSpendDiscoveryNow({ hour: 3, topHours: new Set(), remaining: 4, queriesPerRun: 4, hoursLeftToday: 21 }),
+    true,
+  );
+});
