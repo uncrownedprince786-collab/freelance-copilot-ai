@@ -6,6 +6,7 @@ import { hasValidCronBearer } from '@/lib/cronAuth';
 import { acquireLock, releaseLock } from '@/lib/runLock';
 import { getSyncCooldownMs } from '@/lib/syncSchedule';
 import { pruneMarketFacts } from '@/lib/marketFacts';
+import { runPostSyncMaintenance } from '@/lib/qualityMaintenance';
 
 const LOCK_KEY = 'sync_lock';
 const LOCK_TTL_MS = 15 * 60 * 1000; // 15 minutes; release-on-finally plus TTL safety net
@@ -93,6 +94,20 @@ async function runSync(req: NextRequest) {
         update: { value: JSON.stringify({ at: now }) },
         create: { key: SYNC_TS_KEY, value: JSON.stringify({ at: now }) },
       }).catch(() => {});
+
+      // Keep the quality columns true after new rows arrive. Clustering
+      // needs a view of every row and freshness decays continuously, so
+      // neither can be done per-listing at ingest. Rate-limited internally
+      // and non-fatal: maintenance failing must not fail a sync that just
+      // brought in new jobs.
+      const maintenance = await runPostSyncMaintenance();
+      if (maintenance.ran) {
+        console.log(
+          '[sync] quality maintenance:',
+          `${maintenance.clustering?.clusters.length ?? 0} clusters, ` +
+          `${maintenance.clustering?.written ?? 0} + ${maintenance.assessment?.written ?? 0} rows updated`,
+        );
+      }
 
       // Clear trends cache so next visit gets fresh AI analysis
       await prisma.systemKv.delete({ where: { key: 'trends_cache' } }).catch(() => {});
