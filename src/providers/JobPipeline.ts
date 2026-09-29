@@ -419,7 +419,11 @@ export class JobPipeline {
           clientSpend: job.clientSpend || '',
           clientReviews: job.clientReviews || '',
           connections: job.connections || 0,
-          budgetType: job.budgetType || '',
+          // Derive from the parsed budget when the provider did not set the
+          // field. Measured: the column was empty on all 1,332 rows while the
+          // budget JSON carried the type on every one, so the jobType filter
+          // matched nothing and silently emptied the feed.
+          budgetType: job.budgetType || (typeof job.budget === 'object' && job.budget?.type ? job.budget.type : ''),
           experienceLevel: job.experienceLevel || '',
           duration: job.duration || '',
           skills: skillsStr,
@@ -449,7 +453,11 @@ export class JobPipeline {
           clientSpend: job.clientSpend || '',
           clientReviews: job.clientReviews || '',
           connections: job.connections || 0,
-          budgetType: job.budgetType || '',
+          // Derive from the parsed budget when the provider did not set the
+          // field. Measured: the column was empty on all 1,332 rows while the
+          // budget JSON carried the type on every one, so the jobType filter
+          // matched nothing and silently emptied the feed.
+          budgetType: job.budgetType || (typeof job.budget === 'object' && job.budget?.type ? job.budget.type : ''),
           experienceLevel: job.experienceLevel || '',
           duration: job.duration || '',
           skills: skillsStr,

@@ -194,6 +194,10 @@ export async function runAllCollectors(): Promise<{
         clientSpend: item.clientSpend,
         clientReviews: item.clientReviews,
         connections: item.connections,
+        // Same derivation as JobPipeline: the column was empty on every
+        // row while the budget JSON carried the type, so the two write
+        // paths must agree or the filter breaks again on whichever ran last.
+        budgetType: typeof item.budget === "object" && item.budget?.type ? item.budget.type : "",
         ...idFields,
         ...assessment,
       };
@@ -213,6 +217,10 @@ export async function runAllCollectors(): Promise<{
         clientSpend: item.clientSpend,
         clientReviews: item.clientReviews,
         connections: item.connections,
+        // Same derivation as JobPipeline: the column was empty on every
+        // row while the budget JSON carried the type, so the two write
+        // paths must agree or the filter breaks again on whichever ran last.
+        budgetType: typeof item.budget === "object" && item.budget?.type ? item.budget.type : "",
         rawPayload: legacyPayload,
         ...idFields,
         ...assessment,

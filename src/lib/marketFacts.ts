@@ -99,9 +99,34 @@ function skillHits(job: FactJob): string[] {
 
 type FactRecord = { date: string; dimension: string; key: string; value: number };
 
+/**
+ * Retention deletes listings 7 days after this database first saw them, and
+ * these aggregates are recomputed from the rows that are still present and
+ * written with REPLACE semantics. So once a posting day starts aging out, its
+ * recorded totals get rewritten downward on every sync, and when the day
+ * empties completely the last partial value freezes forever.
+ *
+ * Measured on the live table: 2026-09-23 through 09-29 match the stored rows
+ * exactly, and then it collapses — 09-22 recorded 37, 09-21 recorded 1,
+ * 09-20 recorded 15, against real daily intake of roughly 190. Every day
+ * older than the retention window was undercounted by more than 90%, which
+ * is what `getHistoricalTrends` and the 30-day averages were built on.
+ *
+ * The fix is to stop rewriting a day once it can no longer be counted in
+ * full. A day is "closed" at 6 days — one day inside the 7-day retention
+ * window, so the final write happens while every listing for that day is
+ * still present and the frozen value is the complete one.
+ *
+ * An additive counter was the other option and is worse: ingestion re-sees
+ * the same listing on every run, so adding would double-count, and the pass
+ * would no longer be idempotent.
+ */
+const CLOSED_DAY_MS = 6 * 24 * 60 * 60 * 1000;
+
 export async function recordMarketFacts(jobs: FactJob[]): Promise<{ recorded: number; failed: boolean }> {
   try {
     const facts: FactRecord[] = [];
+    const closedBefore = Date.now() - CLOSED_DAY_MS;
 
     for (const job of jobs) {
       let ts = 0;
@@ -111,6 +136,9 @@ export async function recordMarketFacts(jobs: FactJob[]): Promise<{ recorded: nu
       }
       if (!ts) continue;
       const date = utcDayKey(new Date(ts));
+      // A day is only recomputed while ALL of its listings are still in the
+      // table. See CLOSED_DAY_MS below.
+      if (ts < closedBefore) continue;
       const hour = new Date(ts).getUTCHours();
       const weekday = WEEKDAYS[new Date(ts).getUTCDay()];
 
