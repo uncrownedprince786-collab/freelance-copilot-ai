@@ -7,10 +7,20 @@
         "build": "prisma generate && next build",
         "start": "next start",
         "lint": "eslint",
+        "test": "tsx --conditions=react-server --test \"src/**/*.test.ts\"",
+        "test:pg": "tsx --test \"src/**/*.pgtest.ts\"",
+        "test:grounding": "tsx scripts/test-instructions.ts",
+        "test:ranking": "tsx scripts/test-ranking.ts",
+        "test:all": "npm run test && npm run test:pg && npm run test:grounding && npm run test:ranking",
+        "verify": "tsc --noEmit && npm run lint && npm run test:all && npm run build",
         "check-quota": "tsx scripts/check-quota.ts",
+        "backfill:identity": "tsx --conditions=react-server scripts/backfill-identity.ts",
+        "cluster:duplicates": "tsx --conditions=react-server scripts/cluster-duplicates.ts",
+        "assess": "tsx --conditions=react-server scripts/assess-listings.ts",
+        "source:health": "tsx --conditions=react-server scripts/source-health.ts",
         "test:apify": "tsx scripts/test-apify-accounts.ts",
         "test:refresh": "tsx scripts/test-refresh-batching.ts",
-        "sync": "tsx scripts/sync.ts"
+        "sync": "tsx --conditions=react-server scripts/sync.ts"
     },
     "dependencies": {
         "@google/genai": "^2.17.1",
@@ -22,7 +32,7 @@
         "@prisma/client": "^7.8.0",
         "better-sqlite3": "^12.11.1",
         "lucide-react": "^1.17.0",
-        "next": "16.3.0",
+        "next": "16.3.7",
         "openai": "^6.42.0",
         "pg": "^8.21.0",
         "react": "19.2.4",
@@ -32,6 +42,7 @@
         "zod": "^4.4.3"
     },
     "devDependencies": {
+        "@electric-sql/pglite": "^0.4.3",
         "@tailwindcss/postcss": "^4",
         "@types/better-sqlite3": "^7.6.13",
         "@types/node": "^20",

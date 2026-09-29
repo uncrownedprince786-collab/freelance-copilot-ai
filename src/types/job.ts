@@ -11,7 +11,13 @@ export interface JobClient {
   country: string | null;
   rating: number | null;
   totalSpent: number | null;
+  /** Jobs the client has POSTED. Null when the source does not expose it. */
   jobsPosted: number | null;
+  /**
+   * Reviews the client has RECEIVED. Kept separate from jobsPosted — these
+   * were previously conflated, so a review count was displayed as a job count.
+   */
+  reviewCount?: number | null;
   totalHires: number | null;
   paymentVerified: boolean | null;
   lastActivityAt: Date | null;
@@ -22,6 +28,9 @@ export interface JobClient {
 export interface Job {
   id: string;
   url: string;
+  /** The source's own id, when the adapter had it. A source fact — see
+   *  RawOpportunity.sourceJobId and lib/identity.ts. */
+  sourceJobId?: string | null;
   title: string;
   description: string;
   skills: string[];

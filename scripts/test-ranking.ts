@@ -1,4 +1,4 @@
-import { compareOpportunities } from "./src/lib/opportunityRanking";
+import { compareOpportunities } from "../src/lib/opportunityRanking";
 
 interface J {
   id: string;

@@ -6,14 +6,23 @@ export const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000;
 export const GUEST_COOKIE = 'lh_guest_session';
 export const GUEST_SESSION_MS = 24 * 60 * 60 * 1000;
 
-interface SessionTokenPayload {
+export interface SessionTokenPayload {
   role: 'admin' | 'guest';
   guestId?: string;
   exp: number;
 }
 
+// Session cookies are signed with SESSION_SIGNING_SECRET, NOT with CRON_SECRET.
+// CRON_SECRET travels to /api/sync as a Bearer header from GitHub Actions on
+// every scheduled tick, so it is exposed to Actions logs, outbound proxies and
+// APM tooling. Using it as the cookie HMAC key meant any disclosure of that
+// header let an attacker mint {"role":"admin"} cookies, and rotating it to
+// revoke sessions would break the cron at the same time.
+//
+// CRON_SECRET remains the fallback so existing deployments keep working (and
+// existing cookies stay valid) until SESSION_SIGNING_SECRET is set. Set it.
 function signingKey(): string {
-  return process.env.CRON_SECRET || '';
+  return process.env.SESSION_SIGNING_SECRET || process.env.CRON_SECRET || '';
 }
 
 function sign(payload: string): string {
@@ -81,13 +90,28 @@ export async function isAdminRequest(): Promise<boolean> {
 
 // Any valid session: a signed admin cookie or a signed guest cookie.
 export async function isAuthenticatedRequest(): Promise<boolean> {
+  return (await getSessionClaims()) !== null;
+}
+
+// The verified claims of the current request's session, or null when there is
+// no valid session. Routes that act on behalf of a caller must read the
+// identity from HERE rather than from the request body — the guestId claim is
+// signed, a body field is not.
+export async function getSessionClaims(): Promise<SessionTokenPayload | null> {
   try {
     const store = await cookies();
     const admin = store.get(ADMIN_COOKIE)?.value;
-    if (admin && verifyAdminToken(admin)) return true;
+    if (admin) {
+      const decoded = verifyToken(admin);
+      if (decoded?.role === 'admin') return decoded;
+    }
     const guest = store.get(GUEST_COOKIE)?.value;
-    return guest ? verifyToken(guest)?.role === 'guest' : false;
+    if (guest) {
+      const decoded = verifyToken(guest);
+      if (decoded?.role === 'guest') return decoded;
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }

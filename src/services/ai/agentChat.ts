@@ -18,7 +18,7 @@ const REQUEST_TIMEOUT_MS = 30000;
 
 export async function runAssistantChat(system: string, messages: ChatMessage[], maxOutputTokens = 1500): Promise<string> {
   const providers: { name: string; runner: () => Promise<string | null> }[] = [
-    { name: 'Gemini', runner: () => callGemini(system, messages) },
+    { name: 'Gemini', runner: () => callGemini(system, messages, maxOutputTokens) },
     { name: 'OpenAI', runner: () => callOpenAI(system, messages, maxOutputTokens) },
     { name: 'Groq', runner: () => callGrok(system, messages, maxOutputTokens) },
     { name: 'DeepSeek', runner: () => callDeepSeek(system, messages, maxOutputTokens) },
@@ -41,21 +41,32 @@ function isConfigured(provider: string): boolean {
   switch (provider) {
     case 'Gemini': return Boolean(process.env.GEMINI_API_KEY);
     case 'OpenAI': return Boolean(process.env.OPENAI_API_KEY);
-    case 'Groq': return Boolean(process.env.GROK_API_KEY);
+    // Groq (api.groq.com), not xAI/Grok (api.x.ai) — different vendors,
+    // different key formats. GROK_API_KEY stays as a fallback for existing
+    // deployments; GROQ_API_KEY is the correct name for this endpoint.
+    case 'Groq': return Boolean(process.env.GROQ_API_KEY || process.env.GROK_API_KEY);
     case 'DeepSeek': return Boolean(process.env.DEEPSEEK_API_KEY);
     default: return false;
   }
 }
 
+// Per-message cap. The caller composes the final user turn as
+// `<context note> + <user text> + <task instruction>`; truncating that whole
+// string at 2000 chars silently cut the TASK INSTRUCTION off the end whenever
+// the user's own message was long, leaving the model with data and a question
+// but no output contract. The cap is generous enough to hold the composed
+// turn, and the per-message user input is already limited upstream.
+const MAX_MESSAGE_CHARS = 6000;
+
 function buildMessages(system: string, messages: ChatMessage[]) {
   const history = messages.slice(-10).map(m => ({
     role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-    content: m.content.slice(0, 2000),
+    content: m.content.slice(0, MAX_MESSAGE_CHARS),
   }));
   return [{ role: 'system' as const, content: system }, ...history];
 }
 
-async function callGemini(system: string, messages: ChatMessage[]): Promise<string | null> {
+async function callGemini(system: string, messages: ChatMessage[], maxOutputTokens: number): Promise<string | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   try {
@@ -63,9 +74,16 @@ async function callGemini(system: string, messages: ChatMessage[]): Promise<stri
     const conversation = buildMessages(system, messages)
       .map(m => `${m.role.toUpperCase()}: ${m.content}`)
       .join('\n\n');
+    // Gemini is FIRST in the fallback chain, and was the only provider here
+    // with neither an output cap nor a timeout — so a hung or runaway call
+    // blocked the whole turn and billed without limit.
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: conversation,
+      config: {
+        maxOutputTokens,
+        abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      },
     });
     return response.text ?? null;
   } catch {
@@ -91,7 +109,7 @@ async function callOpenAI(system: string, messages: ChatMessage[], maxOutputToke
 }
 
 async function callGrok(system: string, messages: ChatMessage[], maxOutputTokens: number): Promise<string | null> {
-  const apiKey = process.env.GROK_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY || process.env.GROK_API_KEY;
   if (!apiKey) return null;
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {

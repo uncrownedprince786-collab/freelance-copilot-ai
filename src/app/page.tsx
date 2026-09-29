@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated, isAdmin, logout, trackActivity } from '@/lib/auth';
 import { AdminLoginModal } from '@/components/AdminLoginModal';
@@ -8,54 +8,178 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { Logo } from '@/components/Logo';
 import { IconTrend, IconShield, IconMapPin } from '@/components/icons';
 import { timeAgo } from '@/lib/format';
-import { compareOpportunities } from '@/lib/opportunityRanking';
 
-const FILTERS_KEY = 'lh_jobs_filters';
+/**
+ * Leads — the lead-intelligence dashboard.
+ *
+ * The three rules this screen exists to keep:
+ *
+ * 1. **Latest and Recommended never blend.** Latest is the source's posting
+ *    time and nothing else. Recommended is the lead score. The switch is a
+ *    tablist, the active view is stated in words above the results, and the
+ *    ordering is done in SQL by /api/jobs so the client cannot re-sort one
+ *    into the other.
+ *
+ * 2. **No number is shown without what it means.** A lead score always
+ *    carries its reasons and risks (expandable, never hidden). A proposal
+ *    count is rendered through competition.label, which says WHEN it was
+ *    captured, because it is a snapshot taken shortly after the listing was
+ *    found and is never refreshed.
+ *
+ * 3. **No filter the data cannot back.** paymentVerified is false on every
+ *    stored row and clientName is empty on every stored row, so neither is
+ *    offered as a filter or asserted as a badge.
+ *
+ * Filtering, ordering and paging are all server-side. The previous version
+ * pulled the entire table over cursor pagination and filtered in the browser.
+ */
 
-type PlatformScope = 'all' | 'Upwork' | 'Freelancer';
-type SortKey = 'score' | 'recommended' | 'date' | 'competition' | 'budget';
-type OpportunityKey = 'all' | 'recommended' | 'actFast';
+const FILTERS_KEY = 'lh_leads_filters_v2';
+const PER_PAGE = 24;
 
-interface FilterState {
-  platform: PlatformScope;
-  sortBy: SortKey;
-  jobTypeFilter: 'all' | 'fixed' | 'hourly';
-  opportunityFilter: OpportunityKey;
-  countryFilter: string;
-  connectionFilter: string;
-  budgetFilter: string;
-  searchQuery: string;
-}
+type View = 'latest' | 'recommended';
+type PlatformScope = 'all' | string;
 
-const DEFAULT_FILTERS: FilterState = {
-  platform: 'Freelancer',
-  sortBy: 'score',
-  jobTypeFilter: 'all',
-  opportunityFilter: 'all',
-  countryFilter: 'all',
-  connectionFilter: 'all',
-  budgetFilter: 'all',
-  searchQuery: '',
+const LEAD_BANDS = ['high', 'promising', 'moderate', 'low', 'insufficient_data'] as const;
+const AUTH_STATUSES = ['supported', 'uncertain', 'suspicious', 'stale', 'rejected', 'verified'] as const;
+const FRESHNESS_STATES = ['just_posted', 'fresh', 'active', 'aging', 'stale', 'expired', 'unknown'] as const;
+const BUDGET_TYPES = ['fixed', 'hourly'] as const;
+const COMPETITION_BUCKETS = ['low', 'medium', 'high', 'unpublished'] as const;
+
+type LeadBand = (typeof LEAD_BANDS)[number];
+type AuthStatus = (typeof AUTH_STATUSES)[number];
+type FreshnessState = (typeof FRESHNESS_STATES)[number];
+type BudgetType = (typeof BUDGET_TYPES)[number];
+type CompetitionBucket = (typeof COMPETITION_BUCKETS)[number];
+
+const LEAD_BAND_LABEL: Record<string, string> = {
+  high: 'High',
+  promising: 'Promising',
+  moderate: 'Moderate',
+  low: 'Low',
+  insufficient_data: 'Not scored',
 };
 
-function loadFilters(): FilterState {
-  if (typeof window === 'undefined') return DEFAULT_FILTERS;
-  try {
-    const raw = sessionStorage.getItem(FILTERS_KEY);
-    if (!raw) return DEFAULT_FILTERS;
-    const parsed = JSON.parse(raw) as Partial<FilterState>;
-    const merged = { ...DEFAULT_FILTERS, ...parsed };
-    // Coerce any stale stored value to a valid platform scope.
-    if (merged.platform !== 'Upwork' && merged.platform !== 'Freelancer') merged.platform = DEFAULT_FILTERS.platform;
-    return merged;
-  } catch {
-    return DEFAULT_FILTERS;
-  }
+const LEAD_BAND_COLOR: Record<string, string> = {
+  high: '#15803d',
+  promising: '#1d4ed8',
+  moderate: '#b45309',
+  low: '#64748b',
+  insufficient_data: '#64748b',
+};
+
+const AUTH_LABEL: Record<string, string> = {
+  verified: 'Re-checked at source',
+  supported: 'Corroborated',
+  uncertain: 'Unconfirmed',
+  suspicious: 'Flagged',
+  stale: 'Stale',
+  rejected: 'Rejected',
+};
+
+/** What each authenticity status actually means, in the UI's own words. No
+ *  status claims the listing was re-fetched unless it was — and this system
+ *  never re-fetches, so `verified` is unreachable by design. */
+const AUTH_MEANING: Record<string, string> = {
+  verified: 'The source listing was re-fetched and confirmed.',
+  supported: 'Two or more independent details corroborate this listing.',
+  uncertain: 'Nothing contradicts this listing, but little corroborates it either.',
+  suspicious: 'Something in the listing text warrants a closer look before you bid.',
+  stale: 'The posting time is old enough that the listing may no longer be open.',
+  rejected: 'This listing failed a basic coherence check.',
+};
+
+const AUTH_COLOR: Record<string, string> = {
+  verified: '#15803d',
+  supported: '#15803d',
+  uncertain: '#64748b',
+  suspicious: '#b91c1c',
+  stale: '#b45309',
+  rejected: '#b91c1c',
+};
+
+const FRESHNESS_LABEL: Record<string, string> = {
+  just_posted: 'Just posted',
+  fresh: 'Under 6 hours',
+  active: 'Under a day',
+  aging: ' 1–3 days',
+  stale: '3–7 days',
+  expired: 'Over 7 days',
+  unknown: 'No posting time',
+};
+
+const BUDGET_TYPE_LABEL: Record<string, string> = {
+  fixed: 'Fixed price',
+  hourly: 'Hourly',
+};
+
+const COMPETITION_LABEL: Record<string, string> = {
+  low: '0–5 when checked',
+  medium: '6–20 when checked',
+  high: 'Over 20 when checked',
+  unpublished: 'No count published',
+};
+
+const DUPLICATE_LABEL: Record<string, string> = {
+  canonical: 'Primary of a group',
+  duplicate: 'Repeat of another listing',
+  possible_duplicate: 'Possibly a repeat',
+  independent: '',
+  unknown: '',
+};
+
+/** Authenticity signals and warnings are stored as reason codes. They are
+ *  translated here rather than shown raw; an unknown code de-snake-cases so a
+ *  new code never renders as machine output. */
+const AUTH_CODE_LABEL: Record<string, string> = {
+  resolvable_url: 'The listing URL is well-formed and reachable in shape',
+  source_native_id: 'Carries the source’s own job id',
+  coherent_posting_time: 'Posting time is coherent',
+  substantive_description: 'Description has real substance',
+  stated_budget: 'A budget is stated',
+  competition_data: 'The source published a proposal count',
+  skills_listed: 'Skills are listed',
+  client_spend: 'Client spend history is published',
+  client_rating: 'A client rating is published',
+  client_history: 'The client’s posting history is published',
+  missing_title: 'No title',
+  missing_description: 'No description',
+  unusable_url: 'The listing URL is not usable',
+  no_source_id: 'The source published no job id for this listing',
+  no_posting_time: 'The source published no posting time',
+  future_posting_time: 'Posting time is in the future',
+  stale_posting: 'Posted long enough ago that it may be closed',
+  short_description: 'Very short description',
+  offsite_contact_request: 'Asks you to make contact off-platform',
+  unstated_budget: 'No budget stated',
+  proposal_count_at_source_cap: 'Proposal count sits at the source’s display cap',
+  no_competition_data: 'No proposal count published',
+  no_client_data_published: 'This source publishes no client information',
+  payment_verification_not_published: 'The source did not publish payment verification either way',
+};
+
+function codeLabel(code: string): string {
+  const known = AUTH_CODE_LABEL[code];
+  if (known) return known;
+  const words = code.replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-function saveFilters(f: FilterState) {
-  if (typeof window === 'undefined') return;
-  try { sessionStorage.setItem(FILTERS_KEY, JSON.stringify(f)); } catch { /* quota/non-window */ }
+const PLATFORM_COLORS: Record<string, string> = {
+  Upwork: '#14a800',
+  Freelancer: '#29b2fe',
+  RemoteOK: '#ff6b35',
+  'Remote OK': '#ff6b35',
+  WeWorkRemotely: '#3b82f6',
+  Remotive: '#7c3aed',
+};
+
+interface CompetitionView {
+  count: number | null;
+  observedAt: string | null;
+  observationAgeHours: number | null;
+  outdated: boolean;
+  label: string;
 }
 
 interface Job {
@@ -66,199 +190,172 @@ interface Job {
   platform: string;
   budget: string;
   budgetType?: string;
-  score: number;
   viewed: boolean;
   applied: boolean;
   postedAt: string;
-  isNew?: boolean;
-  company?: string;
-  location?: string;
   country?: string;
-  clientName?: string;
-  clientSpend?: string;
-  clientReviews?: string;
   connections?: number;
-  proposalCount?: number | null;
-  category?: string;
-  opportunityReason?: string;
   skills?: string[];
   experienceLevel?: string;
   duration?: string;
-  clientKey?: string | null;
-  repeatClient?: boolean;
-  repeatClientCount?: number;
-  actFast?: boolean;
+
+  leadScore: number | null;
+  leadBand: string;
+  leadReasons: string[];
+  leadRisks: string[];
+  authenticityStatus: string;
+  authenticitySignals: string[];
+  authenticityWarnings: string[];
+  duplicateStatus: string;
+  duplicateClusterId: string | null;
+  canonicalJobId: string | null;
+  canonicalReason: string | null;
+  clusterSize: number | null;
+  freshnessState: string;
+  ageLabel: string;
+  competition: CompetitionView;
 }
 
-const PLATFORM_COLORS: Record<string, string> = {
-  Upwork: '#14a800',
-  Freelancer: '#29b2fe',
-  RemoteOK: '#ff6b35',
-  'Remote OK': '#ff6b35',
-  WeWorkRemotely: '#3b82f6',
-  Remotive: '#8b5cf6',
+interface Facets {
+  leadBand: Record<string, number>;
+  authenticity: Record<string, number>;
+  platform: Record<string, number>;
+}
+
+interface FeedResponse {
+  view: View;
+  jobs: Job[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  facets?: Facets;
+  generatedAt: string;
+  error?: string;
+}
+
+interface FilterState {
+  platform: PlatformScope;
+  leadBand: LeadBand[];
+  authenticity: AuthStatus[];
+  freshness: FreshnessState[];
+  budgetType: BudgetType[];
+  competition: CompetitionBucket[];
+  skills: string[];
+  collapseDuplicates: boolean;
+  q: string;
+}
+
+const DEFAULT_FILTERS: FilterState = {
+  platform: 'all',
+  leadBand: [],
+  authenticity: [],
+  freshness: [],
+  budgetType: [],
+  competition: [],
+  skills: [],
+  collapseDuplicates: false,
+  q: '',
 };
 
-function getScoreColor(score: number) {
-  if (score >= 70) return '#10b981';
-  if (score >= 50) return '#f59e0b';
-  return '#ef4444';
+function sanitiseList<T extends string>(value: unknown, allowed: readonly T[]): T[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v): v is T => typeof v === 'string' && (allowed as readonly string[]).includes(v));
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  High: '#10b981',
-  Good: '#3b82f6',
-  Review: '#f59e0b',
-  Skip: '#ef4444',
-};
-
-// Normalized competition value for ranking: known counts sort ascending;
-// missing/unknown proposal data is sent to the very bottom (never treated as 0).
-function compValue(j: Job): number {
-  const n = j.proposalCount;
-  return typeof n === 'number' ? n : Number.POSITIVE_INFINITY;
-}
-function postedTimeOf(j: Job): number {
-  return new Date(j.postedAt || 0).getTime();
-}
-function budgetNumber(s: string): number {
-  const m = s.match(/\$?([\d,]+)/);
-  return m ? parseInt(m[1].replace(',', ''), 10) : 0;
-}
-
-// A derived, non-hardcoded budget range. Label is also used as the stable key
-// for the selected filter, so it must be unique per bucket.
-interface BudgetBucket {
-  label: string;
-  min: number;
-  max: number;
-  inclusiveMax: boolean;
-}
-
-function fmtMoney(n: number): string {
-  if (n >= 1000) return (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k';
-  return String(Math.round(n));
-}
-
-// Build budget ranges purely from the numeric budgets actually present in the
-// current scope (quantile edges), so no threshold is hardcoded and no empty
-// bucket is ever produced.
-function buildBudgetBuckets(vals: number[]): BudgetBucket[] {
-  const v = vals.filter(n => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
-  if (v.length === 0) return [];
-  if (v.length === 1) return [{ label: `$${fmtMoney(v[0])}`, min: v[0], max: v[0], inclusiveMax: true }];
-  const q = (p: number) => v[Math.min(v.length - 1, Math.max(0, Math.floor(p * (v.length - 1))))];
-  const edges = [v[0], q(0.25), q(0.5), q(0.75), v[v.length - 1]];
-  const buckets: BudgetBucket[] = [];
-  for (let i = 0; i < edges.length - 1; i++) {
-    const lo = edges[i];
-    const hi = edges[i + 1];
-    const last = i === edges.length - 2;
-    const members = v.filter(n => n >= lo && (last ? n <= hi : n < hi));
-    if (members.length === 0) continue;
-    const mn = members[0];
-    const mx = members[members.length - 1];
-    buckets.push({
-      label: mn === mx ? `$${fmtMoney(mn)}` : `$${fmtMoney(mn)}–$${fmtMoney(mx)}`,
-      min: lo,
-      max: hi,
-      inclusiveMax: last,
-    });
+function loadFilters(): FilterState {
+  if (typeof window === 'undefined') return DEFAULT_FILTERS;
+  try {
+    const raw = sessionStorage.getItem(FILTERS_KEY);
+    if (!raw) return DEFAULT_FILTERS;
+    const p = JSON.parse(raw) as Partial<FilterState>;
+    return {
+      platform: typeof p.platform === 'string' && p.platform.length <= 40 ? p.platform : 'all',
+      leadBand: sanitiseList(p.leadBand, LEAD_BANDS),
+      authenticity: sanitiseList(p.authenticity, AUTH_STATUSES),
+      freshness: sanitiseList(p.freshness, FRESHNESS_STATES),
+      budgetType: sanitiseList(p.budgetType, BUDGET_TYPES),
+      competition: sanitiseList(p.competition, COMPETITION_BUCKETS),
+      skills: Array.isArray(p.skills) ? p.skills.filter(s => typeof s === 'string').slice(0, 6) : [],
+      collapseDuplicates: p.collapseDuplicates === true,
+      q: typeof p.q === 'string' ? p.q.slice(0, 200) : '',
+    };
+  } catch {
+    return DEFAULT_FILTERS;
   }
-  return buckets;
+}
+
+function saveFilters(f: FilterState) {
+  if (typeof window === 'undefined') return;
+  try { sessionStorage.setItem(FILTERS_KEY, JSON.stringify(f)); } catch { /* quota/non-window */ }
+}
+
+function loadView(): View {
+  if (typeof window === 'undefined') return 'recommended';
+  return sessionStorage.getItem('lh_leads_view') === 'latest' ? 'latest' : 'recommended';
+}
+
+function filtersActive(f: FilterState): boolean {
+  return f.platform !== 'all'
+    || f.leadBand.length > 0
+    || f.authenticity.length > 0
+    || f.freshness.length > 0
+    || f.budgetType.length > 0
+    || f.competition.length > 0
+    || f.skills.length > 0
+    || f.collapseDuplicates
+    || f.q.trim() !== '';
+}
+
+function buildQuery(view: View, f: FilterState, page: number): string {
+  const p = new URLSearchParams();
+  p.set('view', view);
+  p.set('limit', String(PER_PAGE));
+  p.set('offset', String((page - 1) * PER_PAGE));
+  p.set('facets', '1');
+  if (f.platform !== 'all') p.set('platform', f.platform);
+  if (f.q.trim()) p.set('q', f.q.trim().slice(0, 200));
+  if (f.leadBand.length) p.set('leadBand', f.leadBand.join(','));
+  if (f.authenticity.length) p.set('authenticity', f.authenticity.join(','));
+  if (f.freshness.length) p.set('freshness', f.freshness.join(','));
+  if (f.budgetType.length) p.set('budgetType', f.budgetType.join(','));
+  if (f.competition.length) p.set('competition', f.competition.join(','));
+  if (f.skills.length) p.set('skills', f.skills.join(','));
+  if (f.collapseDuplicates) p.set('duplicates', 'collapse');
+  return p.toString();
+}
+
+function toggle<T>(list: T[], value: T): T[] {
+  return list.includes(value) ? list.filter(v => v !== value) : [...list, value];
 }
 
 /**
- * Default "Recommended" ranking — shared with the jobs feed and the AI agent
- * (see src/lib/opportunityRanking.ts). Freshness-first: freshest jobs lead,
- * then within comparable freshness lower known competition, then the existing
- * opportunity signals. A confirmed 0 proposals is a real low-competition
- * signal; unknown proposal counts are NOT treated as 0 and go last.
+ * Presence heartbeat interval.
+ *
+ * Neon Free scales the database to zero after 5 minutes of inactivity and
+ * that timeout cannot be disabled, so a 5-minute heartbeat was the worst
+ * possible value: every beat landed exactly as the database was about to
+ * suspend, and a single open tab kept it awake indefinitely. The free plan
+ * allows 100 CU-hours per month; one tab left open for a working day at
+ * 1 CU is roughly 240 CU-hours a month on its own.
+ *
+ * 20 minutes leaves the database suspended for three quarters of the time
+ * even with a tab open, and the beat is additionally gated on real user
+ * interaction below — an open-but-idle tab stops beating altogether.
+ *
+ * /api/sessions/track's "Active" threshold must stay above this.
  */
-function recommendedComparator(a: Job, b: Job): number {
-  return compareOpportunities(a, b);
-}
+const HEARTBEAT_MS = 20 * 60_000;
 
-/**
- * Explicit "Lowest competition" sort — proposals-first on purpose: known counts
- * ascending (unknown last, never treated as 0), then score, then freshness,
- * then the remaining signals. This is the user choosing competition over
- * freshness; the default Recommended ranking stays freshness-first.
- */
-function competitionComparator(a: Job, b: Job): number {
-  const ca = compValue(a), cb = compValue(b);
-  if (ca !== cb) return ca - cb;
-  if (b.score !== a.score) return b.score - a.score;
-  const ta = postedTimeOf(a), tb = postedTimeOf(b);
-  if (tb !== ta) return tb - ta;
-  const fa = a.actFast ? 1 : 0, fb = b.actFast ? 1 : 0;
-  if (fb !== fa) return fb - fa;
-  const ba = budgetNumber(a.budget), bb = budgetNumber(b.budget);
-  if (bb !== ba) return bb - ba;
-  const ra = a.repeatClient ? 1 : 0, rb = b.repeatClient ? 1 : 0;
-  if (rb !== ra) return rb - ra;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-}
-
-/**
- * Single source of truth for filtering. Applies every active filter to a job.
- * `except` lets the faceted-count pass ignore one dimension so option counts
- * reflect "all other filters applied". Platform scope is applied separately
- * (the platform selector defines the dataset, it is not a facet).
- */
-function inBudgetBucket(job: Job, b: BudgetBucket | undefined): boolean {
-  if (!b) return false;
-  const n = budgetNumber(job.budget);
-  return b.inclusiveMax ? n >= b.min && n <= b.max : n >= b.min && n < b.max;
-}
-
-/**
- * Simple keyword search over the real job feed. Every whitespace-separated
- * token must appear in the listing's title, description, skills, category,
- * client name, or country (case-insensitive). Multi-word phrases match as a
- * whole. This runs client-side over the already-fetched feed — no extra API,
- * no fabricated results.
- */
-function matchesSearchQuery(job: Job, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  const hay = `${job.title || ''} ${job.description || ''} ${(job.skills || []).join(' ')} ${job.category || ''} ${job.clientName || ''} ${job.country || ''}`.toLowerCase();
-  return q.split(/\s+/).filter(Boolean).every(t => hay.includes(t));
-}
-
-function passes(f: FilterState, job: Job, except?: string, budgetBuckets?: BudgetBucket[]): boolean {
-  if (except !== 'search') {
-    if (f.searchQuery && !matchesSearchQuery(job, f.searchQuery)) return false;
-  }
-  if (except !== 'jobType') {
-    if (f.jobTypeFilter !== 'all') {
-      const bt = (job.budgetType || '').toLowerCase();
-      if (f.jobTypeFilter === 'fixed' && !bt.includes('fixed')) return false;
-      if (f.jobTypeFilter === 'hourly' && !bt.includes('hourly')) return false;
-    }
-  }
-  if (except !== 'opportunity') {
-    if (f.opportunityFilter === 'recommended' && !(job.score >= 70)) return false;
-    if (f.opportunityFilter === 'actFast' && !job.actFast) return false;
-  }
-  if (except !== 'country') {
-    if (f.countryFilter !== 'all' && job.country !== f.countryFilter) return false;
-  }
-  if (except !== 'connection') {
-    if (f.connectionFilter !== 'all' && (job.connections ?? 0) !== Number(f.connectionFilter)) return false;
-  }
-  if (except !== 'budget') {
-    if (f.budgetFilter !== 'all') {
-      const b = budgetBuckets?.find(x => x.label === f.budgetFilter);
-      if (b && !inBudgetBucket(job, b)) return false;
-    }
-  }
-  return true;
-}
+// Backoff for recovering from an unreachable feed. A fixed retry re-ran the
+// whole fetch forever from every open tab — including while the database was
+// down, which is exactly when hammering it helps least.
+const RECOVERY_MIN_MS = 2 * 60_000;
+const RECOVERY_MAX_MS = 30 * 60_000;
 
 export default function Home() {
   return (
-    <React.Suspense fallback={<div style={styles.splashLoad}>Loading…</div>}>
+    <React.Suspense fallback={<FullPageLoading />}>
       <HomeContent />
     </React.Suspense>
   );
@@ -267,13 +364,32 @@ export default function Home() {
 function HomeContent() {
   const router = useRouter();
 
+  const [view, setView] = useState<View>(() => loadView());
+  const [filters, setFilters] = useState<FilterState>(() => loadFilters());
+  const [page, setPage] = useState(1);
+
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [newCount, setNewCount] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [facets, setFacets] = useState<Facets | null>(null);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+
+  // Three distinct conditions, never collapsed into one another: the first
+  // load has not finished, a request failed, or the request succeeded and
+  // returned nothing.
+  const [initialLoad, setInitialLoad] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<{ message: string; retryable: boolean } | null>(null);
 
   const [authed, setAuthed] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [pendingJob, setPendingJob] = useState<Job | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [skillDraft, setSkillDraft] = useState('');
+  const [searchDraft, setSearchDraft] = useState<string>(() => loadFilters().q);
+
+  const liveRegionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -282,233 +398,157 @@ function HomeContent() {
     }
   }, []);
 
-  // Session heartbeat — keeps the session marked active & records presence.
+  // Session heartbeat. Skipped while the tab is hidden, and skipped again
+  // unless the person actually did something since the last beat — presence
+  // is worth one write when someone is working, and nothing at all when a
+  // tab has simply been left open. Each beat wakes a database that would
+  // otherwise be suspended, so an ungated timer is a standing compute cost
+  // for no product value.
   useEffect(() => {
     if (!authed) return;
-    const idle = setInterval(() => trackActivity('heartbeat'), 90_000);
-    return () => clearInterval(idle);
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    // The page load itself counts, so a fresh visit registers immediately.
+    let interacted = true;
+    const mark = () => { interacted = true; };
+    window.addEventListener('pointerdown', mark, { passive: true });
+    window.addEventListener('keydown', mark, { passive: true });
+    document.addEventListener('visibilitychange', mark);
+    const beat = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (!interacted) return;
+      interacted = false;
+      trackActivity('heartbeat');
+    };
+    const idle = setInterval(beat, HEARTBEAT_MS);
+    return () => {
+      clearInterval(idle);
+      window.removeEventListener('pointerdown', mark);
+      window.removeEventListener('keydown', mark);
+      document.removeEventListener('visibilitychange', mark);
+    };
   }, [authed]);
 
-  // Filters — restored from per-tab sessionStorage; a fresh session defaults
-  // to "all platforms" with the Recommended sort.
-  const [platform, setPlatform] = useState<PlatformScope>(() => loadFilters().platform);
-  const [sortBy, setSortBy] = useState<SortKey>(() => loadFilters().sortBy || 'score');
-  const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'fixed' | 'hourly'>(() => loadFilters().jobTypeFilter);
-  const [opportunityFilter, setOpportunityFilter] = useState<OpportunityKey>(() => loadFilters().opportunityFilter);
-  const [countryFilter, setCountryFilter] = useState<string>(() => loadFilters().countryFilter || 'all');
-  const [connectionFilter, setConnectionFilter] = useState<string>(() => loadFilters().connectionFilter || 'all');
-  const [budgetFilter, setBudgetFilter] = useState<string>(() => loadFilters().budgetFilter || 'all');
-  const [searchQuery, setSearchQuery] = useState<string>(() => loadFilters().searchQuery || '');
-  const [quickFilter, setQuickFilter] = useState<'all' | 'new' | 'hot' | 'applied'>('all');
-  const [page, setPage] = useState(1);
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
-
-  // Persist filter state across navigation/refresh (per-tab sessionStorage).
+  useEffect(() => { saveFilters(filters); }, [filters]);
   useEffect(() => {
-    saveFilters({ platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter, searchQuery });
-  }, [platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter, searchQuery]);
+    if (typeof window !== 'undefined') sessionStorage.setItem('lh_leads_view', view);
+  }, [view]);
 
-  const PER_PAGE = 24;
+  // Debounce the search box so typing does not issue a query per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setFilters(prev => (prev.q === searchDraft ? prev : { ...prev, q: searchDraft }));
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [searchDraft]);
 
-  // Both platforms we support, always offered as selectors even if the current
-  // dataset is thin for one of them (so the structure is predictable).
-  const PLATFORM_OPTIONS: PlatformScope[] = ['Upwork', 'Freelancer'];
+  const query = useMemo(() => buildQuery(view, filters, page), [view, filters, page]);
 
-  // Platform scope = the dataset the filters operate on.
-  const scopeJobs = useMemo(
-    () => (platform === 'all' ? jobs : jobs.filter(j => j.platform === platform)),
-    [jobs, platform]
-  );
-
-  // Dynamic Country options — only real countries present in the current scope.
-  const countryOptions = useMemo(() => {
-    const m = new Map<string, number>();
-    scopeJobs.forEach(j => { if (j.country) m.set(j.country, (m.get(j.country) || 0) + 1); });
-    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
-  }, [scopeJobs]);
-
-  // Dynamic Connection options — distinct connects-cost values present in scope.
-  const connectionOptions = useMemo(() => {
-    const m = new Map<number, number>();
-    scopeJobs.forEach(j => {
-      const c = j.connections ?? 0;
-      if (c > 0) m.set(c, (m.get(c) || 0) + 1);
-    });
-    return [...m.keys()].sort((a, b) => a - b);
-  }, [scopeJobs]);
-
-  // Dynamic Budget ranges — derived from the actual numeric budgets in scope.
-  const budgetBuckets = useMemo(
-    () => buildBudgetBuckets(scopeJobs.map(j => budgetNumber(j.budget))),
-    [scopeJobs]
-  );
-
-  const hasFixed = useMemo(() => scopeJobs.some(j => (j.budgetType || '').toLowerCase().includes('fixed')), [scopeJobs]);
-  const hasHourly = useMemo(() => scopeJobs.some(j => (j.budgetType || '').toLowerCase().includes('hourly')), [scopeJobs]);
-
-  // Bundle the active filters so the pure filter/count helpers can read them.
-  const f = useMemo<FilterState>(
-    () => ({ platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter, searchQuery }),
-    [platform, sortBy, jobTypeFilter, opportunityFilter, countryFilter, connectionFilter, budgetFilter, searchQuery]
-  );
-
-  // Stats are always scoped to the current dataset (the selected platform).
-  // "new" only counts genuinely-new listings (posted within the last 24 h,
-  // as derived by the server feed), never merely-unviewed ones.
-  const stats = useMemo(() => ({
-    total: scopeJobs.length,
-    new: scopeJobs.filter(j => j.isNew).length,
-    hot: scopeJobs.filter(j => j.score >= 70).length,
-    applied: scopeJobs.filter(j => j.applied).length,
-  }), [scopeJobs]);
-
-  // Faceted counts — every option count is recomputed from jobs that match all
-  // OTHER active filters, so counts stay honest as the user changes anything.
-  const facets = useMemo(() => {
-    const countExcept = (except: string, pred: (j: Job) => boolean) =>
-      scopeJobs.filter(j => passes(f, j, except, budgetBuckets) && pred(j)).length;
-
-    const opportunity = {
-      all: countExcept('opportunity', () => true),
-      recommended: countExcept('opportunity', j => j.score >= 70),
-      actFast: countExcept('opportunity', j => !!j.actFast),
-    };
-    const jobType = {
-      fixed: hasFixed ? countExcept('jobType', j => (j.budgetType || '').toLowerCase().includes('fixed')) : 0,
-      hourly: hasHourly ? countExcept('jobType', j => (j.budgetType || '').toLowerCase().includes('hourly')) : 0,
-    };
-    const country: Record<string, number> = {};
-    countryOptions.forEach(c => { country[c] = countExcept('country', j => j.country === c); });
-    const connection: Record<string, number> = {};
-    connectionOptions.forEach(c => { connection[String(c)] = countExcept('connection', j => (j.connections ?? 0) === c); });
-    const budget: Record<string, number> = {};
-    budgetBuckets.forEach(b => { budget[b.label] = countExcept('budget', j => inBudgetBucket(j, b)); });
-
-    return { opportunity, jobType, country, connection, budget };
-  }, [scopeJobs, f, countryOptions, connectionOptions, budgetBuckets, hasFixed, hasHourly]);
-
-  const filteredJobs = useMemo(() => {
-    let result = scopeJobs.filter(j => passes(f, j, undefined, budgetBuckets));
-
-    // Quick filter from stat card clicks
-    if (quickFilter === 'new') result = result.filter(j => j.isNew);
-    else if (quickFilter === 'hot') result = result.filter(j => j.score >= 70);
-    else if (quickFilter === 'applied') result = result.filter(j => j.applied);
-
-    if (sortBy === 'score') {
-      result.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    } else if (sortBy === 'recommended') {
-      result.sort(recommendedComparator);
-    } else if (sortBy === 'competition') {
-      result.sort(competitionComparator);
-    } else if (sortBy === 'date') result.sort((a, b) => postedTimeOf(b) - postedTimeOf(a));
-    else if (sortBy === 'budget') result.sort((a, b) => budgetNumber(b.budget) - budgetNumber(a.budget));
-
-    // Push applied jobs to the bottom so open opportunities lead (stable sort
-    // preserves the primary ranking among non-applied jobs).
-    result.sort((a, b) => {
-      if (a.applied && !b.applied) return 1;
-      if (!a.applied && b.applied) return -1;
-      return 0;
-    });
-    return result;
-  }, [scopeJobs, f, sortBy, budgetBuckets, quickFilter]);
-
-  const totalPages = Math.ceil(filteredJobs.length / PER_PAGE);
-  const paginatedJobs = useMemo(() => filteredJobs.slice((page - 1) * PER_PAGE, page * PER_PAGE), [filteredJobs, page]);
-
-  const goToPage = (p: number) => {
-    setPage(p);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const fetchJobs = useCallback(async (silent = false, plat?: PlatformScope) => {
-    if (!silent) setLoading(true);
+  const load = useCallback(async (qs: string, silent: boolean) => {
+    if (silent) setRefreshing(true);
     try {
-      const activePlatform = plat ?? platform;
-      // Fetch ALL pages via cursor pagination so every job is available
-      // for client-side filtering (score, platform, search, etc.).
-      const allJobs: Job[] = [];
-      let cursor: string | null = null;
-      do {
-        const params = new URLSearchParams();
-        if (activePlatform && activePlatform !== 'all') params.set('platform', activePlatform);
-        params.set('limit', '500');
-        if (cursor) params.set('cursor', cursor);
-        const res = await fetch(`/api/jobs?${params.toString()}`);
-        const json = await res.json();
-        const page: Job[] = Array.isArray(json) ? json : json.jobs ?? [];
-        allJobs.push(...page);
-        cursor = json.nextCursor ?? null;
-        // Safety: stop after 10 pages to avoid runaway loops
-        if (allJobs.length > 5000) break;
-      } while (cursor);
-      // Guests see NO server-persisted viewed/applied state — both are kept
-      // per-tab in sessionStorage so a guest's own history is private to the
-      // browsing session.
+      const res = await fetch(`/api/jobs?${qs}`);
+      const json = (await res.json().catch(() => null)) as FeedResponse | null;
+      if (!res.ok) {
+        // 400 means this client asked for something invalid — retrying will
+        // not fix it, and saying "we are retrying" would be a lie.
+        const retryable = res.status !== 400;
+        throw Object.assign(
+          new Error(json?.error || (retryable ? 'The job feed is unavailable right now.' : 'That filter combination was rejected.')),
+          { retryable },
+        );
+      }
+      const list = Array.isArray(json?.jobs) ? json!.jobs : [];
+      // Guests see no server-persisted viewed/applied state — both are kept
+      // per-tab so a guest's history stays private to the browsing session.
       const role = typeof window !== 'undefined' ? sessionStorage.getItem('lh_auth_role') : null;
       const isAdminUser = role === 'admin';
-      const guestApplied: Set<string> = new Set(
-        JSON.parse(typeof window !== 'undefined' ? (sessionStorage.getItem('guest_applied') || '[]') : '[]')
-      );
-      const guestViewed: Set<string> = new Set(
-        JSON.parse(typeof window !== 'undefined' ? (sessionStorage.getItem('guest_viewed') || '[]') : '[]')
-      );
-      const cleaned = allJobs.map(j => ({
+      let guestApplied = new Set<string>();
+      let guestViewed = new Set<string>();
+      if (!isAdminUser && typeof window !== 'undefined') {
+        try { guestApplied = new Set(JSON.parse(sessionStorage.getItem('guest_applied') || '[]')); } catch { /* ignore */ }
+        try { guestViewed = new Set(JSON.parse(sessionStorage.getItem('guest_viewed') || '[]')); } catch { /* ignore */ }
+      }
+      setJobs(list.map(j => ({
         ...j,
         applied: isAdminUser ? j.applied : guestApplied.has(j.id),
         viewed: isAdminUser ? j.viewed : guestViewed.has(j.id),
-      }));
-      setPage(1);
-      setJobs(cleaned);
-      setMaintenanceMode(cleaned.length === 0);
+      })));
+      setTotal(json?.total ?? 0);
+      setFacets(json?.facets ?? null);
+      setGeneratedAt(json?.generatedAt ?? null);
+      setError(null);
     } catch (err) {
-      console.error('Failed to fetch jobs', err);
+      // "The feed is down" and "the feed is empty" are different facts. The
+      // list is cleared rather than left showing results that no longer
+      // correspond to the request — stale rows under new filters read as
+      // fabricated data.
+      const retryable = (err as { retryable?: boolean })?.retryable !== false;
+      setJobs([]);
+      setTotal(0);
+      setError({ message: (err as Error).message || 'The job feed is unavailable right now.', retryable });
     } finally {
-      if (!silent) setLoading(false);
+      setInitialLoad(false);
+      setRefreshing(false);
     }
-  }, [platform]);
+  }, []);
 
-  useEffect(() => { void fetchJobs(); }, [fetchJobs]);
+  useEffect(() => { void load(query, true); }, [query, load]);
 
-  // Poll for recovery when in maintenance mode — auto-recovers once jobs
-  // become available in the database.
+  // Retry only what retrying can fix, and back off while doing it.
   useEffect(() => {
-    if (!maintenanceMode) return;
-    const id = setInterval(() => { void fetchJobs(true); }, 60_000);
-    return () => clearInterval(id);
-  }, [maintenanceMode, fetchJobs]);
+    if (!error?.retryable) return;
+    let delay = RECOVERY_MIN_MS;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      void load(query, true);
+      delay = Math.min(delay * 2, RECOVERY_MAX_MS);
+      timer = setTimeout(tick, delay);
+    };
+    timer = setTimeout(tick, delay);
+    return () => clearTimeout(timer);
+  }, [error, query, load]);
 
-  // Real freshness telemetry — when the last successful sync actually ran and
-  // the adaptive cadence derived from real posting activity.
+  // When the sources were last checked. This is the only freshness claim the
+  // page makes about the data as a whole, and it is never phrased as "live".
   useEffect(() => {
     fetch('/api/sync/status')
       .then(r => (r.ok ? r.json() : Promise.reject(new Error('bad status'))))
-      .then(d => {
-        if (d?.lastSyncedAt) setLastSyncedAt(d.lastSyncedAt);
-      })
-      .catch(() => { /* freshness is non-critical */ });
+      .then(d => { if (d?.lastSyncedAt) setLastSyncedAt(d.lastSyncedAt); })
+      .catch(() => { /* freshness telemetry is non-critical */ });
   }, []);
 
-  const handleSync = async () => {
-    try {
-      const res = await fetch('/api/sync?force=true', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-      const data = await res.json();
-      if (!res.ok) return;
-      if (data.newJobs > 0) {
-        setNewCount(data.newJobs);
-        trackActivity('sync', `${data.newJobs} new jobs`);
-        await fetchJobs();
-      }
-    } catch {
-      /* ignore */
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+  const anyFilter = filtersActive(filters);
+
+  const patch = useCallback((next: Partial<FilterState>) => {
+    setFilters(prev => ({ ...prev, ...next }));
+    setPage(1);
+  }, []);
+
+  const clearAll = useCallback(() => {
+    setFilters(DEFAULT_FILTERS);
+    setSearchDraft('');
+    setPage(1);
+  }, []);
+
+  const goToPage = (p: number) => {
+    setPage(Math.min(Math.max(1, p), totalPages));
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const changeView = (next: View) => {
+    if (next === view) return;
+    setView(next);
+    setPage(1);
+    if (liveRegionRef.current) {
+      liveRegionRef.current.textContent = next === 'latest'
+        ? 'Showing Latest — newest first, chronological only.'
+        : 'Showing Recommended — ranked by lead score.';
     }
   };
 
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [pendingJob, setPendingJob] = useState<Job | null>(null);
-
-  const handleJobClick = (job: Job) => {
+  const openJob = (job: Job) => {
     if (!isAuthenticated()) {
       setPendingJob(job);
       setShowAuthModal(true);
@@ -517,12 +557,12 @@ function HomeContent() {
     const role = typeof window !== 'undefined' ? sessionStorage.getItem('lh_auth_role') : null;
     if (role !== 'admin' && typeof window !== 'undefined') {
       try {
-        const guestViewed: string[] = JSON.parse(sessionStorage.getItem('guest_viewed') || '[]');
-        if (!guestViewed.includes(job.id)) {
-          guestViewed.push(job.id);
-          sessionStorage.setItem('guest_viewed', JSON.stringify(guestViewed));
+        const seen: string[] = JSON.parse(sessionStorage.getItem('guest_viewed') || '[]');
+        if (!seen.includes(job.id)) {
+          seen.push(job.id);
+          sessionStorage.setItem('guest_viewed', JSON.stringify(seen));
         }
-      } catch {/* ignore */}
+      } catch { /* ignore */ }
     }
     if (typeof window !== 'undefined') sessionStorage.setItem('selectedJob', JSON.stringify(job));
     trackActivity('view_job', job.title);
@@ -538,190 +578,44 @@ function HomeContent() {
       router.push(`/job/${pendingJob.id}`);
       setPendingJob(null);
     } else {
-      void fetchJobs();
+      void load(query, false);
     }
   };
 
-  // Switching platform clears every scope-dependent selection so no stale
-  // value leaks across platforms (skills/budget-type are platform-specific).
-  const changePlatform = (next: PlatformScope) => {
-    setPlatform(next);
-    setJobTypeFilter('all');
-    setOpportunityFilter('all');
-    setCountryFilter('all');
-    setConnectionFilter('all');
-    setBudgetFilter('all');
-    setPage(1);
+  const handleSync = async () => {
+    try {
+      const res = await fetch('/api/sync?force=true', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.newJobs > 0) {
+        trackActivity('sync', `${data.newJobs} new jobs`);
+        await load(query, true);
+      }
+    } catch { /* ignore */ }
   };
 
-  const clearAll = () => {
-    setPlatform(DEFAULT_FILTERS.platform);
-    setSortBy(DEFAULT_FILTERS.sortBy);
-    setJobTypeFilter('all');
-    setOpportunityFilter('all');
-    setCountryFilter('all');
-    setConnectionFilter('all');
-    setBudgetFilter('all');
-    setSearchQuery('');
-    setPage(1);
+  const toggleExpanded = (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
-  if (loading) {
-    return (
-      <div style={styles.splashLoad}>
-        <div style={styles.spinner} />
-        <p style={{ marginTop: 16, color: '#64748b', fontSize: 14 }}>Loading opportunities…</p>
-      </div>
-    );
-  }
+  const addSkill = () => {
+    const s = skillDraft.trim().slice(0, 40);
+    if (!s || filters.skills.includes(s) || filters.skills.length >= 6) return;
+    patch({ skills: [...filters.skills, s] });
+    setSkillDraft('');
+  };
 
-  // Maintenance Mode — only when the database is genuinely empty (zero usable
-  // jobs). Does NOT trigger on provider failures, sync errors, or empty filter
-  // results when jobs exist.
-  if (maintenanceMode && jobs.length === 0) {
-    return (
-      <div style={styles.page} className="lh-page">
-        <div style={styles.shell}>
-          <header style={styles.header}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <Logo size={44} />
-              <div>
-                <h1 style={styles.brand}>Lead Hunter</h1>
-                <p style={{ fontSize: 13, color: '#16a34a', fontWeight: 700, margin: '2px 0 0' }}>
-                  Stop scrolling. Start winning
-                </p>
-              </div>
-            </div>
-            <div style={styles.headerRight}>
-              <ThemeToggle />
-            </div>
-          </header>
+  const platformOptions = useMemo(() => {
+    const fromFacets = facets ? Object.keys(facets.platform) : [];
+    const known = ['Upwork', 'Freelancer'];
+    return [...new Set([...known, ...fromFacets])].sort();
+  }, [facets]);
 
-          {/* Hero status card */}
-          <div className="lh-surface" style={{
-            background: '#fff', border: '1px solid #e2e8f0',
-            borderRadius: 20, padding: '48px 32px', marginTop: 32,
-            boxShadow: '0 4px 24px rgba(15,23,42,0.06)',
-            textAlign: 'center', maxWidth: 600, marginLeft: 'auto', marginRight: 'auto',
-          }}>
-            {/* Animated pulse ring */}
-            <div style={{ position: 'relative', width: 72, height: 72, margin: '0 auto 28px' }}>
-              <div style={{
-                position: 'absolute', inset: 0, borderRadius: '50%',
-                background: '#dcfce7', animation: 'lhPulse 2s ease-in-out infinite',
-              }} />
-              <div style={{
-                position: 'absolute', inset: 8, borderRadius: '50%',
-                background: '#bbf7d0', animation: 'lhPulse 2s ease-in-out infinite 0.3s',
-              }} />
-              <div style={{
-                position: 'relative', width: 72, height: 72, borderRadius: '50%',
-                background: 'linear-gradient(135deg, #16a34a, #22c55e)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 4px 16px rgba(22,163,74,0.3)',
-              }}>
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 6v6l4 2" />
-                </svg>
-              </div>
-            </div>
-
-            <h2 className="lh-h" style={{ fontSize: 24, fontWeight: 800, margin: '0 0 10px', letterSpacing: '-0.02em' }}>
-              Setting Up Your Job Feed
-            </h2>
-            <p className="lh-body" style={{ fontSize: 15, margin: '0 0 28px', maxWidth: 440, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.65 }}>
-              We&rsquo;re connecting to live job sources and populating your feed with fresh opportunities. This usually takes just a few minutes.
-            </p>
-
-            {/* Live status indicator */}
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', gap: 10,
-              background: '#f0fdf4', border: '1px solid #bbf7d0',
-              borderRadius: 999, padding: '10px 20px', marginBottom: 32,
-            }}>
-              <span style={{
-                width: 8, height: 8, borderRadius: '50%', background: '#16a34a',
-                display: 'inline-block', animation: 'lhBlink 1.4s ease-in-out infinite',
-              }} />
-              <span className="lh-body" style={{ fontSize: 13, fontWeight: 600, color: '#15803d' }}>
-                Sync in progress &mdash; auto-recovers when jobs arrive
-              </span>
-            </div>
-
-            {/* Feature highlights */}
-            <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-              gap: 12, marginTop: 8,
-            }}>
-              {[
-                { icon: '🔍', label: 'Multi-Platform', sub: 'Upwork & Freelancer' },
-                { icon: '⚡', label: 'Real-Time', sub: 'Auto-refreshing feed' },
-                { icon: '🎯', label: 'Smart Ranked', sub: 'Best matches first' },
-              ].map((f) => (
-                <div key={f.label} className="lh-surface" style={{
-                  background: '#f8fafc', border: '1px solid #e2e8f0',
-                  borderRadius: 12, padding: '14px 12px', textAlign: 'center',
-                }}>
-                  <div style={{ fontSize: 22, marginBottom: 6 }}>{f.icon}</div>
-                  <div className="lh-h" style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>{f.label}</div>
-                  <div className="lh-muted" style={{ fontSize: 11.5 }}>{f.sub}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* What to expect */}
-          <div style={{
-            maxWidth: 600, marginLeft: 'auto', marginRight: 'auto',
-            marginTop: 24, padding: '0 8px',
-          }}>
-            <div className="lh-surface" style={{
-              background: '#fff', border: '1px solid #e2e8f0',
-              borderRadius: 14, padding: '16px 20px',
-              display: 'flex', alignItems: 'flex-start', gap: 12,
-              boxShadow: '0 1px 3px rgba(15,23,42,0.04)',
-            }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: 10, background: '#eff6ff',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2,
-              }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-                </svg>
-              </div>
-              <div>
-                <p className="lh-h" style={{ fontSize: 14, fontWeight: 700, margin: '0 0 4px' }}>
-                  No action needed
-                </p>
-                <p className="lh-body" style={{ fontSize: 13, margin: 0, lineHeight: 1.55, color: '#64748b' }}>
-                  This page auto-refreshes every 60 seconds. Once live jobs are found, the full feed will load automatically with filters, scores, and opportunity rankings ready to use.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <footer style={{
-            marginTop: 48, paddingTop: 24, borderTop: '1px solid #e2e8f0',
-            textAlign: 'center', fontSize: 13, lineHeight: 1.6,
-          }}>
-            <p className="lh-body" style={{ margin: 0, fontWeight: 600 }}>
-              Lead Hunter &bull; Developed by <strong className="lh-h">Abdul Raheem</strong> &bull; <a href="mailto:geeksxperts@gmail.com" style={{ color: '#2563eb', textDecoration: 'none' }}>geeksxperts@gmail.com</a>
-            </p>
-            <p className="lh-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
-              Stop scrolling. Start winning. &copy; {new Date().getFullYear()} All rights reserved.
-            </p>
-          </footer>
-        </div>
-      </div>
-    );
-  }
-
-  const anyFilterActive =
-    platform !== DEFAULT_FILTERS.platform || jobTypeFilter !== 'all' || opportunityFilter !== 'all' ||
-    countryFilter !== 'all' || connectionFilter !== 'all' || budgetFilter !== 'all' ||
-    searchQuery.trim() !== '' ||
-    sortBy !== 'score';
+  if (initialLoad) return <FullPageLoading />;
 
   return (
     <div style={styles.page} className="lh-page">
@@ -735,656 +629,746 @@ function HomeContent() {
 
         {/* ── HEADER ── */}
         <header style={styles.header}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
             <Logo size={44} />
-            <div>
+            <div style={{ minWidth: 0 }}>
               <h1 style={styles.brand}>Lead Hunter</h1>
-              <p style={{ fontSize: 13, color: '#16a34a', fontWeight: 700, margin: '2px 0 0' }}>
-                Stop scrolling. Start winning
-              </p>
+              <p className="lh-muted" style={styles.brandSub}>Freelance lead intelligence</p>
             </div>
           </div>
           <div style={styles.headerRight}>
             <ThemeToggle />
-            <button onClick={() => router.push('/trading')} style={styles.btnCron} className="lh-field">
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <IconTrend size={14} color="#fff" />
-                Market Trending
-              </span>
+            <button onClick={() => router.push('/trading')} style={styles.btnAccent} className="lh-field">
+              <span style={styles.btnInner}><IconTrend size={14} color="#fff" />Market Trending</span>
             </button>
-            <button onClick={() => router.push('/about')} style={styles.btnGhost} className="lh-field">
-              About
-            </button>
-
+            <button onClick={() => router.push('/about')} style={styles.btnGhost} className="lh-field">About</button>
             {adminMode && (
               <>
-                <button onClick={() => router.push('/cron-logs')} style={styles.btnCron} className="lh-field">
-                  Cron Logs
-                </button>
-                <button onClick={() => router.push('/admin/sessions')} style={{ ...styles.btnCron, background: '#1e3a8a', color: '#fff', borderColor: '#1e3a8a' }} className="lh-field">
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <IconShield size={14} color="#fff" />
-                    Sessions
-                  </span>
+                <button onClick={() => router.push('/cron-logs')} style={styles.btnGhost} className="lh-field">Cron Logs</button>
+                <button onClick={() => router.push('/admin/sessions')} style={styles.btnGhost} className="lh-field">
+                  <span style={styles.btnInner}><IconShield size={14} />Sessions</span>
                 </button>
               </>
             )}
             {authed && (
               <button
-                onClick={() => {
-                  logout();
-                  setAuthed(false);
-                  setAdminMode(false);
-                }}
-                style={{ ...styles.btnGhost, color: '#dc2626', borderColor: '#fca5a5' }}
+                onClick={() => { logout(); setAuthed(false); setAdminMode(false); }}
+                style={styles.btnGhost}
+                className="lh-field"
               >
-                Logout
+                <span style={{ color: '#ef4444', fontWeight: 700 }}>Logout</span>
               </button>
             )}
           </div>
         </header>
 
-        {/* ── NEW JOBS BANNER ── */}
-        {newCount > 0 && (
-          <div style={styles.banner}>
-            <span><strong>{newCount} new opportunities</strong> just fetched!</span>
-            <button onClick={() => { setNewCount(0); setSortBy('date'); setPage(1); }} style={styles.bannerBtn}>View New</button>
+        {/* ── PROVENANCE STRIP ──
+            Everything the page can honestly say about how current the data is,
+            in one place, so no individual card has to imply real time. */}
+        <div style={styles.provenance} className="lh-surface">
+          <div style={styles.provItem}>
+            <span className="lh-muted" style={styles.provKey}>Sources last checked</span>
+            <span className="lh-h" style={styles.provVal}>{lastSyncedAt ? timeAgo(lastSyncedAt) : 'Not recorded'}</span>
           </div>
-        )}
+          <div style={styles.provItem}>
+            <span className="lh-muted" style={styles.provKey}>This page read at</span>
+            <span className="lh-h" style={styles.provVal}>{generatedAt ? timeAgo(generatedAt) : '—'}</span>
+          </div>
+          <p className="lh-muted" style={styles.provNote}>
+            Nothing here is a live feed. Proposal counts are captured shortly after a listing is
+            found and are never refreshed, so each one is shown with the age of the reading.
+            Lead scores, authenticity and duplicate grouping are this system&rsquo;s own assessment,
+            not a claim made by the source.
+          </p>
+        </div>
 
-        {/* ── STATS (display only) ── */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span className="lh-h" style={{ fontSize: 13, fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                {platform === 'all' ? 'All Platforms' : platform} metrics
-              </span>
-            </div>
+        {/* ── VIEW SWITCH ── */}
+        <div style={styles.viewBlock}>
+          <div style={styles.tablist} role="tablist" aria-label="Feed ordering">
+            {(['latest', 'recommended'] as View[]).map(v => {
+              const active = view === v;
+              return (
+                <button
+                  key={v}
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => changeView(v)}
+                  className={active ? 'lh-active' : 'lh-field'}
+                  style={{
+                    ...styles.tab,
+                    background: active ? '#0f172a' : 'transparent',
+                    color: active ? '#fff' : '#475569',
+                    borderColor: active ? '#0f172a' : '#dbe2ea',
+                  }}
+                >
+                  {v === 'latest' ? 'Latest' : 'Recommended'}
+                </button>
+              );
+            })}
           </div>
-          <div style={styles.statsRow}>
-            {([
-              { label: 'Listings', value: stats.total, key: 'all' as const },
-              { label: 'New (24h)', value: stats.new, key: 'new' as const },
-              { label: 'Hot (70+)', value: stats.hot, key: 'hot' as const },
-              { label: 'Applied', value: stats.applied, key: 'applied' as const },
-            ]).map(s => (
-            <button key={s.label} className="lh-surface" style={{
-              ...styles.statCard,
-              cursor: 'pointer',
-              border: quickFilter === s.key ? '2px solid #2563eb' : styles.statCard.border,
-              background: quickFilter === s.key ? '#eff6ff' : styles.statCard.background,
-              transform: quickFilter === s.key ? 'scale(1.02)' : undefined,
-            }} onClick={() => { setQuickFilter(quickFilter === s.key ? 'all' : s.key); setPage(1); }}>
-              <div className="lh-h" style={styles.statNum}>{s.value}</div>
-              <div className="lh-muted" style={styles.statLabel}>{s.label}</div>
-            </button>
-          ))}
+          <p className="lh-body" style={styles.viewExplainer}>
+            {view === 'latest'
+              ? 'Strictly chronological: newest posting time first, nothing else. No score, ranking or quality signal affects this order. Listings whose source published no posting time appear last.'
+              : 'Ranked by lead score, highest first. Every score below carries the reasons behind it. Listings this system could not score appear last rather than being hidden.'}
+          </p>
+          <div ref={liveRegionRef} aria-live="polite" style={styles.srOnly} />
         </div>
 
         {/* ── FILTERS ── */}
-        <div style={styles.filtersBox} className="lh-surface">
-
-          {/* Row 0 — Keyword search (simple, over the real feed) */}
+        <section style={styles.filtersBox} className="lh-surface" aria-label="Filters">
           <div style={styles.filterRow}>
-            <span className="lh-muted" style={styles.filterLabel}>Search</span>
+            <label className="lh-muted" style={styles.filterLabel} htmlFor="lead-search">Search</label>
             <input
+              id="lead-search"
               type="search"
-              value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
-              placeholder={`Search ${platform === 'all' ? 'all' : platform} listings — e.g. react, api, flutter…`}
-              aria-label="Search jobs"
-              style={{
-                ...styles.searchInput,
-                borderColor: searchQuery ? '#2563eb' : '#dbe2ea',
-                background: searchQuery ? '#eff6ff' : '#f8fafc',
-              }}
+              className="lh-field"
+              value={searchDraft}
+              onChange={e => setSearchDraft(e.target.value)}
+              placeholder="Title, description or skill — e.g. react, scraping, logo"
+              style={{ ...styles.searchInput, borderColor: searchDraft ? '#2563eb' : '#dbe2ea' }}
             />
-            {searchQuery && (
-              <button
-                onClick={() => { setSearchQuery(''); setPage(1); }}
-                style={styles.clearBtn}
-                aria-label="Clear search"
-              >
-                Clear
-              </button>
+            {searchDraft && (
+              <button onClick={() => setSearchDraft('')} style={styles.clearBtn} className="lh-field">Clear</button>
             )}
           </div>
 
-          {/* Row 1 — Platform + Sort */}
-          <div style={styles.filterRow}>
-            <span className="lh-muted" style={styles.filterLabel}>Platform</span>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {PLATFORM_OPTIONS.map(p => {
-                const active = platform === p;
-                const label = p === 'all' ? 'All Platforms' : p;
-                return (
-                  <button
-                    key={p}
-                    onClick={() => changePlatform(p)}
-                    className={active ? undefined : 'lh-field'}
-                    style={{
-                      ...styles.pill,
-                      background: active ? (p === 'all' ? '#0f172a' : (PLATFORM_COLORS[p] || '#6c5ce7')) : '#f1f5f9',
-                      color: active ? '#fff' : '#475569',
-                      borderColor: active ? (p === 'all' ? '#0f172a' : (PLATFORM_COLORS[p] || '#6c5ce7')) : '#e2e8f0',
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <select value={sortBy} onChange={e => { setSortBy(e.target.value as SortKey); setPage(1); }} style={styles.select} className="lh-field">
-                <option value="score">Sort: Best Leads</option>
-                <option value="recommended">Sort: Recommended</option>
-                <option value="date">Sort: Newest</option>
-                <option value="competition">Sort: Lowest competition</option>
-                <option value="budget">Sort: Highest budget</option>
-              </select>
-              {anyFilterActive && (
-                <button onClick={clearAll} style={styles.clearBtn}>Reset</button>
-              )}
+          <FilterGroup label="Source">
+            <Pill
+              label="All sources"
+              active={filters.platform === 'all'}
+              onClick={() => patch({ platform: 'all' })}
+            />
+            {platformOptions.map(p => (
+              <Pill
+                key={p}
+                label={p}
+                count={facets?.platform[p]}
+                color={PLATFORM_COLORS[p] || '#0f172a'}
+                active={filters.platform === p}
+                onClick={() => patch({ platform: filters.platform === p ? 'all' : p })}
+              />
+            ))}
+          </FilterGroup>
+
+          <FilterGroup label="Lead band" hint="This system's own assessment">
+            {LEAD_BANDS.map(b => (
+              <Pill
+                key={b}
+                label={LEAD_BAND_LABEL[b]}
+                count={facets?.leadBand[b]}
+                color={LEAD_BAND_COLOR[b]}
+                active={filters.leadBand.includes(b)}
+                onClick={() => patch({ leadBand: toggle(filters.leadBand, b) })}
+              />
+            ))}
+          </FilterGroup>
+
+          <FilterGroup label="Authenticity" hint="Deterministic checks, never a model verdict">
+            {AUTH_STATUSES
+              // Only offer a status the data actually contains. `verified` is
+              // unreachable by design, so it is never rendered as a choice.
+              .filter(s => (facets?.authenticity[s] ?? 0) > 0 || filters.authenticity.includes(s))
+              .map(s => (
+                <Pill
+                  key={s}
+                  label={AUTH_LABEL[s]}
+                  count={facets?.authenticity[s]}
+                  color={AUTH_COLOR[s]}
+                  active={filters.authenticity.includes(s)}
+                  onClick={() => patch({ authenticity: toggle(filters.authenticity, s) })}
+                />
+              ))}
+          </FilterGroup>
+
+          <FilterGroup label="Age" hint="By the source's posting time">
+            {FRESHNESS_STATES.map(s => (
+              <Pill
+                key={s}
+                label={FRESHNESS_LABEL[s]}
+                active={filters.freshness.includes(s)}
+                onClick={() => patch({ freshness: toggle(filters.freshness, s) })}
+              />
+            ))}
+          </FilterGroup>
+
+          <FilterGroup label="Budget" hint="As the source stated it">
+            {BUDGET_TYPES.map(t => (
+              <Pill
+                key={t}
+                label={BUDGET_TYPE_LABEL[t]}
+                active={filters.budgetType.includes(t)}
+                onClick={() => patch({ budgetType: toggle(filters.budgetType, t) })}
+              />
+            ))}
+          </FilterGroup>
+
+          <FilterGroup label="Competition" hint="Counts as captured, not as they are now">
+            {COMPETITION_BUCKETS.map(c => (
+              <Pill
+                key={c}
+                label={COMPETITION_LABEL[c]}
+                active={filters.competition.includes(c)}
+                onClick={() => patch({ competition: toggle(filters.competition, c) })}
+              />
+            ))}
+          </FilterGroup>
+
+          <FilterGroup label="Skills" hint="Every skill must be present. Most listings publish no skill list and are excluded when this is used.">
+            {filters.skills.map(s => (
+              <span key={s} style={styles.skillChip} className="lh-field">
+                {s}
+                <button
+                  onClick={() => patch({ skills: filters.skills.filter(x => x !== s) })}
+                  style={styles.skillX}
+                  aria-label={`Remove skill filter ${s}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {filters.skills.length < 6 && (
+              <span style={styles.skillAdd}>
+                <input
+                  className="lh-field"
+                  value={skillDraft}
+                  onChange={e => setSkillDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSkill(); } }}
+                  placeholder="Add a skill"
+                  aria-label="Add a skill filter"
+                  style={styles.skillInput}
+                />
+                <button onClick={addSkill} style={styles.clearBtn} className="lh-field" disabled={!skillDraft.trim()}>Add</button>
+              </span>
+            )}
+          </FilterGroup>
+
+          <FilterGroup label="Duplicates">
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                checked={filters.collapseDuplicates}
+                onChange={e => patch({ collapseDuplicates: e.target.checked })}
+              />
+              <span className="lh-body" style={{ fontSize: 13 }}>
+                Collapse confirmed repeats to one listing
+              </span>
+            </label>
+            <span className="lh-muted" style={styles.groupHint}>
+              Only confirmed repeats are hidden, and only when the listing they repeat is still
+              present. Possible duplicates always stay visible.
+            </span>
+          </FilterGroup>
+
+          <div style={styles.resultLine}>
+            <span className="lh-muted" style={{ fontSize: 12.5 }}>
+              {total === 0
+                ? 'No listings match'
+                : `${(page - 1) * PER_PAGE + 1}–${Math.min(page * PER_PAGE, total)} of ${total.toLocaleString()} listing${total === 1 ? '' : 's'}`}
+              {refreshing ? ' · updating…' : ''}
+            </span>
+            {anyFilter && <button onClick={clearAll} style={styles.clearBtn} className="lh-field">Reset all filters</button>}
+          </div>
+        </section>
+
+        {/* ── RESULTS ── */}
+        {error ? (
+          <div style={styles.stateBox} className="lh-surface" role="alert">
+            <h2 className="lh-h" style={styles.stateTitle}>
+              {error.retryable ? 'The job feed is unreachable' : 'That request was rejected'}
+            </h2>
+            <p className="lh-body" style={styles.stateBody}>
+              {error.message}
+              {error.retryable
+                ? ' This is on our side, not yours. Nothing has been lost, and we are retrying automatically.'
+                : ' Reset the filters and try again.'}
+            </p>
+            <div style={styles.stateActions}>
+              <button onClick={() => { void load(query, false); }} style={styles.btnPrimary}>Try again now</button>
+              {anyFilter && <button onClick={clearAll} style={styles.btnGhost} className="lh-field">Reset filters</button>}
             </div>
           </div>
-
-          {/* Row 2 — Job Type + Opportunity */}
-          <div style={styles.filterRow}>
-            <span className="lh-muted" style={styles.filterLabel}>Job Type</span>
-            <FilterPill label="All" count={facets.opportunity.all} active={jobTypeFilter === 'all'} color="#2563eb" onClick={() => { setJobTypeFilter('all'); setPage(1); }} />
-            {hasFixed && <FilterPill label="Fixed Price" count={facets.jobType.fixed} active={jobTypeFilter === 'fixed'} color="#2563eb" onClick={() => { setJobTypeFilter(prev => prev === 'fixed' ? 'all' : 'fixed'); setPage(1); }} />}
-            {hasHourly && <FilterPill label="Hourly" count={facets.jobType.hourly} active={jobTypeFilter === 'hourly'} color="#2563eb" onClick={() => { setJobTypeFilter(prev => prev === 'hourly' ? 'all' : 'hourly'); setPage(1); }} />}
-
-            <span className="lh-muted" style={{ ...styles.filterLabel, marginLeft: 12 }}>Opportunity</span>
-            <FilterPill label="All" count={facets.opportunity.all} active={opportunityFilter === 'all'} color="#2563eb" onClick={() => { setOpportunityFilter('all'); setPage(1); }} />
-            <FilterPill label="Recommended" count={facets.opportunity.recommended} active={opportunityFilter === 'recommended'} color="#16a34a" onClick={() => { setOpportunityFilter(prev => prev === 'recommended' ? 'all' : 'recommended'); setPage(1); }} />
-            <FilterPill label="Act Fast" count={facets.opportunity.actFast} active={opportunityFilter === 'actFast'} color="#d97706" onClick={() => { setOpportunityFilter(prev => prev === 'actFast' ? 'all' : 'actFast'); setPage(1); }} />
-          </div>
-
-          {/* Row 3 — Country / Client Connection / Budget (dynamic, platform-scoped) */}
-          {(countryOptions.length > 0 || connectionOptions.length > 0 || budgetBuckets.length > 0) && (
-            <div style={styles.filterRow}>
-              {countryOptions.length > 0 && (
-                <FilterSelect
-                  label="Country"
-                  value={countryFilter}
-                  allLabel="All Countries"
-                  options={countryOptions.map(c => ({ value: c, label: `${c} (${facets.country[c] ?? 0})` }))}
-                  onChange={v => { setCountryFilter(v); setPage(1); }}
-                />
-              )}
-              {connectionOptions.length > 0 && (
-                <FilterSelect
-                  label="Client Connection"
-                  value={connectionFilter}
-                  allLabel="All Connections"
-                  options={connectionOptions.map(c => ({ value: String(c), label: `${c} connects (${facets.connection[String(c)] ?? 0})` }))}
-                  onChange={v => { setConnectionFilter(v); setPage(1); }}
-                />
-              )}
-              {budgetBuckets.length > 0 && (
-                <FilterSelect
-                  label="Budget"
-                  value={budgetFilter}
-                  allLabel="All Budgets"
-                  options={budgetBuckets.map(b => ({ value: b.label, label: `${b.label} (${facets.budget[b.label] ?? 0})` }))}
-                  onChange={v => { setBudgetFilter(v); setPage(1); }}
-                />
-              )}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-            <div className="lh-muted" style={{ fontSize: 12, color: '#94a3b8' }}>
-              {filteredJobs.length === 0
-                ? `No listings match the current ${searchQuery.trim() ? 'search' : 'filters'} across ${platform === 'all' ? 'all platforms' : platform}`
-                : `Showing ${Math.min((page - 1) * PER_PAGE + 1, filteredJobs.length)}–${Math.min(page * PER_PAGE, filteredJobs.length)} of ${filteredJobs.length} ${platform === 'all' ? '' : `${platform} `}listing${filteredJobs.length === 1 ? '' : 's'}${filteredJobs.length !== scopeJobs.length ? ` (filtered from ${scopeJobs.length} available)` : ''}`}
-            </div>
-          </div>
-        </div>
-
-        {/* ── JOB GRID ── */}
-        {paginatedJobs.length === 0 ? (
-          <div style={styles.emptyBox} className="lh-surface">
-            <p className="lh-h" style={{ fontWeight: 700, fontSize: 18, color: '#0f172a' }}>No jobs match {searchQuery.trim() ? 'your search' : 'these filters'}</p>
-            <p className="lh-body" style={{ color: '#64748b', marginBottom: 16 }}>Try different keywords, widening the filters, or clearing everything, then run a fresh sync.</p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-              {anyFilterActive && <button onClick={clearAll} style={styles.btnPrimary}>Clear all filters</button>}
-              {adminMode && <button onClick={handleSync} style={styles.btnPrimary}>Sync Now</button>}
+        ) : jobs.length === 0 ? (
+          <div style={styles.stateBox} className="lh-surface">
+            <h2 className="lh-h" style={styles.stateTitle}>
+              {anyFilter ? 'No listings match these filters' : 'No listings stored yet'}
+            </h2>
+            <p className="lh-body" style={styles.stateBody}>
+              {anyFilter
+                ? 'Every filter is applied together, so a narrow combination can legitimately return nothing. Widen or reset them to see what is actually stored.'
+                : 'The database currently holds no opportunities. Nothing is shown here until real listings arrive from a source — this page never displays sample data.'}
+            </p>
+            <div style={styles.stateActions}>
+              {anyFilter && <button onClick={clearAll} style={styles.btnPrimary}>Reset all filters</button>}
+              {adminMode && <button onClick={handleSync} style={styles.btnGhost} className="lh-field">Run a sync now</button>}
             </div>
           </div>
         ) : (
           <div style={styles.grid}>
-            {paginatedJobs.map(job => {
-              const compTerm = job.platform === 'Freelancer' ? 'Bids' : 'Proposals';
-              return (
-              <article
-                  key={job.id}
-                  style={{ ...styles.card, cursor: 'pointer' }}
-                  className="lh-surface"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleJobClick(job)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleJobClick(job); } }}
-                >
-                  {/* Card header badges */}
-                  <div style={styles.cardTop}>
-                    <span style={{ ...styles.badge, background: PLATFORM_COLORS[job.platform] || '#6c5ce7' }}>
-                      {job.platform}
-                    </span>
-                    {job.category && (
-                      <span style={{ ...styles.badge, background: CATEGORY_COLORS[job.category] || '#6c5ce7' }}>
-                        {job.category} Lead
-                      </span>
-                    )}
-                    {job.isNew && <span style={{ ...styles.badge, background: '#22c55e' }}>New</span>}
-                    {job.applied && <span style={{ ...styles.badge, background: '#3b82f6' }}>Applied</span>}
-                    {job.viewed && !job.applied && <span style={{ ...styles.badge, background: '#94a3b8' }}>Viewed</span>}
-                    <span className="lh-muted" style={{ marginLeft: 'auto', fontSize: 11, color: '#94a3b8' }}>{timeAgo(job.postedAt)}</span>
-                  </div>
-
-                  {/* Title */}
-                  <h3 style={styles.cardTitle}>{job.title}</h3>
-
-                  {/* Client info */}
-                  {(() => {
-                    const hasClient = job.clientName && !job.clientName.toLowerCase().includes('client');
-                    const hasCountry = job.country && job.country.toLowerCase() !== 'remote' && job.country.trim() !== '';
-                    const hasExtra = job.clientSpend || job.clientReviews;
-                    if (!hasClient && !hasCountry && !hasExtra) return null;
-                    return (
-                      <p style={styles.clientLine}>
-                        {hasClient ? `Client: ${job.clientName}` : hasCountry ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <IconMapPin size={12} color="#64748b" />
-                            {job.country}
-                          </span>
-                        ) : ''}
-                        {job.clientSpend ? ` · Spent: ${job.clientSpend}` : ''}
-                        {job.clientReviews ? ` · ${job.clientReviews}` : ''}
-                      </p>
-                    );
-                  })()}
-
-                  {/* Description snippet */}
-                  <p style={styles.snippet}>{job.description?.substring(0, 130)}…</p>
-
-                  {/* Opportunity reason (spec §40) — explain why this is a lead */}
-                  {job.opportunityReason && (
-                    <p className="lh-muted" style={{ fontSize: 12, color: '#6366f1', marginBottom: 8, lineHeight: 1.5, fontStyle: 'italic' }}>
-                      {job.opportunityReason}
-                    </p>
-                  )}
-
-                  {/* Real listing signals: competition, repeat client, act-fast */}
-                  {(typeof job.proposalCount === 'number' || job.repeatClient || job.actFast) && (
-                    <div style={styles.signalRow}>
-                      {typeof job.proposalCount === 'number' && (
-                        <span
-                          className="lh-signal"
-                          style={{
-                            ...styles.signalChip,
-                            color: job.proposalCount <= 5 ? '#15803d' : job.proposalCount <= 20 ? '#b45309' : '#b91c1c',
-                            borderColor: job.proposalCount <= 5 ? '#bbf7d0' : job.proposalCount <= 20 ? '#fde68a' : '#fecaca',
-                          }}
-                        >
-                          {job.proposalCount} {compTerm}
-                        </span>
-                      )}
-                      {job.actFast && (
-                        <span className="lh-signal" style={{ ...styles.signalChip, color: '#b45309', borderColor: '#fde68a', fontWeight: 700 }}>
-                          Act fast
-                        </span>
-                      )}
-                      {job.repeatClient && (
-                        <span className="lh-signal" style={{ ...styles.signalChip, color: '#6d28d9', borderColor: '#ddd6fe', fontWeight: 700 }}>
-                          {(job.repeatClientCount ?? 0) > 0 ? `${job.repeatClientCount} more from client` : 'Repeat client'}
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Meta row */}
-                  <div style={styles.metaRow}>
-                    <div>
-                      <div className="lh-muted" style={styles.metaKey}>Budget</div>
-                      <div className="lh-h" style={styles.metaVal}>{job.budget || 'Negotiable'}</div>
-                    </div>
-                    {(job.connections ?? 0) > 0 && (
-                      <div>
-                        <div className="lh-muted" style={styles.metaKey}>Bid Cost</div>
-                        <div style={{ ...styles.metaVal, color: '#2563eb', fontWeight: 700 }}>
-                          {job.connections} connects
-                        </div>
-                      </div>
-                    )}
-                    <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-                      <div className="lh-muted" style={styles.metaKey}>Match</div>
-                      <div style={{ ...styles.metaVal, color: getScoreColor(job.score) }}>{job.score}%</div>
-                    </div>
-                  </div>
-
-                  {/* Score bar */}
-                  <div style={styles.barTrack}>
-                    <div style={{ ...styles.barFill, width: `${job.score}%`, background: getScoreColor(job.score) }} />
-                  </div>
-                </article>
-              );
-            })}
+            {jobs.map(job => (
+              <JobCard
+                key={job.id}
+                job={job}
+                view={view}
+                expanded={expanded.has(job.id)}
+                onToggle={() => toggleExpanded(job.id)}
+                onOpen={() => openJob(job)}
+              />
+            ))}
           </div>
         )}
 
         {/* ── PAGINATION ── */}
-        {totalPages > 1 && (
-          <div style={styles.pagination}>
+        {!error && totalPages > 1 && (
+          <nav style={styles.pagination} aria-label="Pagination">
             <button
-              onClick={() => goToPage(Math.max(1, page - 1))}
+              onClick={() => goToPage(page - 1)}
               disabled={page === 1}
               className="lh-field"
               style={{ ...styles.pageBtn, opacity: page === 1 ? 0.4 : 1 }}
             >
               ← Prev
             </button>
-
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              {Array.from({ length: totalPages }, (_, i) => i + 1)
-                .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 2)
-                .reduce<(number | '...')[]>((acc, p, idx, arr) => {
-                  if (idx > 0 && typeof arr[idx - 1] === 'number' && (p as number) - (arr[idx - 1] as number) > 1) acc.push('...');
-                  acc.push(p);
-                  return acc;
-                }, [])
-                .map((p, i) =>
-                  p === '...' ? (
-                    <span key={`ellipsis-${i}`} style={{ color: '#94a3b8', padding: '0 4px' }}>…</span>
-                  ) : (
-                    <button
-                      key={p}
-                      onClick={() => goToPage(p as number)}
-                      className={page === p ? 'lh-field lh-active' : 'lh-field'}
-                      style={{
-                        ...styles.pageBtn,
-                        background: page === p ? '#2563eb' : '#fff',
-                        color: page === p ? '#fff' : '#334155',
-                        borderColor: page === p ? '#2563eb' : '#dbe2ea',
-                        fontWeight: page === p ? 700 : 500,
-                        minWidth: 36,
-                      }}
-                    >
-                      {p}
-                    </button>
-                  )
-                )
-              }
-            </div>
-
+            <span className="lh-muted" style={{ fontSize: 13 }}>Page {page} of {totalPages}</span>
             <button
-              onClick={() => goToPage(Math.min(totalPages, page + 1))}
-              disabled={page === totalPages}
+              onClick={() => goToPage(page + 1)}
+              disabled={page >= totalPages}
               className="lh-field"
-              style={{ ...styles.pageBtn, opacity: page === totalPages ? 0.4 : 1 }}
+              style={{ ...styles.pageBtn, opacity: page >= totalPages ? 0.4 : 1 }}
             >
               Next →
             </button>
-
-            <span className="lh-muted" style={{ fontSize: 12, color: '#94a3b8', marginLeft: 8 }}>
-              Page {page} of {totalPages}
-            </span>
-          </div>
+          </nav>
         )}
 
-        {/* ── FOOTER ── */}
-        <footer style={{
-          marginTop: 48,
-          paddingTop: 24,
-          borderTop: '1px solid #cbd5e1',
-          textAlign: 'center',
-          color: '#64748b',
-          fontSize: 13,
-          lineHeight: 1.6
-        }}>
-          <p style={{ margin: 0, fontWeight: 600 }}>
-            Lead Hunter &bull; Developed by <strong style={{ color: '#0f172a' }}>Abdul Raheem</strong> &bull; <a href="mailto:geeksxperts@gmail.com" style={{ color: '#2563eb', textDecoration: 'none' }}>geeksxperts@gmail.com</a>
+        <footer style={styles.footer}>
+          <p className="lh-body" style={{ margin: 0, fontWeight: 600 }}>
+            Lead Hunter &bull; Developed by <strong className="lh-h">Abdul Raheem</strong> &bull;{' '}
+            <a href="mailto:geeksxperts@gmail.com" style={{ color: '#2563eb', textDecoration: 'none' }}>geeksxperts@gmail.com</a>
           </p>
-          <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94a3b8' }}>
-            Stop scrolling. Start winning. &copy; {new Date().getFullYear()} All rights reserved.
+          <p className="lh-muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+            &copy; {new Date().getFullYear()} All rights reserved.
           </p>
         </footer>
-
       </div>
     </div>
   );
 }
 
-/* ── Small reusable dropdown filter with a live count ── */
-function FilterSelect({ label, value, allLabel, options, onChange }: {
-  label: string;
-  value: string;
-  allLabel: string;
-  options: { value: string; label: string }[];
-  onChange: (v: string) => void;
-}) {
+/* ── Loading ─────────────────────────────────────────────────────────
+   A deliberate, non-animated-content loading state. It never renders
+   placeholder job rows, because a skeleton shaped like a listing is
+   indistinguishable from a listing until it is not. */
+function FullPageLoading() {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <span className="lh-muted" style={styles.filterLabel}>{label}</span>
-      <select
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        className="lh-field"
-        style={styles.select}
-        aria-label={label}
-      >
-        <option value="all">{allLabel}</option>
-        {options.map(o => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-    </span>
+    <div style={styles.splashLoad} className="lh-page" role="status" aria-live="polite">
+      <div style={styles.spinner} />
+      <p className="lh-muted" style={{ marginTop: 16, fontSize: 14 }}>Loading stored leads…</p>
+    </div>
   );
 }
 
-/* ── Small reusable filter pill with a live count ── */
-function FilterPill({ label, count, active, color, onClick }: { label: string; count: number; active: boolean; color: string; onClick: () => void }) {
+/* ── Job card ─────────────────────────────────────────────────────── */
+function JobCard({ job, view, expanded, onToggle, onOpen }: {
+  job: Job;
+  view: View;
+  expanded: boolean;
+  onToggle: () => void;
+  onOpen: () => void;
+}) {
+  const bandColor = LEAD_BAND_COLOR[job.leadBand] || '#64748b';
+  const authColor = AUTH_COLOR[job.authenticityStatus] || '#64748b';
+  const hasExplanation = job.leadReasons.length > 0 || job.leadRisks.length > 0;
+  const dupLabel = DUPLICATE_LABEL[job.duplicateStatus] || '';
+
+  return (
+    <article style={styles.card} className="lh-surface">
+      <div style={styles.cardTop}>
+        <span style={{ ...styles.badge, background: PLATFORM_COLORS[job.platform] || '#475569' }}>
+          {job.platform}
+        </span>
+        {job.applied && <span style={{ ...styles.badge, background: '#1d4ed8' }}>Applied</span>}
+        {job.viewed && !job.applied && <span style={{ ...styles.badge, background: '#94a3b8' }}>Viewed</span>}
+        <span className="lh-muted" style={styles.ageLabel}>{job.ageLabel}</span>
+      </div>
+
+      <h3 style={styles.cardTitle}>
+        <button onClick={onOpen} style={styles.titleBtn} className="lh-h">{job.title || 'Untitled listing'}</button>
+      </h3>
+
+      {/* Lead assessment — never a bare number. The band, the score and the
+          way in are one block, and the explanation is one click away. */}
+      <div style={{ ...styles.assessment, borderLeftColor: bandColor }}>
+        <div style={styles.assessTop}>
+          <span style={{ ...styles.bandLabel, background: bandColor }}>
+            {LEAD_BAND_LABEL[job.leadBand] || 'Not scored'}
+            {job.leadScore !== null && <span style={styles.scoreNum}> · {job.leadScore}/100</span>}
+          </span>
+          {hasExplanation ? (
+            <button onClick={onToggle} aria-expanded={expanded} style={styles.whyBtn} className="lh-field">
+              {expanded ? 'Hide reasoning' : `Why? (${job.leadReasons.length + job.leadRisks.length})`}
+            </button>
+          ) : (
+            <span className="lh-muted" style={{ fontSize: 11.5 }}>No reasoning recorded</span>
+          )}
+        </div>
+        {job.leadScore === null && (
+          <p className="lh-muted" style={styles.assessNote}>
+            The source published too little about this listing to score it honestly. It is listed,
+            not hidden.
+          </p>
+        )}
+        {expanded && (
+          <div style={styles.reasonBlock}>
+            {job.leadReasons.length > 0 && (
+              <ul style={styles.reasonList}>
+                {job.leadReasons.map((r, i) => (
+                  <li key={`r${i}`} style={styles.reasonItem} className="lh-body">
+                    <span aria-hidden="true" style={{ ...styles.reasonMark, color: '#16a34a' }}>+</span>{r}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {job.leadRisks.length > 0 && (
+              <ul style={styles.reasonList}>
+                {job.leadRisks.map((r, i) => (
+                  <li key={`k${i}`} style={styles.reasonItem} className="lh-body">
+                    <span aria-hidden="true" style={{ ...styles.reasonMark, color: '#d97706' }}>−</span>{r}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {job.authenticitySignals.length + job.authenticityWarnings.length > 0 && (
+              <div style={styles.authBlock}>
+                <div className="lh-muted" style={styles.authHead}>
+                  Authenticity — {AUTH_LABEL[job.authenticityStatus] || job.authenticityStatus}
+                </div>
+                {AUTH_MEANING[job.authenticityStatus] && (
+                  <p className="lh-muted" style={styles.assessNote}>{AUTH_MEANING[job.authenticityStatus]}</p>
+                )}
+                <ul style={styles.reasonList}>
+                  {job.authenticitySignals.map(c => (
+                    <li key={`s${c}`} style={styles.reasonItem} className="lh-body">
+                      <span aria-hidden="true" style={{ ...styles.reasonMark, color: '#16a34a' }}>+</span>{codeLabel(c)}
+                    </li>
+                  ))}
+                  {job.authenticityWarnings.map(c => (
+                    <li key={`w${c}`} style={styles.reasonItem} className="lh-body">
+                      <span aria-hidden="true" style={{ ...styles.reasonMark, color: '#d97706' }}>−</span>{codeLabel(c)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <p className="lh-body" style={styles.snippet}>
+        {job.description ? `${job.description.slice(0, 150)}${job.description.length > 150 ? '…' : ''}` : 'No description published by the source.'}
+      </p>
+
+      {/* Competition — always through competition.label, which states when the
+          figure was taken. A stale reading is visually marked as one. */}
+      <div
+        style={{
+          ...styles.competition,
+          borderStyle: job.competition.outdated ? 'dashed' : 'solid',
+          borderColor: job.competition.outdated ? '#fbbf24' : '#e2e8f0',
+        }}
+        className="lh-signal"
+      >
+        <span className="lh-muted" style={styles.compKey}>Competition</span>
+        <span className="lh-body" style={styles.compVal}>{job.competition.label}</span>
+        {job.competition.outdated && (
+          <span style={styles.compFlag}>snapshot</span>
+        )}
+      </div>
+
+      <div style={styles.metaRow}>
+        <div style={styles.metaCell}>
+          <div className="lh-muted" style={styles.metaKey}>Budget</div>
+          <div className="lh-h" style={styles.metaVal}>{job.budget || 'Not stated'}</div>
+        </div>
+        {job.budgetType && (
+          <div style={styles.metaCell}>
+            <div className="lh-muted" style={styles.metaKey}>Type</div>
+            <div className="lh-h" style={styles.metaVal}>{job.budgetType}</div>
+          </div>
+        )}
+        {(job.connections ?? 0) > 0 && (
+          <div style={styles.metaCell}>
+            <div className="lh-muted" style={styles.metaKey}>Bid cost</div>
+            <div className="lh-h" style={styles.metaVal}>{job.connections} connects</div>
+          </div>
+        )}
+        {job.country && (
+          <div style={styles.metaCell}>
+            <div className="lh-muted" style={styles.metaKey}>Location</div>
+            <div className="lh-h" style={{ ...styles.metaVal, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <IconMapPin size={12} />{job.country}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Status strip: what this system concluded, stated as its conclusion. */}
+      <div style={styles.statusStrip}>
+        <span style={{ ...styles.statusChip, color: authColor, borderColor: authColor }} className="lh-signal" title={AUTH_MEANING[job.authenticityStatus] || ''}>
+          {AUTH_LABEL[job.authenticityStatus] || job.authenticityStatus}
+        </span>
+        <span style={{ ...styles.statusChip, color: '#475569' }} className="lh-signal lh-muted">
+          {FRESHNESS_LABEL[job.freshnessState] || job.freshnessState}
+        </span>
+        {view === 'latest' && job.freshnessState === 'unknown' && (
+          <span className="lh-muted" style={{ fontSize: 11 }}>sorted last — age unknown</span>
+        )}
+      </div>
+
+      {dupLabel && (
+        <p className="lh-muted" style={styles.dupNote}>
+          {dupLabel}
+          {job.clusterSize && job.clusterSize > 1 ? ` — one of ${job.clusterSize} closely matching listings.` : '.'}
+          {job.duplicateStatus === 'canonical' && job.canonicalReason ? ` Chosen as the primary by: ${job.canonicalReason}.` : ''}
+          {job.duplicateStatus === 'possible_duplicate' ? ' Kept visible because the match is not certain.' : ''}
+        </p>
+      )}
+
+      <div style={styles.cardActions}>
+        <button onClick={onOpen} style={styles.btnPrimary}>Open details</button>
+      </div>
+    </article>
+  );
+}
+
+/* ── Filter primitives ───────────────────────────────────────────── */
+function FilterGroup({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div style={styles.filterRow}>
+      <span className="lh-muted" style={styles.filterLabel}>{label}</span>
+      <div style={styles.filterOptions}>{children}</div>
+      {hint && <span className="lh-muted" style={styles.groupHint}>{hint}</span>}
+    </div>
+  );
+}
+
+function Pill({ label, count, color = '#2563eb', active, onClick }: {
+  label: string;
+  count?: number;
+  color?: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  // No theme class while active: .lh-field's dark-mode !important background
+  // would erase the option's own colour, and that colour is the legend.
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       className={active ? undefined : 'lh-field'}
       style={{
-        ...styles.oppPill,
+        ...styles.pill,
         background: active ? color : '#f1f5f9',
         color: active ? '#fff' : '#475569',
         borderColor: active ? color : '#e2e8f0',
       }}
     >
-      {label} <span style={{ ...styles.oppCount, background: active ? 'rgba(255,255,255,0.25)' : '#e2e8f0', color: active ? '#fff' : '#64748b' }}>{count}</span>
+      {label}
+      {typeof count === 'number' && (
+        <span style={{ ...styles.pillCount, background: active ? 'rgba(255,255,255,0.22)' : '#e2e8f0', color: active ? '#fff' : '#64748b' }}>
+          {count}
+        </span>
+      )}
     </button>
   );
 }
 
-/* ── STYLES ─────────────────────────────────────────────────────────── */
+/* ── STYLES ─────────────────────────────────────────────────────────
+   Inline-style objects plus the lh-* class hooks, matching the rest of the
+   app: globals.css themes every lh-* hook for dark mode. */
 const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    background: 'linear-gradient(135deg,#f0f4ff 0%,#f8fafc 100%)',
-    color: '#111827',
-    padding: '24px 16px',
-  },
+  page: { minHeight: '100vh', background: '#f6f8fb', color: '#111827', padding: '24px 16px' },
   shell: { maxWidth: 1320, margin: '0 auto' },
 
   splashLoad: {
-    minHeight: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
+    minHeight: '100vh', display: 'flex', flexDirection: 'column',
+    alignItems: 'center', justifyContent: 'center', background: '#f6f8fb',
   },
   spinner: {
-    width: 40,
-    height: 40,
-    border: '3px solid #dbeafe',
-    borderTopColor: '#2563eb',
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
+    width: 36, height: 36, border: '3px solid #dbeafe', borderTopColor: '#2563eb',
+    borderRadius: '50%', animation: 'spin 0.8s linear infinite',
   },
 
   header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 16,
-    marginBottom: 24,
-    flexWrap: 'wrap',
+    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+    gap: 16, marginBottom: 18, flexWrap: 'wrap',
   },
-  brand: { fontSize: 26, fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.03em' },
-  headerRight: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+  brand: { fontSize: 24, fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.025em' },
+  brandSub: { fontSize: 12.5, margin: '2px 0 0', fontWeight: 600, letterSpacing: '0.01em' },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  btnInner: { display: 'inline-flex', alignItems: 'center', gap: 6 },
   btnPrimary: {
-    background: '#2563eb', color: '#fff', border: 'none',
-    borderRadius: 999, padding: '10px 18px', fontSize: 13,
-    fontWeight: 700, cursor: 'pointer',
+    background: '#1d4ed8', color: '#fff', border: '1px solid #1d4ed8',
+    borderRadius: 8, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer',
   },
   btnGhost: {
     background: '#fff', color: '#475569',
     borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
-    borderRadius: 999, padding: '10px 14px', fontSize: 13, cursor: 'pointer',
+    borderRadius: 8, padding: '9px 13px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
-  banner: {
-    background: '#eff6ff',
-    borderWidth: '1px', borderStyle: 'solid', borderColor: '#bfdbfe',
-    borderRadius: 12, padding: '12px 16px', marginBottom: 20,
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    flexWrap: 'wrap', gap: 10, color: '#1d4ed8',
+  btnAccent: {
+    background: '#15803d', color: '#fff', border: '1px solid #15803d',
+    borderRadius: 8, padding: '9px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer',
   },
-  bannerBtn: {
-    background: '#2563eb', color: '#fff', border: 'none',
-    borderRadius: 999, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+
+  provenance: {
+    background: '#fff', borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
+    borderRadius: 10, padding: '12px 16px', marginBottom: 16,
+    display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '6px 28px',
   },
-  btnCron: {
-    background: '#16a34a',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 999,
-    padding: '10px 20px',
-    fontSize: 13,
-    fontWeight: 700,
-    cursor: 'pointer',
-    boxShadow: '0 2px 4px rgba(22,163,74,0.2)'
+  provItem: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 130 },
+  provKey: { fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 },
+  provVal: { fontSize: 14, fontWeight: 700, color: '#0f172a' },
+  provNote: { flex: '1 1 320px', fontSize: 11.5, lineHeight: 1.6, margin: 0, minWidth: 0 },
+
+  viewBlock: { marginBottom: 16 },
+  tablist: { display: 'inline-flex', gap: 6, flexWrap: 'wrap' },
+  tab: {
+    borderWidth: '1px', borderStyle: 'solid', borderRadius: 8,
+    padding: '9px 22px', fontSize: 14, fontWeight: 700, cursor: 'pointer',
   },
-  statsRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12, marginBottom: 20 },
-  statCard: {
-    background: '#fff', borderRadius: 14, padding: '16px',
-    cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
+  viewExplainer: { fontSize: 12.5, lineHeight: 1.6, margin: '10px 0 0', maxWidth: 780 },
+  srOnly: {
+    position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+    overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', borderWidth: 0,
   },
-  statNum: { fontSize: 28, fontWeight: 800, color: '#0f172a' },
-  statLabel: { fontSize: 13, color: '#64748b', marginTop: 2 },
 
   filtersBox: {
-    background: '#fff',
-    borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
-    borderRadius: 16, padding: '16px 20px', marginBottom: 24,
-    display: 'flex', flexDirection: 'column', gap: 12,
-    boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+    background: '#fff', borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
+    borderRadius: 12, padding: '14px 16px', marginBottom: 20,
+    display: 'flex', flexDirection: 'column', gap: 10,
   },
-  filterRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
-  filterLabel: { fontSize: 12, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' },
+  filterRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  filterOptions: { display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 },
+  filterLabel: {
+    fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase',
+    letterSpacing: '0.06em', whiteSpace: 'nowrap', minWidth: 84,
+  },
+  groupHint: { fontSize: 11, fontStyle: 'italic', flex: '1 1 160px', minWidth: 0 },
   searchInput: {
-    flex: 1, minWidth: 'min(240px,100%)',
+    flex: '1 1 240px', minWidth: 0,
     borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
-    borderRadius: 999, padding: '10px 16px', fontSize: 13, color: '#0f172a',
-    background: '#f8fafc',
-  },
-  select: {
-    borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
-    borderRadius: 999, padding: '8px 14px', fontSize: 13,
-    color: '#334155', background: '#fff', cursor: 'pointer',
+    borderRadius: 8, padding: '9px 13px', fontSize: 13, color: '#0f172a', background: '#fff',
   },
   pill: {
-    borderWidth: '1px', borderStyle: 'solid',
-    borderRadius: 999, padding: '6px 14px', fontSize: 12,
-    fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s',
-  },
-  oppPill: {
-    borderWidth: '1px', borderStyle: 'solid',
-    borderRadius: 999, padding: '6px 12px', fontSize: 12,
-    fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s',
+    borderWidth: '1px', borderStyle: 'solid', borderRadius: 999,
+    padding: '5px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
     display: 'inline-flex', alignItems: 'center', gap: 6,
   },
-  oppCount: {
-    borderRadius: 999, padding: '0 7px', fontSize: 11,
-    fontWeight: 800,
-  },
-  skillChip: {
-    borderWidth: '1px', borderStyle: 'solid',
-    borderRadius: 999, padding: '5px 11px', fontSize: 11.5,
-    fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
-    display: 'inline-flex', alignItems: 'center', gap: 6,
-  },
-  skillCount: { fontSize: 10.5, fontWeight: 700 },
-  clearChip: {
-    background: 'none', border: 'none', fontSize: 11.5, cursor: 'pointer',
-    color: '#94a3b8', textDecoration: 'underline', padding: '5px 4px',
-  },
+  pillCount: { borderRadius: 999, padding: '0 6px', fontSize: 10.5, fontWeight: 800 },
   clearBtn: {
     background: '#f1f5f9', color: '#475569',
     borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
-    borderRadius: 999, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+    borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
   },
-  suggestBox: {
-    position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
-    zIndex: 50, borderRadius: 12, overflow: 'hidden',
-    boxShadow: '0 10px 24px rgba(15,23,42,0.12)',
+  skillChip: {
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#bfdbfe',
+    background: '#fff', color: '#1d4ed8',
+    borderRadius: 999, padding: '4px 6px 4px 11px', fontSize: 12, fontWeight: 600,
   },
-  suggestItem: {
-    display: 'block', width: '100%', textAlign: 'left', border: 'none',
-    background: 'transparent', padding: '10px 16px', fontSize: 13,
-    cursor: 'pointer', color: '#334155',
+  skillX: { background: 'none', border: 'none', cursor: 'pointer', color: '#1d4ed8', fontSize: 15, lineHeight: 1, padding: '0 4px' },
+  skillAdd: { display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' },
+  skillInput: {
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
+    borderRadius: 8, padding: '6px 10px', fontSize: 12, width: 130, background: '#fff', color: '#0f172a',
   },
-  smartChip: {
-    display: 'inline-flex', alignItems: 'center', gap: 6,
-    borderRadius: 999, padding: '4px 12px', fontSize: 12,
-    fontWeight: 600, color: '#1d4ed8', background: '#eff6ff',
-    border: '1px solid #bfdbfe',
-  },
-  smartChipX: {
-    background: 'none', border: 'none', fontSize: 14, lineHeight: 1,
-    cursor: 'pointer', color: '#1d4ed8', padding: 0,
-  },
-  signalRow: { display: 'flex', flexWrap: 'wrap', gap: 6 },
-  signalChip: {
-    fontSize: 11, fontWeight: 600, padding: '2px 9px',
-    borderRadius: 999, borderWidth: '1px', borderStyle: 'solid',
-    background: '#fff',
+  checkRow: { display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' },
+  resultLine: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    flexWrap: 'wrap', gap: 8, borderTop: '1px solid rgba(100,116,139,0.22)', paddingTop: 10, marginTop: 2,
   },
 
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(340px,100%),1fr))', gap: 16 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(330px,100%),1fr))', gap: 14 },
   card: {
-    background: '#fff',
-    borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
-    borderRadius: 18, padding: '18px 20px',
-    boxShadow: '0 1px 3px rgba(15,23,42,0.05)',
-    transition: 'box-shadow 0.15s, transform 0.15s',
-    display: 'flex', flexDirection: 'column', gap: 10,
+    background: '#fff', borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
+    borderRadius: 12, padding: '14px 16px',
+    display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0,
   },
   cardTop: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
-  badge: { color: '#fff', borderRadius: 999, padding: '3px 10px', fontSize: 11, fontWeight: 700 },
-  cardTitle: { fontSize: 16, fontWeight: 700, color: '#0f172a', lineHeight: 1.35, margin: 0 },
-  clientLine: { fontSize: 12, color: '#64748b', margin: 0 },
-  snippet: { fontSize: 13, color: '#64748b', lineHeight: 1.55, margin: 0 },
-  metaRow: { display: 'flex', alignItems: 'flex-end', gap: 16 },
-  metaKey: { fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginBottom: 2 },
-  metaVal: { fontSize: 14, fontWeight: 700, color: '#0f172a' },
-  barTrack: { height: 5, borderRadius: 999, background: '#e2e8f0', overflow: 'hidden' },
-  barFill: { height: '100%', borderRadius: 999, transition: 'width 0.3s' },
-
-  emptyBox: {
-    background: '#fff',
-    borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
-    borderRadius: 18, padding: '48px 24px', textAlign: 'center',
-    boxShadow: '0 1px 3px rgba(15,23,42,0.05)',
+  badge: { color: '#fff', borderRadius: 5, padding: '2px 8px', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.02em' },
+  ageLabel: { marginLeft: 'auto', fontSize: 11, whiteSpace: 'nowrap' },
+  cardTitle: { margin: 0, fontSize: 15.5, fontWeight: 700, lineHeight: 1.35 },
+  titleBtn: {
+    background: 'none', border: 'none', padding: 0, margin: 0, textAlign: 'left',
+    font: 'inherit', color: '#0f172a', cursor: 'pointer', textDecoration: 'none',
+    overflowWrap: 'anywhere',
   },
 
-  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginTop: 32 },
+  assessment: {
+    borderLeftWidth: 3, borderLeftStyle: 'solid', paddingLeft: 10,
+    display: 'flex', flexDirection: 'column', gap: 6,
+  },
+  assessTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
+  bandLabel: {
+    fontSize: 12, fontWeight: 800, letterSpacing: '0.01em', color: '#fff',
+    borderRadius: 5, padding: '3px 9px',
+  },
+  scoreNum: { fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
+  whyBtn: {
+    background: '#f1f5f9', color: '#334155',
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
+    borderRadius: 6, padding: '3px 9px', fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+  },
+  assessNote: { fontSize: 11.5, lineHeight: 1.55, margin: 0 },
+  reasonBlock: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 },
+  reasonList: { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 3 },
+  reasonItem: { fontSize: 12, lineHeight: 1.5, display: 'flex', gap: 6, overflowWrap: 'anywhere' },
+  reasonMark: { fontWeight: 800, flexShrink: 0 },
+  authBlock: { borderTop: '1px solid rgba(100,116,139,0.22)', paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 4 },
+  authHead: { fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' },
+
+  snippet: { fontSize: 12.5, lineHeight: 1.55, margin: 0, overflowWrap: 'anywhere' },
+
+  competition: {
+    display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+    borderWidth: '1px', background: '#fff', borderRadius: 8, padding: '7px 10px',
+  },
+  compKey: { fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' },
+  compVal: { fontSize: 12, lineHeight: 1.45, flex: '1 1 140px', minWidth: 0 },
+  compFlag: {
+    fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em',
+    color: '#92400e', background: '#fef3c7', borderRadius: 4, padding: '1px 6px',
+  },
+
+  metaRow: { display: 'flex', flexWrap: 'wrap', gap: '8px 18px' },
+  metaCell: { minWidth: 0 },
+  metaKey: { fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, marginBottom: 1 },
+  metaVal: { fontSize: 13, fontWeight: 700, color: '#0f172a', overflowWrap: 'anywhere' },
+
+  statusStrip: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
+  statusChip: {
+    fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0', background: '#fff',
+  },
+  dupNote: { fontSize: 11.5, lineHeight: 1.5, margin: 0, overflowWrap: 'anywhere' },
+  cardActions: { display: 'flex', gap: 8, marginTop: 'auto', paddingTop: 2 },
+
+  stateBox: {
+    background: '#fff', borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
+    borderRadius: 12, padding: '40px 24px', textAlign: 'center',
+  },
+  stateTitle: { fontSize: 18, fontWeight: 700, margin: '0 0 8px', color: '#0f172a' },
+  stateBody: { fontSize: 13.5, lineHeight: 1.65, maxWidth: 520, margin: '0 auto 18px' },
+  stateActions: { display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' },
+
+  pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: 14, marginTop: 26 },
   pageBtn: {
-    borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
-    background: '#fff', borderRadius: 999, padding: '8px 16px',
-    fontSize: 13, cursor: 'pointer', color: '#334155',
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea', background: '#fff',
+    borderRadius: 8, padding: '8px 15px', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: '#334155',
+  },
+
+  footer: {
+    marginTop: 44, paddingTop: 20, borderTop: '1px solid rgba(100,116,139,0.28)',
+    textAlign: 'center', fontSize: 13, lineHeight: 1.6,
   },
 };

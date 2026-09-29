@@ -5,6 +5,11 @@ import { FreelancerProvider } from "./FreelancerProvider";
 import { logCronRun } from "../lib/cronLogger";
 import { recordMarketFacts } from "../lib/marketFacts";
 import { prisma } from "../lib/db";
+import { isSafeExternalUrl } from "../lib/safeUrl";
+import { identityFields, hasMaterialChange, resolveIdentity, sourcePostedAt } from "../lib/ingestIdentity";
+import { assessListing } from "../lib/assess";
+import { recordSourceRun } from "../lib/sourceHealthStore";
+import { shouldRunApifyDiscovery } from "../lib/syncSchedule";
 
 export class JobPipeline {
   private providers: JobProvider[] = [
@@ -14,6 +19,24 @@ export class JobPipeline {
 
   async execute(): Promise<{ jobs: Job[]; newJobsAdded: number }> {
     const nowMs = Date.now();
+
+    // Fail fast if the database is unreachable.
+    //
+    // Without this the pipeline fetched from every source first and only
+    // discovered on the write that it had nowhere to put the results — so a
+    // DNS outage or a credential problem still SPENT APIFY BUDGET, which is
+    // real money against a $5 monthly allowance. It also left the caller
+    // unable to tell an empty run from a broken one, and scripts/sync.ts
+    // duly reported "completed successfully" over a run that persisted
+    // nothing.
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.lastWriteFailures = 1;
+      console.error('[JobPipeline] Database unreachable — aborting before any source is fetched:', msg);
+      return { jobs: [], newJobsAdded: 0 };
+    }
 
     console.log('[JobPipeline] Step 1: Cleaning store - Purging jobs older than 7 days...');
     const existingStore = await this.loadExistingStore();
@@ -38,10 +61,22 @@ export class JobPipeline {
     let apifyJobs: Job[] = [];
     let apifyFailed = false;
     let apifyFailureReason = '';
+    const apifyStartedAt = Date.now();
+    // Spend the billed budget in the hours that actually yield. Recorded
+    // history shows 3.4 new jobs per run at 03:00 UTC against 20.8 at 06:00,
+    // and the daily budget only covers four discovery runs — so an
+    // unscheduled 03:00 run buys the worst hour at the same price as the
+    // best. Fails open: a telemetry problem must not stop ingestion.
+    const discovery = await shouldRunApifyDiscovery();
     try {
-      apifyJobs = await apifyProvider.fetchJobs();
-      apifyFailed = apifyProvider.lastRunStatus?.failed === true;
-      apifyFailureReason = apifyProvider.lastRunStatus?.reason ?? '';
+      if (!discovery.allowed) {
+        apifyFailureReason = discovery.reason;
+        console.log('[JobPipeline] Apify discovery skipped:', discovery.reason);
+      } else {
+        apifyJobs = await apifyProvider.fetchJobs();
+        apifyFailed = apifyProvider.lastRunStatus?.failed === true;
+        apifyFailureReason = apifyProvider.lastRunStatus?.reason ?? '';
+      }
     } catch (err: unknown) {
       apifyFailed = true;
       apifyFailureReason = err instanceof Error ? err.message : String(err);
@@ -49,31 +84,84 @@ export class JobPipeline {
     }
     console.log(`[JobPipeline] Apify (Upwork): ${apifyJobs.length} jobs (failed=${apifyFailed}).`);
     fetchedJobs.push(...apifyJobs);
+    // Telemetry, never fatal. This is the only place that knows how many
+    // billed Apify runs this fetch actually cost, and cost per USEFUL LEAD
+    // is the number that should decide where scraping effort goes — record
+    // counts rank the high-volume source first, which the measured yield
+    // says is exactly backwards.
+    // A deliberate schedule skip is not a source failure and must not count
+    // toward the backoff streak — that would eventually retire a healthy
+    // source for doing exactly what it was told.
+    if (discovery.allowed) await recordSourceRun('apify', {
+      ok: !apifyFailed,
+      reason: apifyFailureReason || null,
+      records: apifyJobs.length,
+      durationMs: Date.now() - apifyStartedAt,
+      billedUnits: apifyProvider.lastRunStatus?.billedRuns ?? 0,
+    });
 
-    // Freelancer (complementary source)
-    const freelancerJobs = await this.providers[1].fetchJobs();
-    console.log(`[JobPipeline] Freelancer: ${freelancerJobs.length} jobs.`);
+    // Freelancer (complementary source). Isolated like Apify: an exception
+    // here used to abort the entire pipeline before the save, the market
+    // facts, and the cron log — so one broken source silently took down
+    // ingestion for every source.
+    let freelancerJobs: Job[] = [];
+    let freelancerFailed = false;
+    let freelancerFailureReason = '';
+    const freelancerStartedAt = Date.now();
+    try {
+      freelancerJobs = await this.providers[1].fetchJobs();
+    } catch (err: unknown) {
+      freelancerFailed = true;
+      freelancerFailureReason = err instanceof Error ? err.message : String(err);
+      console.error('[JobPipeline] Freelancer fetch threw:', freelancerFailureReason);
+    }
+    console.log(`[JobPipeline] Freelancer: ${freelancerJobs.length} jobs (failed=${freelancerFailed}).`);
     fetchedJobs.push(...freelancerJobs);
+    // Freelancer's own API is free, so billedUnits stays 0 — and the cost
+    // report says "n/a (free)" rather than "0 per lead", which would read as
+    // infinitely efficient.
+    await recordSourceRun('freelancer', {
+      ok: !freelancerFailed,
+      reason: freelancerFailureReason || null,
+      records: freelancerJobs.length,
+      durationMs: Date.now() - freelancerStartedAt,
+      billedUnits: 0,
+    });
 
     // Step 3: Local 7-Day Filter & Hard Filters
     console.log('[JobPipeline] Step 3: Applying 7-Day Age Filter & Hard Filters...');
     const validFetched = fetchedJobs.filter(job => this.applyHardFilters(job));
 
-    // Refresh volatile competition signals on already-stored jobs
+    // Refresh volatile competition signals on already-stored jobs.
+    //
+    // Rows whose signals actually CHANGED are collected here. Everything else
+    // in the store is byte-identical to what is already persisted, and used to
+    // be rewritten anyway — ~5000 sequential upserts per sync, ~48 ticks a day,
+    // for rows nothing had touched. Only dirty rows are written now.
     const storeByUrl = new Map<string, Job>();
     activeStore.forEach(j => { if (j.url) storeByUrl.set(j.url, j); });
+    const dirtyUrls = new Set<string>();
     for (const f of validFetched) {
       const ex = f.url ? storeByUrl.get(f.url) : undefined;
       if (ex) {
+        let changed = false;
         if (
           typeof f.proposalCount === 'number' &&
           f.proposalCount > 0 &&
           (typeof ex.proposalCount !== 'number' || f.proposalCount > ex.proposalCount)
         ) {
           ex.proposalCount = f.proposalCount;
+          changed = true;
         }
-        if (typeof f.interviewingCount === 'number' && f.interviewingCount > 0) ex.interviewingCount = f.interviewingCount;
-        if (typeof f.hiresCount === 'number' && f.hiresCount > 0) ex.hiresCount = f.hiresCount;
+        if (typeof f.interviewingCount === 'number' && f.interviewingCount > 0 && f.interviewingCount !== ex.interviewingCount) {
+          ex.interviewingCount = f.interviewingCount;
+          changed = true;
+        }
+        if (typeof f.hiresCount === 'number' && f.hiresCount > 0 && f.hiresCount !== ex.hiresCount) {
+          ex.hiresCount = f.hiresCount;
+          changed = true;
+        }
+        if (changed && ex.url) dirtyUrls.add(ex.url);
       }
     }
 
@@ -102,7 +190,15 @@ export class JobPipeline {
     const finalCollection = [...brandNewJobs, ...activeStore];
     finalCollection.sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
 
-    await this.saveStore(finalCollection);
+    // Write ONLY what changed: brand-new rows, plus stored rows whose
+    // competition signals moved. Untouched rows are already correct in the
+    // database and rewriting them costs a round trip each for no effect.
+    const toPersist = [
+      ...brandNewJobs,
+      ...activeStore.filter(j => j.url && dirtyUrls.has(j.url)),
+    ];
+    console.log(`[JobPipeline] Persisting ${toPersist.length} rows (${brandNewJobs.length} new, ${toPersist.length - brandNewJobs.length} updated) out of ${finalCollection.length} active.`);
+    await this.saveStore(toPersist);
 
     // DB-level retention enforcement — remove all jobs older than 7 days
     try {
@@ -157,16 +253,25 @@ export class JobPipeline {
         });
       await Promise.all([
         upsert('provider:apify', { lastRun: now, failed: apifyFailed, reason: apifyFailureReason || null, count: apifyJobs.length }),
-        upsert('provider:freelancer', { lastRun: now, failed: false, count: freelancerJobs.length }),
+        upsert('provider:freelancer', { lastRun: now, failed: freelancerFailed, reason: freelancerFailureReason || null, count: freelancerJobs.length }),
         upsert('pipeline:lastRun', { lastRun: now, total: fetchedJobs.length, new: brandNewJobs.length, active: finalCollection.length }),
       ]);
     } catch { /* non-fatal */ }
 
+    // A run where a source failed is a WARNING, not a SUCCESS — /cron-logs
+    // could not previously distinguish "no new jobs" from "a source is down".
+    const anySourceFailed = apifyFailed || freelancerFailed;
+    const failureNotes = [
+      apifyFailed ? `Apify: ${apifyFailureReason || 'failed'}` : '',
+      freelancerFailed ? `Freelancer: ${freelancerFailureReason || 'failed'}` : '',
+    ].filter(Boolean).join('; ');
+
     await logCronRun({
-      status: 'SUCCESS',
+      status: anySourceFailed ? 'WARNING' : 'SUCCESS',
       jobsFetched: fetchedJobs.length,
       newJobsAdded: brandNewJobs.length,
-      sourceSummary: `Apify (${apifyJobs.length}), Freelancer (${freelancerJobs.length})`
+      sourceSummary: `Upwork (${apifyJobs.length}), Freelancer (${freelancerJobs.length})`
+        + (failureNotes ? ` — ${failureNotes}` : ''),
     });
 
     return { jobs: finalCollection, newJobsAdded: brandNewJobs.length };
@@ -224,9 +329,29 @@ export class JobPipeline {
     }
   }
 
+  /** Row writes that threw during the last saveStore. A caller reporting
+   *  success must check this — fetching jobs and persisting none is a
+   *  failed run, however cleanly the call returns. */
+  lastWriteFailures = 0;
+
   private async saveStore(jobs: Job[]) {
+    // Listings that came back identical. They still need their lastSeenAt
+    // advanced so retention and source health stay honest, but that is one
+    // batched statement at the end rather than a full row update each.
+    const unchangedIds: string[] = [];
+    let written = 0;
+    let writeFailures = 0;
+    const batchSeenAt = new Date();
+
     for (const job of jobs) {
-      if (!job.url) continue;
+      // Reject anything that is not an absolute http(s) URL. A scraped
+      // `javascript:` / `data:` URL would otherwise be stored and later handed
+      // to window.open() on the job detail page, which executes it in a window
+      // inheriting our origin.
+      if (!isSafeExternalUrl(job.url)) {
+        if (job.url) console.warn('[JobPipeline] Skipping job with unsafe URL:', String(job.url).slice(0, 120));
+        continue;
+      }
       try {
         const budgetStr = typeof job.budget === 'object' ? JSON.stringify(job.budget) : (job.budget || 'Negotiable');
         const skillsStr = Array.isArray(job.skills) ? job.skills.join(',') : '';
@@ -248,65 +373,179 @@ export class JobPipeline {
           ...(extra.memberSince ? { memberSince: extra.memberSince } : {}),
         };
 
-        await prisma.opportunity.upsert({
-          where: { url: job.url },
-          update: {
-            title: job.title || 'Untitled Job',
-            description: job.description || '',
-            budget: budgetStr,
-            platform: job.platform || 'Upwork',
-            score: job.score ?? 70,
-            country: job.country || clientObj.country || '',
-            clientName: job.clientName || clientObj.name || '',
-            clientSpend: job.clientSpend || '',
-            clientReviews: job.clientReviews || '',
-            connections: job.connections || 0,
-            budgetType: job.budgetType || '',
-            experienceLevel: job.experienceLevel || '',
-            duration: job.duration || '',
-            skills: skillsStr,
-            proposalCount: typeof job.proposalCount === 'number' && job.proposalCount > 0 ? job.proposalCount : undefined,
-            interviewingCount: typeof job.interviewingCount === 'number' && job.interviewingCount > 0 ? job.interviewingCount : undefined,
-            hiresCount: typeof job.hiresCount === 'number' && job.hiresCount > 0 ? job.hiresCount : undefined,
-            paymentVerified: clientObj.paymentVerified === true,
-            clientRating: clientObj.rating ? String(clientObj.rating) : '',
-            jobsPosted: clientObj.jobsPosted ?? null,
-            applied: job.applied || false,
-            rawPayload: JSON.stringify(payload),
-          },
-          create: {
-            id: job.id,
-            url: job.url,
-            title: job.title || 'Untitled Job',
-            description: job.description || '',
-            budget: budgetStr,
-            platform: job.platform || 'Upwork',
-            score: job.score ?? 70,
-            createdAt: new Date(),
-            country: job.country || clientObj.country || '',
-            clientName: job.clientName || clientObj.name || '',
-            clientSpend: job.clientSpend || '',
-            clientReviews: job.clientReviews || '',
-            connections: job.connections || 0,
-            budgetType: job.budgetType || '',
-            experienceLevel: job.experienceLevel || '',
-            duration: job.duration || '',
-            skills: skillsStr,
-            proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
-            interviewingCount: job.interviewingCount || 0,
-            hiresCount: job.hiresCount || 0,
-            paymentVerified: clientObj.paymentVerified === true,
-            clientRating: clientObj.rating ? String(clientObj.rating) : '',
-            jobsPosted: clientObj.jobsPosted ?? null,
-            applied: job.applied || false,
-            rawPayload: JSON.stringify(payload),
-          },
+        // Identity resolution replaces the URL-keyed upsert. One query, and
+        // it matches on the source's own id first, so the same Freelancer
+        // project arriving under its slug URL and its slug+id URL updates one
+        // row instead of creating two. Falls back to the exact URL, then to
+        // the canonical URL. See lib/ingestIdentity.ts for why contentHash is
+        // not a match key.
+        const seenAt = new Date();
+        const { identity, existingId, existing } = await resolveIdentity(prisma, {
+          platform: job.platform || 'Upwork',
+          url: job.url,
+          title: job.title,
+          description: job.description,
+          sourceJobId: job.sourceJobId,
+        });
+        const postedAtValue = sourcePostedAt(job.postedAt, seenAt);
+        const idFields = identityFields(identity, postedAtValue, seenAt);
+
+        // A sync fetches ~150 Freelancer records and ~19% of them are new.
+        // Rewriting the other ~130 in full on every run — about 1,300 row
+        // updates a day — changed nothing a user could see and was paid for
+        // in Neon compute. If nothing material moved, fall through to the
+        // batched lastSeenAt touch instead.
+        if (existing && !hasMaterialChange(existing, {
+          contentHash: identity.contentHash,
+          proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
+          budget: budgetStr,
+          clientSpend: job.clientSpend || '',
+          clientRating: clientObj.rating ? String(clientObj.rating) : '',
+          jobsPosted: clientObj.jobsPosted ?? null,
+        })) {
+          unchangedIds.push(existing.id);
+          continue;
+        }
+
+        // Authenticity and lead score are computed here rather than at read
+        // time so the feed can rank and filter on them in SQL. They are
+        // recomputed by scripts/assess-listings.ts as freshness decays; see
+        // assess.ts for why a small drift does not trigger a write.
+        // `competitionObservedAt` is now, because the proposal count in this
+        // payload is what the source is reporting at this moment — it is the
+        // only point in the system where that figure is actually fresh.
+        const assessment = assessListing({
+          platform: job.platform || 'Upwork',
+          title: job.title || 'Untitled Job',
+          description: job.description || '',
+          url: job.url,
+          budget: budgetStr,
+          sourceJobId: identity.sourceJobId,
+          skills: skillsStr,
+          experienceLevel: job.experienceLevel || '',
+          proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
+          competitionObservedAt: seenAt,
+          clientSpend: job.clientSpend || '',
+          clientRating: clientObj.rating ? String(clientObj.rating) : '',
+          jobsPosted: clientObj.jobsPosted ?? null,
+          paymentVerified: clientObj.paymentVerified === true,
+          postedAt: postedAtValue,
+        }, seenAt);
+
+        const updateData = {
+          title: job.title || 'Untitled Job',
+          description: job.description || '',
+          budget: budgetStr,
+          platform: job.platform || 'Upwork',
+          score: job.score ?? 70,
+          country: job.country || clientObj.country || '',
+          clientName: job.clientName || clientObj.name || '',
+          clientSpend: job.clientSpend || '',
+          clientReviews: job.clientReviews || '',
+          connections: job.connections || 0,
+          // Derive from the parsed budget when the provider did not set the
+          // field. Measured: the column was empty on all 1,332 rows while the
+          // budget JSON carried the type on every one, so the jobType filter
+          // matched nothing and silently emptied the feed.
+          budgetType: job.budgetType || (typeof job.budget === 'object' && job.budget?.type ? job.budget.type : ''),
+          experienceLevel: job.experienceLevel || '',
+          duration: job.duration || '',
+          skills: skillsStr,
+          proposalCount: typeof job.proposalCount === 'number' && job.proposalCount > 0 ? job.proposalCount : undefined,
+          interviewingCount: typeof job.interviewingCount === 'number' && job.interviewingCount > 0 ? job.interviewingCount : undefined,
+          hiresCount: typeof job.hiresCount === 'number' && job.hiresCount > 0 ? job.hiresCount : undefined,
+          paymentVerified: clientObj.paymentVerified === true,
+          clientRating: clientObj.rating ? String(clientObj.rating) : '',
+          jobsPosted: clientObj.jobsPosted ?? null,
+          applied: job.applied || false,
+          rawPayload: JSON.stringify(payload),
+          ...idFields,
+          ...assessment,
+        };
+
+        const createData = {
+          id: job.id,
+          url: job.url,
+          title: job.title || 'Untitled Job',
+          description: job.description || '',
+          budget: budgetStr,
+          platform: job.platform || 'Upwork',
+          score: job.score ?? 70,
+          createdAt: new Date(),
+          country: job.country || clientObj.country || '',
+          clientName: job.clientName || clientObj.name || '',
+          clientSpend: job.clientSpend || '',
+          clientReviews: job.clientReviews || '',
+          connections: job.connections || 0,
+          // Derive from the parsed budget when the provider did not set the
+          // field. Measured: the column was empty on all 1,332 rows while the
+          // budget JSON carried the type on every one, so the jobType filter
+          // matched nothing and silently emptied the feed.
+          budgetType: job.budgetType || (typeof job.budget === 'object' && job.budget?.type ? job.budget.type : ''),
+          experienceLevel: job.experienceLevel || '',
+          duration: job.duration || '',
+          skills: skillsStr,
+          proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
+          interviewingCount: job.interviewingCount || 0,
+          hiresCount: job.hiresCount || 0,
+          paymentVerified: clientObj.paymentVerified === true,
+          clientRating: clientObj.rating ? String(clientObj.rating) : '',
+          jobsPosted: clientObj.jobsPosted ?? null,
+          applied: job.applied || false,
+          rawPayload: JSON.stringify(payload),
+          ...idFields,
+          ...assessment,
+          // createdAt has always been the retention anchor; firstSeenAt makes
+          // that explicit. Create-only — an update must never move it.
+          firstSeenAt: seenAt,
+        };
+
+        if (existingId) {
+          await prisma.opportunity.update({ where: { id: existingId }, data: updateData });
+          written++;
+        } else {
+          try {
+            await prisma.opportunity.create({ data: createData });
+            written++;
+          } catch (createErr: unknown) {
+            // A concurrent run inserted this listing between the lookup and
+            // the write, or the generated primary key already belongs to
+            // another row. Fall back to the URL-keyed upsert this path used
+            // before, so a race degrades to the old behaviour instead of
+            // dropping the record. Ingestion has to survive retries and
+            // overlapping runs.
+            if ((createErr as { code?: string })?.code !== 'P2002') throw createErr;
+            await prisma.opportunity.upsert({
+              where: { url: job.url },
+              update: updateData,
+              create: createData,
+            });
+            written++;
+          }
+        }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        writeFailures++;
+        console.error('[JobPipeline] DB write error:', err.message);
+      }
+    }
+
+    // One statement for every listing that had not changed.
+    if (unchangedIds.length > 0) {
+      try {
+        await prisma.opportunity.updateMany({
+          where: { id: { in: unchangedIds } },
+          data: { lastSeenAt: batchSeenAt },
         });
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
-        console.error('[JobPipeline] DB upsert error:', err.message);
+        console.error('[JobPipeline] lastSeenAt batch failed:', err.message);
       }
     }
+    this.lastWriteFailures = writeFailures;
+    console.log(
+      `[JobPipeline] stored ${written} changed, ${unchangedIds.length} unchanged (one batched touch)`,
+    );
   }
 
   private static normUrlKey(url?: string | null): string {

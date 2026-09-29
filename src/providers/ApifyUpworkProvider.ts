@@ -1,6 +1,12 @@
 import { JobProvider, ProviderRunStatus } from "./JobProvider";
 import { Job } from "../types/job";
 import { getApifyBudgetRemaining, consumeApifyBudget } from "../lib/apifyBudget";
+import { ApifyPurpose, canSpend } from "../lib/apifyAllocation";
+
+// Hard deadline for one Apify run-sync call. The actor is synchronous, so a
+// hung run would otherwise hold the sync lock until the platform kills the
+// function.
+const APIFY_REQUEST_TIMEOUT_MS = 90_000;
 
 // Upwork reports competition as an exact number, a ceiling band ("50+"), range
 // bands ("0 to 5", "5 to 10", "20 to 50"), or phrases like "Be the first to
@@ -121,11 +127,13 @@ export class ApifyUpworkProvider implements JobProvider {
   // timeout/actor errors) from a normal run that simply returned few or zero
   // jobs. Zero jobs from successful queries is NOT a failure.
   lastRunStatus?: ProviderRunStatus;
+  /** Billed Apify runs consumed by the CURRENT fetch. Reset per fetchJobs. */
+  private billedRuns = 0;
 
   // `opts` is only used by the Active Job Refresh flow, which fetches a wider
   // recency window to catch older-but-still-active listings. The new-job sync
   // calls fetchJobs() with no args, so its behavior is unchanged (12 / 60).
-  async fetchJobs(opts?: { maxResults?: number; totalCap?: number }): Promise<Job[]> {
+  async fetchJobs(opts?: { maxResults?: number; totalCap?: number; purpose?: ApifyPurpose }): Promise<Job[]> {
     if (this.tokens.length === 0) {
       console.warn('[ApifyUpworkProvider] APIFY_TOKEN / APIFY_TOKEN2 / APIFY_TOKEN3 are missing in environment.');
       this.lastRunStatus = { failed: true, reason: 'no APIFY token configured', queriesTotal: 0, queriesFailed: 0 };
@@ -144,29 +152,69 @@ export class ApifyUpworkProvider implements JobProvider {
       "react developer",
     ];
 
+    /**
+     * ONE batched, incremental call per pass.
+     *
+     * Two actor features this integration was not using, both verified on the
+     * actor's own page (apify.com/blackfalcondata/upwork-scraper):
+     *
+     *   Batch searches — passing an ARRAY of queries runs them together with
+     *   shared dedup state and is charged ONE Actor-Start instead of N. The
+     *   previous code issued these four queries as four separate billed runs.
+     *
+     *   Incremental mode — with a stable stateKey the actor emits only
+     *   listings that are new or whose tracked content changed since this
+     *   account's previous run. We were paying for every result every time
+     *   and then throwing most of them away: measured, ~50 records returned
+     *   per day against ~28 genuinely new Upwork rows, so roughly 44% of the
+     *   result spend bought listings already in the database.
+     *
+     * Pricing, confirmed on that page rather than assumed: $0.001 per run
+     * start plus $0.001 per emitted result, against $5 of monthly credit.
+     *
+     * State is held per Apify account, so the token order below prefers the
+     * primary and only fails over on error — switching accounts costs one
+     * re-baseline on the new account, never a missed listing.
+     */
+    const queryBatches: string[][] = [queries];
+    const stateKey = process.env.APIFY_STATE_KEY?.trim() || 'leadhunter-discovery-v1';
+
     const results: Job[] = [];
     const seen = new Set<string>();
     let succeededQueries = 0;
     let skippedQueries = 0;
 
-    const maxResults = opts?.maxResults ?? 8;
+    // Every attempt below is a separately billed Apify run. Counted here so
+    // cost-per-useful-lead is measured rather than estimated.
+    this.billedRuns = 0;
+    // With incremental mode only new or changed listings are emitted, and
+    // only emitted results are billed — so this is a safety bound against a
+    // surprise burst, not the cost driver it used to be. It was 8 per query
+    // across 4 billed runs; it is now one cap across one run.
+    const maxResults = opts?.maxResults ?? 25;
     const totalCap = opts?.totalCap ?? 60;
+    // Discovery may spend the whole remaining budget; refresh may only spend
+    // what is above the discovery reserve. Re-checking a listing already in
+    // the database must never consume the budget needed to find a new one —
+    // Upwork yields 66% useful leads against Freelancer's 10%, and the
+    // proposal counts refresh exists to update are measured not to move.
+    const purpose: ApifyPurpose = opts?.purpose ?? 'discovery';
     // One contiguous slice per account: N tokens -> each serves an equal share
     // of the query list (deterministic); 1 token -> one slice serves everything.
-    const slice = computeSliceSize(queries.length, this.tokens.length);
+    const slice = computeSliceSize(queryBatches.length, this.tokens.length);
 
-    for (let qi = 0; qi < queries.length; qi++) {
+    for (let qi = 0; qi < queryBatches.length; qi++) {
       if (results.length >= totalCap) break;
 
       // Daily free-tier budget: stop launching billed Apify runs once the cap
       // is hit. Sync runs first in the cron, so new-job ingestion gets
       // priority; the refresh shares the same pool and skips when it is empty.
-      if ((await getApifyBudgetRemaining()) <= 0) {
-        skippedQueries = queries.length - qi;
+      if (!canSpend(purpose, await getApifyBudgetRemaining())) {
+        skippedQueries = queryBatches.length - qi;
         break;
       }
 
-      const query = queries[qi];
+      const query = queryBatches[qi];
 
       // Primary account for this query's slice first, then every other
       // configured account (skipping any already confirmed unavailable this
@@ -175,7 +223,16 @@ export class ApifyUpworkProvider implements JobProvider {
 
       let rawItems: any[] | null = null; // eslint-disable-line @typescript-eslint/no-explicit-any
       for (const token of tokenOrder) {
-        const res = await this.runQuery(query, token, maxResults);
+        // EVERY attempt is a separately billed Apify run, including a failover
+        // retry on another account. Checking the budget once per query (above)
+        // and then consuming it once per attempt let a single query spend one
+        // unit per configured token — up to 3x the intended rate. Re-check
+        // before each attempt so the cap is the cap.
+        if (!canSpend(purpose, await getApifyBudgetRemaining())) {
+          skippedQueries = Math.max(skippedQueries, queryBatches.length - qi);
+          break;
+        }
+        const res = await this.runQuery(query, token, maxResults, stateKey);
         if (res.exhausted) {
           this.unavailableTokens.add(token);
           console.warn(`[ApifyUpworkProvider] Account ...${token.slice(-4)} unavailable for the rest of this run; switching accounts.`);
@@ -207,12 +264,15 @@ export class ApifyUpworkProvider implements JobProvider {
         const spentVal = item.clientTotalSpent ? `$${Number(item.clientTotalSpent).toLocaleString()}` : '';
         const description = this.cleanText(item.descriptionMarkdown || item.description || item.summary || item.jobDescription || '');
 
-        let connects = item.connectsRequired ?? null;
-        if (connects == null && item.budgetAmount) {
-          connects = item.budgetAmount >= 1000 ? 16 : (item.budgetAmount >= 500 ? 12 : 8);
-        } else if (connects == null && item.jobType === 'HOURLY') {
-          connects = 12;
-        }
+        // Connects required to bid is a SOURCE FACT or it is unknown. It used
+        // to be invented from the budget (>=1000 -> 16, >=500 -> 12, else 8)
+        // when the source omitted it, and the UI then displayed that guess as
+        // "Bid Cost — N connects" with no indication it was inferred. An
+        // unknown value stays null and the UI must say so.
+        const connects: number | null =
+          typeof item.connectsRequired === 'number' && Number.isFinite(item.connectsRequired)
+            ? item.connectsRequired
+            : null;
 
         const job: Job = {
           id: item.jobId || item.contentHash || normalizedUrl,
@@ -249,7 +309,15 @@ export class ApifyUpworkProvider implements JobProvider {
             country: country === 'Remote' ? 'Remote' : country || 'Remote',
             rating: typeof item.clientRating === 'number' ? item.clientRating : (typeof item.clientRating === 'string' ? Number(item.clientRating) || null : null),
             totalSpent: typeof item.clientTotalSpent === 'number' ? item.clientTotalSpent : null,
-            jobsPosted: typeof item.clientReviewCount === 'number' ? item.clientReviewCount : null,
+            // `clientReviewCount` is the number of REVIEWS the client has
+            // received, not the number of jobs they have posted. Mapping it to
+            // jobsPosted mislabelled one source fact as another wherever the
+            // UI prints "jobs posted". Prefer a real jobs-posted field; fall
+            // back to null rather than to the review count.
+            jobsPosted: typeof item.clientJobsPosted === 'number'
+              ? item.clientJobsPosted
+              : (typeof item.clientTotalJobsPosted === 'number' ? item.clientTotalJobsPosted : null),
+            reviewCount: typeof item.clientReviewCount === 'number' ? item.clientReviewCount : null,
             totalHires: typeof item.totalHires === 'number' ? item.totalHires : null,
             paymentVerified: item.clientPaymentVerified ?? null,
             lastActivityAt: item.lastActivityAt ? new Date(item.lastActivityAt) : null,
@@ -282,8 +350,9 @@ export class ApifyUpworkProvider implements JobProvider {
       reason: budgetSkipped
         ? `daily Apify query budget exhausted (skipped ${skippedQueries} query(s))`
         : failed ? `all ${queries.length} query attempts failed (API/quota/timeout/actor)` : 'ok',
-      queriesTotal: queries.length - skippedQueries,
-      queriesFailed: queries.length - skippedQueries - succeededQueries,
+      queriesTotal: queryBatches.length - skippedQueries,
+      queriesFailed: queryBatches.length - skippedQueries - succeededQueries,
+      billedRuns: this.billedRuns,
     };
     console.log(`[ApifyUpworkProvider] Total jobs fetched: ${results.length} (failed=${failed}, skipped=${skippedQueries})`);
     return results;
@@ -297,26 +366,46 @@ export class ApifyUpworkProvider implements JobProvider {
   // (5xx / fetch failure) returns items=null with exhausted=false so the caller
   // fails over for that query but keeps the account for later queries.
   private async runQuery(
-    query: string,
+    query: string | string[],
     token: string,
-    maxResults: number
+    maxResults: number,
+    stateKey: string
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): Promise<{ items: any[] | null; exhausted: boolean }> {
-    const endpoint = `https://api.apify.com/v2/actors/blackfalcondata~upwork-scraper/run-sync-get-dataset-items?token=${token}`;
+    // The token goes in an Authorization header, NOT in the query string.
+    // Query strings are recorded by CDN and function access logs, outbound
+    // proxies and APM tooling; an Authorization header is not.
+    const endpoint =
+      "https://api.apify.com/v2/actors/blackfalcondata~upwork-scraper/run-sync-get-dataset-items";
     try {
       // Each query attempt is a billed Apify run (pay-per-event), so consume
       // the daily budget here — after the availability check above and once for
       // every account retried.
       const remaining = await consumeApifyBudget();
-      console.log(`[ApifyUpworkProvider] Fetching Upwork jobs for: "${query}" (account ...${token.slice(-4)}, budget remaining ${remaining})...`);
+      this.billedRuns++;
+      const label = Array.isArray(query) ? `${query.length} batched queries` : `"${query}"`;
+      console.log(`[ApifyUpworkProvider] Fetching Upwork jobs — ${label}, incremental (account ...${token.slice(-4)}, budget remaining ${remaining})...`);
+      // run-sync-get-dataset-items blocks until the actor finishes. Without a
+      // deadline a stuck actor holds the sync lock and burns the whole
+      // serverless function budget.
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           query,
           maxResults,
           sort: "recency",
+          // Emit only listings that are new or changed since this account's
+          // last run under this key. `emitUnchanged` is left at its default
+          // (false) — re-emitting unchanged rows is exactly the spend this
+          // is here to stop.
+          incrementalMode: true,
+          stateKey,
         }),
+        signal: AbortSignal.timeout(APIFY_REQUEST_TIMEOUT_MS),
       });
 
       if (!res.ok) {

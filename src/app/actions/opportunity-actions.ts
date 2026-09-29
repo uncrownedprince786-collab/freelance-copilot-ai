@@ -20,7 +20,13 @@ const GetOpportunitiesSchema = z.object({
   limit: z.number().int().min(1).max(100).default(15),
 });
 
-const IdSchema = z.string().uuid();
+// NOT a uuid. The schema defaults `id` to a uuid, but the pipeline writes
+// source-derived primary keys instead — "fl-Independent-Sales-Representative
+// -Market-40740654", "2104711373987074894". A uuid check therefore threw a
+// ZodError for every real row, so /opportunities/[id] failed to load every
+// listing in the database. Bounded and character-restricted instead, which
+// is the same shape /api/jobs already validates.
+const IdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
 const TrackingStatusSchema = z.enum(["APPLIED", "SKIPPED", "NEW"]);
 
 export async function getOpportunities(rawOptions: z.input<typeof GetOpportunitiesSchema>) {

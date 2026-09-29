@@ -24,6 +24,7 @@ export class FreelancerProvider implements JobProvider {
         return {
           id: 'fl-' + (raw.url ? raw.url.split('/').pop()?.replace(/[^a-zA-Z0-9_-]/g, '') : Math.random().toString(36).substring(7)),
           url: raw.url,
+          sourceJobId: raw.sourceJobId ?? null,
           title: raw.title,
           description: raw.description || '',
           skills: detailSkills,

@@ -116,6 +116,14 @@ export class FreelancerCollector extends BaseCollector {
           title: this.cleanText(project.title || 'Untitled'),
           description,
           url: `https://www.freelancer.com/projects/${project.seo_url || project.id}`,
+          // The URL above is why this field exists. `seo_url` sometimes ends
+          // with the project id and sometimes does not, so the same project
+          // reaches the database under two different URLs and, keyed on URL,
+          // becomes two rows — 87% of live Freelancer rows have no id in their
+          // URL at all. `project.id` is always present here, and is the same
+          // numeric id that lib/identity.ts parses out of the URLs that do
+          // carry one, so the two paths agree.
+          sourceJobId: project.id != null ? String(project.id) : null,
           platform: 'Freelancer',
           budget,
           location: 'Remote',

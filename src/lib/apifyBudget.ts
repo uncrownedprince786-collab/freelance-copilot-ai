@@ -1,15 +1,30 @@
 import { prisma } from "./db";
 
-// Daily budget for Apify Upwork Scraper query-runs, shared across the new-job
-// sync AND the active-job refresh. The actor (blackfalcondata/upwork-scraper)
-// is pay-per-event: ~$0.001 per run + ~$1.00 per 1,000 results, drawn from the
-// $5/month free tier. A hard daily query cap is the only way to keep the month
-// inside that budget regardless of how many cron ticks fire, because every
-// query is billed even when it returns no NEW jobs.
+// Daily budget for billed Apify runs, shared across the new-job sync AND the
+// active-job refresh.
 //
-// Default: 16 query-runs/day. Worst case (every query returns the max results)
-// that is ~16 x $0.009 ≈ $0.14/day ≈ ~$4.3/month — safely inside the free tier
-// with headroom for retries. Override with APIFY_DAILY_QUERY_BUDGET.
+// Pricing, read off the actor's own page rather than assumed:
+// blackfalcondata/upwork-scraper is pay-per-event at $0.001 per run start
+// plus $0.001 per emitted result, against $5 of monthly free credit.
+//
+// The old model spent that badly. Each of the four discovery queries was a
+// separate billed run at 8 results each — 32 billed results per pass — and
+// none of it was incremental, so the same listings were bought again on
+// every pass. Measured: ~50 records returned per day against ~28 genuinely
+// new Upwork rows, and only 2 passes a day actually ran before the cap bit.
+// Worst case that was ~$4.3/month, 86% of the allowance, for data that was
+// up to twelve hours stale.
+//
+// The provider now sends the four queries as ONE batched run (one
+// Actor-Start instead of four) with incrementalMode and a stable stateKey,
+// so a pass costs one run plus only the listings that are actually new or
+// changed. A pass is therefore ~$0.001 + ~$0.003 of results instead of
+// ~$0.036, and every sync can afford one.
+//
+// Default: 16 billed runs/day. At roughly 28 new Upwork listings a day that
+// is about $0.016 of run starts plus $0.028 of results — ~$1.3/month, about
+// a quarter of the allowance, with the cap still there to stop a runaway
+// loop. Override with APIFY_DAILY_QUERY_BUDGET.
 const BUDGET_KEY = "apify_query_budget";
 
 export function utcDateKey(d: Date = new Date()): string {

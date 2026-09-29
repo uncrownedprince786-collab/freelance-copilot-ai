@@ -1,15 +1,30 @@
 import { NextResponse } from 'next/server';
 import { ADMIN_COOKIE, ADMIN_SESSION_MS, createAdminToken } from '@/lib/adminAuth';
-import { createRateLimiter } from '@/lib/rateLimit';
+import { consumeQuota, quotaSubject } from '@/lib/rateLimit';
+import { timingSafeSecretEqual } from '@/lib/cronAuth';
 
 export const dynamic = 'force-dynamic';
 
-const isLoginRateLimited = createRateLimiter(5, 60_000);
+// Attempts allowed per window, globally. This has to be durable: the previous
+// in-memory limiter was per-lambda, reset on every cold start, multiplied by
+// concurrency, and keyed on the raw client-supplied `x-forwarded-for` — so
+// rotating that header per request gave an attacker an unthrottled online
+// password-guessing oracle against an account whose username defaults to
+// "admin".
+const LOGIN_MAX_ATTEMPTS = 10;
+const LOGIN_WINDOW_MS = 10 * 60_000;
 
 export async function POST(request: Request) {
-  const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
-  if (isLoginRateLimited(ip)) {
-    return NextResponse.json({ error: 'Too many attempts. Try again in a minute.' }, { status: 429 });
+  // No session exists yet at login, so this is necessarily IP-keyed — but it
+  // is at least a shared counter now, and it uses the right-most forwarded
+  // element rather than the left-most (client-supplied) one.
+  const subject = quotaSubject(undefined, request.headers.get('x-forwarded-for'));
+  const quota = await consumeQuota('login', subject, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS);
+  if (!quota.allowed) {
+    return NextResponse.json(
+      { error: 'Too many attempts. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(quota.resetInSec) } },
+    );
   }
 
   let body: unknown;
@@ -26,7 +41,13 @@ export async function POST(request: Request) {
   const expectedUsername = process.env.ADMIN_USERNAME || 'admin';
   const expectedPassword = process.env.ADMIN_PASSWORD;
 
-  if (!expectedPassword || username !== expectedUsername || password !== expectedPassword) {
+  // Constant-time comparison, and both sides are evaluated so the response
+  // time does not distinguish "wrong username" from "wrong password".
+  // (`!==` short-circuits; the rest of this codebase already compares secrets
+  // this way — login was the outlier.)
+  const userOk = !!expectedUsername && timingSafeSecretEqual(username, expectedUsername);
+  const passOk = !!expectedPassword && timingSafeSecretEqual(password, expectedPassword);
+  if (!expectedPassword || !userOk || !passOk) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
   }
 

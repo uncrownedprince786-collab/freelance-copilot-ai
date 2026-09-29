@@ -39,17 +39,103 @@ model Opportunity {
   appliedAt         DateTime?
   rawPayload        String?
 
+  // ---------------------------------------------------------------------
+  // Identity
+  // ---------------------------------------------------------------------
+  // Identity used to be `url` and nothing else. That made every duplicate
+  // check a raw string comparison, and meant a source changing its URL
+  // format would re-insert the entire feed as new rows.
+  //
+  // sourceJobId is the source's own native id (the Upwork job id, the
+  // Freelancer project id) — the strongest identity signal available.
+  sourceJobId   String?
+  // URL with tracking parameters and casing normalised. Parameters that
+  // materially identify a job are preserved — see lib/identity.ts.
+  canonicalUrl  String?
+  // SHA-256 over normalised (title, description). Catches the same listing
+  // re-posted under a different URL.
+  contentHash   String?
+
+  // ---------------------------------------------------------------------
+  // Time — four different things, previously conflated
+  // ---------------------------------------------------------------------
+  //   postedAt    what the SOURCE says (source fact)
+  //   firstSeenAt when this row first entered THIS database
+  //   lastSeenAt  when a fetch last still returned this listing
+  //   createdAt   retention anchor; equals firstSeenAt for new rows
+  // postedAt previously lived only inside the rawPayload JSON string, so
+  // "latest" was really insert order and nothing could filter on real
+  // posting time.
+  postedAt    DateTime?
+  firstSeenAt DateTime?
+  lastSeenAt  DateTime?
+
+  // ---------------------------------------------------------------------
+  // Duplicate clustering
+  // ---------------------------------------------------------------------
+  // High-confidence duplicates share a cluster and point at one canonical
+  // row. Low-confidence matches are LINKED, never merged — an uncertain
+  // duplicate decision must not silently hide a listing.
+  duplicateClusterId  String?
+  canonicalJobId      String?
+  // canonical | duplicate | possible_duplicate | independent | unknown
+  duplicateStatus     String  @default("unknown")
+  duplicateConfidence Float?
+  // Which rule decided canonicality, so the UI can explain the decision
+  // instead of asserting "this is the original job".
+  canonicalReason     String?
+
+  // ---------------------------------------------------------------------
+  // Authenticity — deterministic, never an LLM verdict
+  // ---------------------------------------------------------------------
+  // verified | supported | uncertain | suspicious | stale | rejected
+  authenticityStatus   String  @default("uncertain")
+  // JSON string arrays of reason codes, so the UI can always answer "why".
+  authenticitySignals  String?
+  authenticityWarnings String?
+
+  // ---------------------------------------------------------------------
+  // Lead scoring — explainable
+  // ---------------------------------------------------------------------
+  // Separate from the legacy `score`, which mixes lead quality with a
+  // hardcoded personal tech-stack match and is only ever computed once, at
+  // insert. leadScore is recomputed as its inputs change.
+  leadScore    Int?
+  // high | promising | moderate | low | insufficient_data
+  leadBand     String?
+  leadReasons  String?   // JSON string array
+  leadRisks    String?   // JSON string array
+  leadScoredAt DateTime?
+
+  // Reviews RECEIVED by the client. Distinct from jobsPosted, which this
+  // was previously conflated with.
+  reviewCount  Int?
+
   // Relations
   analysis    Analysis?
   tracking    ProjectTracking?
 
-  @@index([platform])
+  // A source's own job id is unique within that source. Postgres permits
+  // many NULLs in a unique index, so rows predating this are unaffected.
+  // This is the database-level duplicate protection that application-level
+  // checks alone cannot provide.
+  @@unique([platform, sourceJobId])
+
+  // @@index([platform]) and @@index([viewed]) were dropped: platform is the
+  // leading column of two composite indexes that already serve it, and no
+  // query reads `viewed` at all — it is only ever written. Every index costs
+  // write time on a table this pipeline upserts into constantly.
   @@index([score])
   @@index([createdAt])
-  @@index([viewed])
   @@index([platform, score])
   @@index([platform, createdAt])
   @@index([applied, createdAt])
+  @@index([postedAt])
+  @@index([platform, postedAt])
+  @@index([contentHash])
+  @@index([canonicalUrl])
+  @@index([duplicateClusterId])
+  @@index([leadScore])
   @@map("opportunities")
 }
 
@@ -92,6 +178,10 @@ model UserSession {
   lastSeen   DateTime  @default(now())
   events     String    // JSON stringified SessionEvent[]
 
+  // The retention sweep filters on lastSeen and the admin list orders by
+  // startTime; neither was indexed, so both sequentially scanned.
+  @@index([lastSeen])
+  @@index([startTime])
   @@map("user_sessions")
 }
 
@@ -103,6 +193,10 @@ model CronLog {
   newJobsAdded  Int
   sourceSummary String
 
+  // This table had NO index at all, and nothing ever pruned it, so the
+  // /cron-logs page sequentially scanned and sorted a table that grows
+  // forever. Retention is enforced in the sync route.
+  @@index([timestamp])
   @@map("cron_logs")
 }
 
@@ -128,6 +222,9 @@ model MarketFact {
 
   @@unique([date, dimension, key])
   @@index([dimension, key])
-  @@index([date])
+  // @@index([date]) dropped: `date` is the leading column of the unique
+  // index above, which already serves date ranges. [dimension, date] is
+  // added because the scheduler filters dimension='hour' over a date range.
+  @@index([dimension, date])
   @@map("market_facts")
 }

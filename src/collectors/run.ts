@@ -3,6 +3,8 @@ import { UpworkCollector } from "./UpworkCollector";
 import { FreelancerCollector } from "./FreelancerCollector";
 import { prisma } from "@/lib/db";
 import { RawOpportunity } from "./types";
+import { identityFields, hasMaterialChange, resolveIdentity, sourcePostedAt } from "@/lib/ingestIdentity";
+import { assessListing } from "@/lib/assess";
 
 // In-scope CLI collection sources: Upwork + Freelancer only. Generic/public
 // remote feeds were intentionally removed to keep collection focused.
@@ -118,6 +120,10 @@ export async function runAllCollectors(): Promise<{
 
   // Upsert each unique opportunity (primary source retained)
   let totalImported = 0;
+  // Same write suppression as JobPipeline: listings that came back identical
+  // get one batched lastSeenAt touch instead of a full row update each.
+  const unchangedIds: string[] = [];
+  const batchSeenAt = new Date();
   for (const item of uniqueOps) {
     if (!item.url) continue;
     try {
@@ -130,40 +136,127 @@ export async function runAllCollectors(): Promise<{
       const postedAt = (item.postedAt || item.postedDate) ? new Date((item.postedAt || item.postedDate) as string) : null;
       const sourceIso = postedAt && !isNaN(postedAt.getTime()) ? postedAt.toISOString() : null;
       const legacyPayload = sourceIso ? JSON.stringify({ postedAt: sourceIso }) : "{}";
-      await prisma.opportunity.upsert({
-        where: { url: item.url },
-        update: {
-          title: item.title?.trim() || "Untitled Job",
-          description: item.description?.trim() || "",
-          budget: cleanedBudget,
-          platform: item.platform,
-          country: item.country,
-          clientName: item.clientName,
-          clientSpend: item.clientSpend,
-          clientReviews: item.clientReviews,
-          connections: item.connections,
-        },
-        create: {
-          title: item.title?.trim() || "Untitled Job",
-          description: item.description?.trim() || "",
-          budget: cleanedBudget,
-          platform: item.platform, // primary source
-          url: item.url,
-          score: baseScore,
-          risk: "Medium",
-          createdAt: new Date(),
-          status: item.status || "OPEN",
-          country: item.country,
-          clientName: item.clientName,
-          clientSpend: item.clientSpend,
-          clientReviews: item.clientReviews,
-          connections: item.connections,
-          rawPayload: legacyPayload,
-        },
+      // Same identity resolution as JobPipeline: source id first, then the
+      // exact URL, then the canonical one. Two write paths with two different
+      // notions of identity would let a duplicate in through whichever one is
+      // weaker.
+      const seenAt = new Date();
+      const { identity, existingId, existing } = await resolveIdentity(prisma, {
+        platform: item.platform,
+        url: item.url,
+        title: item.title,
+        description: item.description,
+        sourceJobId: item.sourceJobId,
       });
+      const postedAtValue = sourcePostedAt(postedAt, seenAt);
+      const idFields = identityFields(identity, postedAtValue, seenAt);
+
+      if (existing && !hasMaterialChange(existing, {
+        contentHash: identity.contentHash,
+        proposalCount: typeof item.proposalCount === "number" ? item.proposalCount : null,
+        budget: cleanedBudget,
+        clientSpend: item.clientSpend ?? null,
+        clientRating: item.rating != null ? String(item.rating) : null,
+        jobsPosted: item.jobsPosted ?? null,
+      })) {
+        unchangedIds.push(existing.id);
+        totalImported++;
+        continue;
+      }
+
+      // Same assessment as JobPipeline, from the same module, so the two
+      // ingestion paths cannot disagree about a listing's quality.
+      const assessment = assessListing({
+        platform: item.platform,
+        title: item.title?.trim() || "Untitled Job",
+        description: item.description?.trim() || "",
+        url: item.url,
+        budget: cleanedBudget,
+        sourceJobId: identity.sourceJobId,
+        skills: Array.isArray(item.skills) ? item.skills.join(",") : null,
+        experienceLevel: item.experienceLevel ?? null,
+        proposalCount: typeof item.proposalCount === "number" ? item.proposalCount : null,
+        competitionObservedAt: seenAt,
+        clientSpend: item.clientSpend ?? null,
+        clientRating: item.rating != null ? String(item.rating) : null,
+        jobsPosted: item.jobsPosted ?? null,
+        paymentVerified: item.paymentVerified ?? false,
+        postedAt: postedAtValue,
+      }, seenAt);
+
+      const updateData = {
+        title: item.title?.trim() || "Untitled Job",
+        description: item.description?.trim() || "",
+        budget: cleanedBudget,
+        platform: item.platform,
+        country: item.country,
+        clientName: item.clientName,
+        clientSpend: item.clientSpend,
+        clientReviews: item.clientReviews,
+        connections: item.connections,
+        // Same derivation as JobPipeline: the column was empty on every
+        // row while the budget JSON carried the type, so the two write
+        // paths must agree or the filter breaks again on whichever ran last.
+        budgetType: typeof item.budget === "object" && item.budget?.type ? item.budget.type : "",
+        ...idFields,
+        ...assessment,
+      };
+
+      const createData = {
+        title: item.title?.trim() || "Untitled Job",
+        description: item.description?.trim() || "",
+        budget: cleanedBudget,
+        platform: item.platform, // primary source
+        url: item.url,
+        score: baseScore,
+        risk: "Medium",
+        createdAt: new Date(),
+        status: item.status || "OPEN",
+        country: item.country,
+        clientName: item.clientName,
+        clientSpend: item.clientSpend,
+        clientReviews: item.clientReviews,
+        connections: item.connections,
+        // Same derivation as JobPipeline: the column was empty on every
+        // row while the budget JSON carried the type, so the two write
+        // paths must agree or the filter breaks again on whichever ran last.
+        budgetType: typeof item.budget === "object" && item.budget?.type ? item.budget.type : "",
+        rawPayload: legacyPayload,
+        ...idFields,
+        ...assessment,
+        firstSeenAt: seenAt,
+      };
+
+      if (existingId) {
+        await prisma.opportunity.update({ where: { id: existingId }, data: updateData });
+      } else {
+        try {
+        await prisma.opportunity.create({ data: createData });
+        } catch (createErr: unknown) {
+        // Concurrent run won the race. Degrade to the URL-keyed upsert this
+        // path used before rather than dropping the record.
+        if ((createErr as { code?: string })?.code !== "P2002") throw createErr;
+        await prisma.opportunity.upsert({
+        where: { url: item.url },
+        update: updateData,
+        create: createData,
+        });
+        }
+      }
       totalImported++;
     } catch (dbError) {
       console.error(`Error upserting ${item.url}:`, dbError);
+    }
+  }
+
+  if (unchangedIds.length > 0) {
+    try {
+      await prisma.opportunity.updateMany({
+        where: { id: { in: unchangedIds } },
+        data: { lastSeenAt: batchSeenAt },
+      });
+    } catch (touchError) {
+      console.error("lastSeenAt batch failed:", touchError);
     }
   }
 
