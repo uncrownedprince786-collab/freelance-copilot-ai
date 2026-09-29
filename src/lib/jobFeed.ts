@@ -1,6 +1,14 @@
 import { getRawJobs, getAppliedSet } from './jobsCache';
 import { clientKeyOf } from './marketFacts';
 import { compareOpportunities } from './opportunityRanking';
+import {
+  CompetitionObservation,
+  competitionObservation,
+  describeAge,
+  FreshnessState,
+  freshnessFactor,
+  freshnessState,
+} from './freshness';
 
 /**
  * FRESHNESS MODEL (single source of truth for timestamps):
@@ -69,6 +77,59 @@ export interface JobFeedItem {
   repeatClient?: boolean;
   repeatClientCount?: number;
   actFast?: boolean;
+
+  // -- Quality layer ---------------------------------------------------
+  //
+  // SOURCE FACT vs DERIVED. Everything above this line is either published
+  // by the source (title, budget, proposalCount, clientSpend) or a trivial
+  // reformat of it. Everything below is this system's own assessment, and
+  // the UI must present it that way -- never as something the source said.
+  //
+  //   leadScore / leadBand    heuristic  (lib/leadScore.ts)
+  //   authenticityStatus      heuristic  (lib/authenticity.ts)
+  //   duplicateStatus         derived    (lib/duplicates.ts)
+  //   freshnessState          derived    (lib/freshness.ts)
+  //
+  // Reason and risk lists are the explanation for the number beside them.
+  // A score must never be rendered without access to them.
+
+  /** 0-100, or null when too little was published to score honestly. */
+  leadScore: number | null;
+  /** high | promising | moderate | low | insufficient_data */
+  leadBand: string;
+  leadReasons: string[];
+  leadRisks: string[];
+
+  /** verified | supported | uncertain | suspicious | stale | rejected.
+   *  The "verified" state is currently unreachable -- lib/authenticity.ts
+   *  explains why, and a test enforces it. */
+  authenticityStatus: string;
+  authenticitySignals: string[];
+  authenticityWarnings: string[];
+
+  /** canonical | duplicate | possible_duplicate | independent | unknown */
+  duplicateStatus: string;
+  duplicateClusterId: string | null;
+  /** The cluster member this system treats as the primary record. */
+  canonicalJobId: string | null;
+  duplicateConfidence: number | null;
+  /** Which rule chose the canonical member. Shown instead of asserting
+   *  "this is the original job", which cannot be known. */
+  canonicalReason: string | null;
+
+  /** just_posted | fresh | active | aging | stale | expired | unknown */
+  freshnessState: FreshnessState;
+  /** Continuous 0-1 decay, or null when the source published no posting
+   *  time. Used for ranking, not for display. */
+  freshnessFactor: number | null;
+  /** "posted 3 hours ago" -- never implies real-time data. */
+  ageLabel: string;
+  /**
+   * The proposal count WITH the age of the observation. The count is captured
+   * shortly after posting and never refreshed, so rendering it bare as
+   * "3 proposals so far" states something this system does not know.
+   */
+  competition: CompetitionObservation;
 }
 
 export async function buildJobFeed(): Promise<JobFeedItem[]> {
@@ -102,6 +163,11 @@ export async function buildJobFeed(): Promise<JobFeedItem[]> {
     const totalForClient = clientKey ? (clientCounts.get(clientKey) || 0) : 0;
     const postedMs = new Date(job.postedAt || job.postedDate || 0).getTime();
     const isFresh = Number.isFinite(postedMs) && postedMs > 0 && Date.now() - postedMs < 24 * 60 * 60 * 1000;
+    const postedDate = Number.isFinite(postedMs) && postedMs > 0 ? new Date(postedMs) : null;
+    // When the proposal count was captured. Never refreshed afterwards, so
+    // the observation age is part of the figure's meaning.
+    const observedMs = new Date(job.competitionObservedAt || 0).getTime();
+    const observedAt = Number.isFinite(observedMs) && observedMs > 0 ? new Date(observedMs) : null;
 
     // --- Country: only show real countries, never "Remote" or generic
     const rawCountry = job.country || clientObj.country || job.location || '';
@@ -210,6 +276,29 @@ export async function buildJobFeed(): Promise<JobFeedItem[]> {
       // Meta — "New" badge only for genuinely recent listings (posted within
       // the last 24 h), never for every row.
       isNew: new Date(job.postedAt || job.postedDate || 0).getTime() > Date.now() - 24 * 60 * 60 * 1000,
+
+      // -- Quality layer, straight through from the stored assessment.
+      leadScore: typeof job.leadScore === 'number' ? job.leadScore : null,
+      leadBand: job.leadBand || 'insufficient_data',
+      leadReasons: Array.isArray(job.leadReasons) ? job.leadReasons : [],
+      leadRisks: Array.isArray(job.leadRisks) ? job.leadRisks : [],
+      authenticityStatus: job.authenticityStatus || 'uncertain',
+      authenticitySignals: Array.isArray(job.authenticitySignals) ? job.authenticitySignals : [],
+      authenticityWarnings: Array.isArray(job.authenticityWarnings) ? job.authenticityWarnings : [],
+      duplicateStatus: job.duplicateStatus || 'unknown',
+      duplicateClusterId: job.duplicateClusterId ?? null,
+      canonicalJobId: job.canonicalJobId ?? null,
+      duplicateConfidence: typeof job.duplicateConfidence === 'number' ? job.duplicateConfidence : null,
+      canonicalReason: job.canonicalReason ?? null,
+
+      // -- Freshness, computed at read time because it decays continuously.
+      freshnessState: freshnessState(postedDate),
+      freshnessFactor: freshnessFactor(postedDate),
+      ageLabel: describeAge(postedDate),
+      competition: competitionObservation(
+        typeof job.proposalCount === 'number' ? job.proposalCount : null,
+        observedAt,
+      ),
     };
   });
 
@@ -217,4 +306,63 @@ export async function buildJobFeed(): Promise<JobFeedItem[]> {
   // comparable-freshness tier, then existing opportunity signals. Every
   // consumer (dashboard, filters, pagination, AI agent) inherits the same order.
   return jobs.sort(compareOpportunities);
+}
+
+/**
+ * Chronological order, and nothing else.
+ *
+ * "Latest" has to mean latest. The moment it is quietly blended with a
+ * quality signal, a user who wants to see what just appeared cannot get it,
+ * and the two views collapse into one. Rows whose source published no
+ * posting time sort last: an unknown age is not a recent one.
+ */
+export function byLatest(jobs: JobFeedItem[]): JobFeedItem[] {
+  return [...jobs].sort((a, b) => {
+    const ta = new Date(a.postedAt || 0).getTime() || 0;
+    const tb = new Date(b.postedAt || 0).getTime() || 0;
+    if (ta !== tb) return tb - ta;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
+/**
+ * Opportunity order: ranked by the explainable lead score.
+ *
+ * Unscored rows sort last rather than being dropped. A listing the model
+ * could not assess is not a bad listing — it is one the source published too
+ * little about — and hiding it would be the silent-omission failure the
+ * whole quality layer exists to avoid.
+ *
+ * Ties break on freshness and then on id, so the order is stable across
+ * requests. Duplicates are NOT filtered here: that is a view-level decision,
+ * and the caller has duplicateStatus to make it.
+ */
+export function byLeadPotential(jobs: JobFeedItem[]): JobFeedItem[] {
+  return [...jobs].sort((a, b) => {
+    const sa = a.leadScore ?? -1;
+    const sb = b.leadScore ?? -1;
+    if (sa !== sb) return sb - sa;
+    const fa = a.freshnessFactor ?? -1;
+    const fb = b.freshnessFactor ?? -1;
+    if (fa !== fb) return fb - fa;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
+/**
+ * Collapse a duplicate cluster to its canonical member.
+ *
+ * Only high-confidence duplicates are collapsed. A `possible_duplicate` stays
+ * visible, because an uncertain duplicate decision must never silently remove
+ * an opportunity — the removed one could be the repost with the better
+ * budget. Callers that want everything simply do not call this.
+ */
+export function collapseDuplicates(jobs: JobFeedItem[]): JobFeedItem[] {
+  const present = new Set(jobs.map(j => j.id));
+  return jobs.filter(j => {
+    if (j.duplicateStatus !== 'duplicate') return true;
+    // Keep it if its canonical member is not in this result set, otherwise
+    // filtering would drop the opportunity entirely.
+    return !j.canonicalJobId || !present.has(j.canonicalJobId);
+  });
 }
