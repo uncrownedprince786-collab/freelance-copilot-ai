@@ -95,6 +95,16 @@ export function shapeJobCard(job: JobFeedItem): AgentJobCard {
     repeatClientCount: job.repeatClientCount ?? 0,
     actFast: Boolean(job.actFast),
     category: job.category || '',
+    // Already phrased with the age of the observation. The assistant must
+    // not re-derive a competition sentence from the bare count.
+    competitionLabel: job.competition?.label || '',
+    competitionOutdated: Boolean(job.competition?.outdated),
+    leadScore: job.leadScore ?? null,
+    leadBand: job.leadBand || 'insufficient_data',
+    leadReasons: Array.isArray(job.leadReasons) ? job.leadReasons.slice(0, 6) : [],
+    leadRisks: Array.isArray(job.leadRisks) ? job.leadRisks.slice(0, 6) : [],
+    authenticityStatus: job.authenticityStatus || 'uncertain',
+    duplicateStatus: job.duplicateStatus || 'unknown',
   };
 }
 
@@ -360,7 +370,9 @@ export function serializeJobsForLLM(cards: AgentJobCard[], max = 8): string {
       `platform=${c.platform}`,
       `budget=${c.budget}`,
       `score=${c.score}`,
-      `proposals=${c.proposalCount ?? 'n/a'}`,
+      // The competition phrase, not the bare number: it carries the age of
+      // the observation, which is what stops the model writing "so far".
+      `competition=${c.competitionLabel || 'not published'}`,
       `posted=${c.postedAt ? new Date(c.postedAt).toISOString().slice(0, 16) : 'unknown'}`,
       `country=${c.country || 'remote/unspecified'}`,
       `skills=${c.skills.length ? c.skills.join(', ') : 'none listed'}`,
@@ -370,6 +382,15 @@ export function serializeJobsForLLM(cards: AgentJobCard[], max = 8): string {
     if (c.paymentVerified) parts.push(`paymentVerified=true`);
     if (c.repeatClient) parts.push(`repeatClient=true (${c.repeatClientCount} other listing${c.repeatClientCount === 1 ? '' : 's'})`);
     if (c.actFast) parts.push(`actFast=true (fresh, low proposals)`);
+    if (c.leadScore != null) parts.push(`leadPotential=${c.leadBand} (${c.leadScore}/100)`);
+    if (c.leadReasons.length) parts.push(`leadReasons=${c.leadReasons.join('; ')}`);
+    if (c.leadRisks.length) parts.push(`leadRisks=${c.leadRisks.join('; ')}`);
+    if (c.authenticityStatus && c.authenticityStatus !== 'supported') {
+      parts.push(`authenticity=${c.authenticityStatus}`);
+    }
+    if (c.duplicateStatus === 'duplicate' || c.duplicateStatus === 'possible_duplicate') {
+      parts.push(`duplicate=${c.duplicateStatus}`);
+    }
     return parts.join(' | ');
   });
   return lines.join('\n');

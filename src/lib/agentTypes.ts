@@ -35,6 +35,27 @@ export interface AgentJobCard {
   repeatClientCount: number;
   actFast: boolean;
   category: string;
+
+  /**
+   * The competition figure WITH the age of the observation, already phrased
+   * honestly by lib/freshness.ts. The stored proposal count is captured
+   * shortly after posting and never refreshed, so "3 proposals so far" — the
+   * phrasing this replaces — asserted something the system does not know
+   * about a five-day-old listing.
+   */
+  competitionLabel: string;
+  competitionOutdated: boolean;
+
+  /** The explainable lead assessment. Null score means the source published
+   *  too little to score honestly; the band then reads insufficient_data. */
+  leadScore: number | null;
+  leadBand: string;
+  leadReasons: string[];
+  leadRisks: string[];
+  /** supported | uncertain | suspicious | stale | rejected. */
+  authenticityStatus: string;
+  /** canonical | duplicate | possible_duplicate | independent | unknown. */
+  duplicateStatus: string;
 }
 
 export const AGENT_GREETING =
@@ -263,7 +284,9 @@ export function opportunityBasis(card: AgentJobCard): string {
 
   const bits: string[] = [];
   if (card.actFast) bits.push('fresh with low competition');
-  if (card.proposalCount != null) bits.push(`${card.proposalCount} proposal${card.proposalCount === 1 ? '' : 's'} so far`);
+  // Never "so far": the count is a snapshot taken shortly after posting and
+  // is never refreshed, so its age is part of what it means.
+  if (card.competitionLabel) bits.push(card.competitionLabel);
   if (card.paymentVerified) bits.push('payment verified');
   if (card.repeatClient) {
     bits.push(card.repeatClientCount > 0
@@ -397,7 +420,7 @@ function renderRankThese(cards: AgentJobCard[]): string {
   const top = ranked[0];
   const count = cards.length;
   const extras: string[] = [];
-  if (top.proposalCount != null) extras.push(`${top.proposalCount} proposal${top.proposalCount === 1 ? '' : 's'} so far`);
+  if (top.competitionLabel) extras.push(top.competitionLabel);
   if (top.paymentVerified) extras.push('payment verified');
   if (top.actFast) extras.push('act fast');
   return `I have ${count} opportunit${plural(count)} in front of me. The strongest by its own signals is ${describeCard(top)}${extras.length ? ` — ${extras.join(', ')}` : ''}. The cards below stay in that order, strongest first. Open the top one for the full assessment and a tailored proposal.`;

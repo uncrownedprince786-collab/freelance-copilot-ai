@@ -109,6 +109,18 @@ function sanitizeJob(card: unknown): AgentJobCard | null {
     repeatClientCount: Number(c.repeatClientCount) || 0,
     actFast: c.actFast === true,
     category: str(c.category),
+    // These arrive in the REQUEST BODY like every other card field, so they
+    // are cleaned and capped the same way. A caller could otherwise put
+    // directives into a "lead reason" and have them serialized into the
+    // system prompt as apparent system text.
+    competitionLabel: str(c.competitionLabel),
+    competitionOutdated: c.competitionOutdated === true,
+    leadScore: c.leadScore == null ? null : Number(c.leadScore) || 0,
+    leadBand: str(c.leadBand) || 'insufficient_data',
+    leadReasons: strArr(c.leadReasons).slice(0, 6),
+    leadRisks: strArr(c.leadRisks).slice(0, 6),
+    authenticityStatus: str(c.authenticityStatus) || 'uncertain',
+    duplicateStatus: str(c.duplicateStatus) || 'unknown',
   };
 }
 
@@ -436,7 +448,8 @@ HARD RULES:
 STYLE:
 - Conversational, warm, and professional — like a knowledgeable colleague, not a robot.
 - Use natural language. Short paragraphs, casual but confident tone.
-- When you have data, lead with the insight, not the data dump. E.g. "There's a strong React opportunity that just posted — $5K budget, only 3 proposals so far" instead of "I found 1 job with score 78."
+- When you have data, lead with the insight, not the data dump. E.g. "There's a strong React opportunity that just posted — $5K budget, and low competition when it was last checked" instead of "I found 1 job with score 78."
+- NEVER say a proposal count is current, and never write "so far". The count is captured shortly after a listing is posted and is never refreshed, so on an older listing it is history. Each job's DATA CONTEXT carries a competition phrase that already states the age of the observation — use that wording and do not re-derive your own from the number.
 - You can use **bold** for emphasis on key points.
 - End with a helpful next step or question when natural. Don't force it.
 - Keep replies concise — a few sentences to a short paragraph. Don't ramble.
