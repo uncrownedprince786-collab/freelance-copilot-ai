@@ -20,6 +20,24 @@ export class JobPipeline {
   async execute(): Promise<{ jobs: Job[]; newJobsAdded: number }> {
     const nowMs = Date.now();
 
+    // Fail fast if the database is unreachable.
+    //
+    // Without this the pipeline fetched from every source first and only
+    // discovered on the write that it had nowhere to put the results — so a
+    // DNS outage or a credential problem still SPENT APIFY BUDGET, which is
+    // real money against a $5 monthly allowance. It also left the caller
+    // unable to tell an empty run from a broken one, and scripts/sync.ts
+    // duly reported "completed successfully" over a run that persisted
+    // nothing.
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.lastWriteFailures = 1;
+      console.error('[JobPipeline] Database unreachable — aborting before any source is fetched:', msg);
+      return { jobs: [], newJobsAdded: 0 };
+    }
+
     console.log('[JobPipeline] Step 1: Cleaning store - Purging jobs older than 7 days...');
     const existingStore = await this.loadExistingStore();
     const activeStore = this.purgeExpiredJobs(existingStore, nowMs);
@@ -311,12 +329,18 @@ export class JobPipeline {
     }
   }
 
+  /** Row writes that threw during the last saveStore. A caller reporting
+   *  success must check this — fetching jobs and persisting none is a
+   *  failed run, however cleanly the call returns. */
+  lastWriteFailures = 0;
+
   private async saveStore(jobs: Job[]) {
     // Listings that came back identical. They still need their lastSeenAt
     // advanced so retention and source health stay honest, but that is one
     // batched statement at the end rather than a full row update each.
     const unchangedIds: string[] = [];
     let written = 0;
+    let writeFailures = 0;
     const batchSeenAt = new Date();
 
     for (const job of jobs) {
@@ -501,6 +525,7 @@ export class JobPipeline {
         }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
+        writeFailures++;
         console.error('[JobPipeline] DB write error:', err.message);
       }
     }
@@ -517,6 +542,7 @@ export class JobPipeline {
         console.error('[JobPipeline] lastSeenAt batch failed:', err.message);
       }
     }
+    this.lastWriteFailures = writeFailures;
     console.log(
       `[JobPipeline] stored ${written} changed, ${unchangedIds.length} unchanged (one batched touch)`,
     );
