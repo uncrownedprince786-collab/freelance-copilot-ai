@@ -284,3 +284,33 @@ test('the redundant indexes are gone and the new ones exist', async () => {
   }
   await db.close();
 });
+
+test('the scheduler hour histogram reads UTC, not the server timezone', async () => {
+  // syncSchedule.liveHourCounts used to pull every row's rawPayload and parse
+  // JSON per row; it now groups by hour in SQL over the indexed postedAt
+  // column. postedAt is `timestamp without time zone` holding UTC
+  // wall-clock, so EXTRACT must give the UTC hour with no conversion — the
+  // same trap that made this suite pass only on a UTC machine.
+  const db = new PGlite();
+  await applyMigrations(db, BASELINE);
+  await seedProductionLikeRows(db);
+  await applyMigrations(db);
+
+  const rows = await db.query<{ hour: number; n: number }>(
+    `SELECT EXTRACT(HOUR FROM COALESCE("postedAt", "createdAt"))::int AS hour,
+            COUNT(*)::int AS n
+       FROM "opportunities"
+      GROUP BY 1 ORDER BY 1`,
+  );
+  const counts = new Array<number>(24).fill(0);
+  for (const r of rows.rows) counts[r.hour] = r.n;
+
+  // uw-1 carries rawPayload.postedAt = 2026-09-28T09:00:00Z, so it must land
+  // in hour 9 wherever this test runs.
+  assert.equal(counts[9], 1, 'the 09:00 UTC listing must be counted in hour 9');
+  // fl-project-40734722 is 2026-09-29T06:00:00Z.
+  assert.equal(counts[6], 1, 'the 06:00 UTC listing must be counted in hour 6');
+  assert.equal(counts.reduce((a, b) => a + b, 0), 7, 'every seeded row is counted exactly once');
+
+  await db.close();
+});

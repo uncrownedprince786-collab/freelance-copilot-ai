@@ -6,7 +6,7 @@ import { logCronRun } from "../lib/cronLogger";
 import { recordMarketFacts } from "../lib/marketFacts";
 import { prisma } from "../lib/db";
 import { isSafeExternalUrl } from "../lib/safeUrl";
-import { identityFields, resolveIdentity, sourcePostedAt } from "../lib/ingestIdentity";
+import { identityFields, hasMaterialChange, resolveIdentity, sourcePostedAt } from "../lib/ingestIdentity";
 import { assessListing } from "../lib/assess";
 
 export class JobPipeline {
@@ -272,6 +272,13 @@ export class JobPipeline {
   }
 
   private async saveStore(jobs: Job[]) {
+    // Listings that came back identical. They still need their lastSeenAt
+    // advanced so retention and source health stay honest, but that is one
+    // batched statement at the end rather than a full row update each.
+    const unchangedIds: string[] = [];
+    let written = 0;
+    const batchSeenAt = new Date();
+
     for (const job of jobs) {
       // Reject anything that is not an absolute http(s) URL. A scraped
       // `javascript:` / `data:` URL would otherwise be stored and later handed
@@ -309,7 +316,7 @@ export class JobPipeline {
         // the canonical URL. See lib/ingestIdentity.ts for why contentHash is
         // not a match key.
         const seenAt = new Date();
-        const { identity, existingId } = await resolveIdentity(prisma, {
+        const { identity, existingId, existing } = await resolveIdentity(prisma, {
           platform: job.platform || 'Upwork',
           url: job.url,
           title: job.title,
@@ -318,6 +325,23 @@ export class JobPipeline {
         });
         const postedAtValue = sourcePostedAt(job.postedAt, seenAt);
         const idFields = identityFields(identity, postedAtValue, seenAt);
+
+        // A sync fetches ~150 Freelancer records and ~19% of them are new.
+        // Rewriting the other ~130 in full on every run — about 1,300 row
+        // updates a day — changed nothing a user could see and was paid for
+        // in Neon compute. If nothing material moved, fall through to the
+        // batched lastSeenAt touch instead.
+        if (existing && !hasMaterialChange(existing, {
+          contentHash: identity.contentHash,
+          proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
+          budget: budgetStr,
+          clientSpend: job.clientSpend || '',
+          clientRating: clientObj.rating ? String(clientObj.rating) : '',
+          jobsPosted: clientObj.jobsPosted ?? null,
+        })) {
+          unchangedIds.push(existing.id);
+          continue;
+        }
 
         // Authenticity and lead score are computed here rather than at read
         // time so the feed can rank and filter on them in SQL. They are
@@ -406,22 +430,25 @@ export class JobPipeline {
 
         if (existingId) {
           await prisma.opportunity.update({ where: { id: existingId }, data: updateData });
+          written++;
         } else {
           try {
-          await prisma.opportunity.create({ data: createData });
+            await prisma.opportunity.create({ data: createData });
+            written++;
           } catch (createErr: unknown) {
-          // A concurrent run inserted this listing between the lookup and
-          // the write, or the generated primary key already belongs to
-          // another row. Fall back to the URL-keyed upsert this path used
-          // before, so a race degrades to the old behaviour instead of
-          // dropping the record. Ingestion has to survive retries and
-          // overlapping runs.
-          if ((createErr as { code?: string })?.code !== 'P2002') throw createErr;
-          await prisma.opportunity.upsert({
-          where: { url: job.url },
-          update: updateData,
-          create: createData,
-          });
+            // A concurrent run inserted this listing between the lookup and
+            // the write, or the generated primary key already belongs to
+            // another row. Fall back to the URL-keyed upsert this path used
+            // before, so a race degrades to the old behaviour instead of
+            // dropping the record. Ingestion has to survive retries and
+            // overlapping runs.
+            if ((createErr as { code?: string })?.code !== 'P2002') throw createErr;
+            await prisma.opportunity.upsert({
+              where: { url: job.url },
+              update: updateData,
+              create: createData,
+            });
+            written++;
           }
         }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -429,6 +456,22 @@ export class JobPipeline {
         console.error('[JobPipeline] DB write error:', err.message);
       }
     }
+
+    // One statement for every listing that had not changed.
+    if (unchangedIds.length > 0) {
+      try {
+        await prisma.opportunity.updateMany({
+          where: { id: { in: unchangedIds } },
+          data: { lastSeenAt: batchSeenAt },
+        });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        console.error('[JobPipeline] lastSeenAt batch failed:', err.message);
+      }
+    }
+    console.log(
+      `[JobPipeline] stored ${written} changed, ${unchangedIds.length} unchanged (one batched touch)`,
+    );
   }
 
   private static normUrlKey(url?: string | null): string {

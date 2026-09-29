@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { identityFields, resolveIdentity, sourcePostedAt, IdentityLookup } from './ingestIdentity';
+import { hasMaterialChange, identityFields, resolveIdentity, sourcePostedAt, IdentityLookup } from './ingestIdentity';
 import { deriveIdentity } from './identity';
 
 type Row = {
@@ -245,4 +245,49 @@ test('a missing posting time is omitted, not written as null over a good one', (
     new Date('2026-09-30T12:00:00Z'),
   );
   assert.ok(!('postedAt' in f));
+});
+
+// ── Write suppression ──────────────────────────────────────────────────
+
+const material = (over: Partial<import('./ingestIdentity').MaterialFields> = {}) => ({
+  contentHash: 'h1',
+  proposalCount: 5,
+  budget: '{"min":250}',
+  clientSpend: '$100',
+  clientRating: '5',
+  jobsPosted: 3,
+  ...over,
+});
+
+test('an unchanged listing needs no write', () => {
+  // ~130 of the ~150 records a sync fetches come back identical. Rewriting
+  // them in full was ~1,300 row updates a day for no visible change.
+  assert.equal(hasMaterialChange(material(), material()), false);
+});
+
+test('changed text, competition, budget or client data all write', () => {
+  assert.equal(hasMaterialChange(material(), material({ contentHash: 'h2' })), true);
+  assert.equal(hasMaterialChange(material(), material({ proposalCount: 6 })), true);
+  assert.equal(hasMaterialChange(material(), material({ budget: '{"min":900}' })), true);
+  assert.equal(hasMaterialChange(material(), material({ clientSpend: '$900' })), true);
+  assert.equal(hasMaterialChange(material(), material({ clientRating: '4' })), true);
+  assert.equal(hasMaterialChange(material(), material({ jobsPosted: 9 })), true);
+});
+
+test('a value the source STOPPED publishing is not a change', () => {
+  // Sources drop fields intermittently. Letting an absent value count as a
+  // change would rewrite the row and then erase good data with a blank.
+  assert.equal(hasMaterialChange(material(), material({ contentHash: null })), false);
+  assert.equal(hasMaterialChange(material(), material({ proposalCount: null })), false);
+  assert.equal(hasMaterialChange(material(), material({ clientSpend: '' })), false);
+  assert.equal(hasMaterialChange(material(), material({ jobsPosted: null })), false);
+});
+
+test('a value the source STARTED publishing is a change', () => {
+  const blank = material({ contentHash: null, proposalCount: null, clientSpend: null, jobsPosted: null });
+  assert.equal(hasMaterialChange(blank, material()), true);
+});
+
+test('proposalCount dropping to zero is a real reading, not an absence', () => {
+  assert.equal(hasMaterialChange(material({ proposalCount: 5 }), material({ proposalCount: 0 })), true);
 });

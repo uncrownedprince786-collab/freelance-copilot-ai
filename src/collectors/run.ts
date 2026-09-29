@@ -3,7 +3,7 @@ import { UpworkCollector } from "./UpworkCollector";
 import { FreelancerCollector } from "./FreelancerCollector";
 import { prisma } from "@/lib/db";
 import { RawOpportunity } from "./types";
-import { identityFields, resolveIdentity, sourcePostedAt } from "@/lib/ingestIdentity";
+import { identityFields, hasMaterialChange, resolveIdentity, sourcePostedAt } from "@/lib/ingestIdentity";
 import { assessListing } from "@/lib/assess";
 
 // In-scope CLI collection sources: Upwork + Freelancer only. Generic/public
@@ -120,6 +120,10 @@ export async function runAllCollectors(): Promise<{
 
   // Upsert each unique opportunity (primary source retained)
   let totalImported = 0;
+  // Same write suppression as JobPipeline: listings that came back identical
+  // get one batched lastSeenAt touch instead of a full row update each.
+  const unchangedIds: string[] = [];
+  const batchSeenAt = new Date();
   for (const item of uniqueOps) {
     if (!item.url) continue;
     try {
@@ -137,7 +141,7 @@ export async function runAllCollectors(): Promise<{
       // notions of identity would let a duplicate in through whichever one is
       // weaker.
       const seenAt = new Date();
-      const { identity, existingId } = await resolveIdentity(prisma, {
+      const { identity, existingId, existing } = await resolveIdentity(prisma, {
         platform: item.platform,
         url: item.url,
         title: item.title,
@@ -146,6 +150,19 @@ export async function runAllCollectors(): Promise<{
       });
       const postedAtValue = sourcePostedAt(postedAt, seenAt);
       const idFields = identityFields(identity, postedAtValue, seenAt);
+
+      if (existing && !hasMaterialChange(existing, {
+        contentHash: identity.contentHash,
+        proposalCount: typeof item.proposalCount === "number" ? item.proposalCount : null,
+        budget: cleanedBudget,
+        clientSpend: item.clientSpend ?? null,
+        clientRating: item.rating != null ? String(item.rating) : null,
+        jobsPosted: item.jobsPosted ?? null,
+      })) {
+        unchangedIds.push(existing.id);
+        totalImported++;
+        continue;
+      }
 
       // Same assessment as JobPipeline, from the same module, so the two
       // ingestion paths cannot disagree about a listing's quality.
@@ -221,6 +238,17 @@ export async function runAllCollectors(): Promise<{
       totalImported++;
     } catch (dbError) {
       console.error(`Error upserting ${item.url}:`, dbError);
+    }
+  }
+
+  if (unchangedIds.length > 0) {
+    try {
+      await prisma.opportunity.updateMany({
+        where: { id: { in: unchangedIds } },
+        data: { lastSeenAt: batchSeenAt },
+      });
+    } catch (touchError) {
+      console.error("lastSeenAt batch failed:", touchError);
     }
   }
 

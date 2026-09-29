@@ -24,24 +24,42 @@ export interface ResolvedIdentity {
   identity: JobIdentity;
   /** The row this listing already is, or null when it is genuinely new. */
   existingId: string | null;
+  /** The same row, with the fields needed to decide whether to write. */
+  existing: ExistingRow | null;
   matchedBy: IdentityMatch;
 }
 
 /** The subset of the Prisma client this module needs. Narrowed to a structural
  *  type so the resolution logic can be tested against a stub. */
+/** The stored row as ingestion needs to see it: enough to identify it AND to
+ *  decide whether anything worth writing has changed. */
+export interface ExistingRow {
+  id: string;
+  platform: string;
+  sourceJobId: string | null;
+  url: string;
+  canonicalUrl: string | null;
+  contentHash: string | null;
+  proposalCount: number | null;
+  budget: string;
+  clientSpend: string | null;
+  clientRating: string | null;
+  jobsPosted: number | null;
+}
+
+const EXISTING_SELECT = {
+  id: true, platform: true, sourceJobId: true, url: true, canonicalUrl: true,
+  contentHash: true, proposalCount: true, budget: true, clientSpend: true,
+  clientRating: true, jobsPosted: true,
+} as const;
+
 export interface IdentityLookup {
   opportunity: {
     findMany(args: {
       where: { OR: Array<Record<string, unknown>> };
-      select: { id: true; platform: true; sourceJobId: true; url: true; canonicalUrl: true };
+      select: typeof EXISTING_SELECT;
       take: number;
-    }): Promise<Array<{
-      id: string;
-      platform: string;
-      sourceJobId: string | null;
-      url: string;
-      canonicalUrl: string | null;
-    }>>;
+    }): Promise<ExistingRow[]>;
   };
 }
 
@@ -79,33 +97,33 @@ export async function resolveIdentity(
   if (url) or.push({ url });
   if (identity.canonicalUrl) or.push({ canonicalUrl: identity.canonicalUrl });
 
-  if (or.length === 0) return { identity, existingId: null, matchedBy: null };
+  if (or.length === 0) return { identity, existingId: null, existing: null, matchedBy: null };
 
   // `take` is bounded: more than a handful of matches means the table already
   // holds duplicates of this listing, which is the clustering layer's problem,
   // not something to resolve by scanning here.
   const rows = await db.opportunity.findMany({
     where: { OR: or },
-    select: { id: true, platform: true, sourceJobId: true, url: true, canonicalUrl: true },
+    select: EXISTING_SELECT,
     take: 5,
   });
-  if (rows.length === 0) return { identity, existingId: null, matchedBy: null };
+  if (rows.length === 0) return { identity, existingId: null, existing: null, matchedBy: null };
 
   if (identity.sourceJobId) {
     const bySourceId = rows.find(
       r => r.sourceJobId === identity.sourceJobId && r.platform === input.platform,
     );
-    if (bySourceId) return { identity, existingId: bySourceId.id, matchedBy: 'sourceJobId' };
+    if (bySourceId) return { identity, existingId: bySourceId.id, existing: bySourceId, matchedBy: 'sourceJobId' };
   }
   const byUrl = url ? rows.find(r => r.url === url) : undefined;
-  if (byUrl) return { identity, existingId: byUrl.id, matchedBy: 'url' };
+  if (byUrl) return { identity, existingId: byUrl.id, existing: byUrl, matchedBy: 'url' };
 
   const byCanonical = identity.canonicalUrl
     ? rows.find(r => r.canonicalUrl === identity.canonicalUrl)
     : undefined;
-  if (byCanonical) return { identity, existingId: byCanonical.id, matchedBy: 'canonicalUrl' };
+  if (byCanonical) return { identity, existingId: byCanonical.id, existing: byCanonical, matchedBy: 'canonicalUrl' };
 
-  return { identity, existingId: null, matchedBy: null };
+  return { identity, existingId: null, existing: null, matchedBy: null };
 }
 
 /**
@@ -166,4 +184,45 @@ export function identityFields(
     ...(postedAt ? { postedAt } : {}),
     lastSeenAt: seenAt,
   };
+}
+
+/**
+ * The fields of an incoming listing that are worth a database write.
+ *
+ * Measured motivation: a sync run fetches ~150 Freelancer records and roughly
+ * 19% of them are new. The other ~130 were upserted in full on every run
+ * anyway — about 1,300 pointless row updates a day, which on Neon Free is
+ * paid for in compute time and write amplification for no change in what a
+ * user sees.
+ *
+ * `contentHash` makes the comparison cheap and exact for the text, and the
+ * volatile numbers are compared directly. Anything not listed here (the
+ * rawPayload blob, derived scores) is a function of these, so if none of
+ * these moved, nothing downstream moved either.
+ */
+export interface MaterialFields {
+  contentHash: string | null;
+  proposalCount: number | null;
+  budget: string;
+  clientSpend: string | null;
+  clientRating: string | null;
+  jobsPosted: number | null;
+}
+
+/**
+ * Has anything worth writing changed?
+ *
+ * A source that STOPS publishing a value does not count as a change: sources
+ * drop fields intermittently, and letting an absent value overwrite a present
+ * one would erase data on a bad fetch. Only a new or different value counts —
+ * the same asymmetry `identityFields` applies to the identity keys.
+ */
+export function hasMaterialChange(existing: MaterialFields, incoming: MaterialFields): boolean {
+  if (incoming.contentHash && incoming.contentHash !== existing.contentHash) return true;
+  if (incoming.proposalCount != null && incoming.proposalCount !== existing.proposalCount) return true;
+  if (incoming.budget && incoming.budget !== existing.budget) return true;
+  if (incoming.clientSpend && incoming.clientSpend !== existing.clientSpend) return true;
+  if (incoming.clientRating && incoming.clientRating !== existing.clientRating) return true;
+  if (incoming.jobsPosted != null && incoming.jobsPosted !== existing.jobsPosted) return true;
+  return false;
 }
