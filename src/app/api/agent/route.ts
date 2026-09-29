@@ -22,7 +22,6 @@ import {
 import {
   AgentSource,
   API_ERROR,
-  COMPARE_NO_CONTEXT,
   DeterministicInput,
   EMPTY_INPUT,
   deterministicReply,
@@ -480,11 +479,26 @@ async function reasonOverJobs(
   const messages: ChatMessage[] = [{ role: 'user', content: `${extraNote ? extraNote + '\n' : ''}${userText}\n\n${task}` }];
   return runAssistantChat(system, messages);
 }
-
-async function reasonOverTrends(userText: string, snapshot: string): Promise<string> {
-  const system = systemPrompt(false, true).replace('{{TRENDS}}', () => snapshot);
-  const messages: ChatMessage[] = [
-    { role: 'user', content: `Answer based only on the DATA CONTEXT. ${userText}\n\nExplain what the market data shows and give one concrete, actionable suggestion.` },
-  ];
+/**
+ * The other half of the residue: free-form craft advice ("how should I price
+ * this?", "what makes a good proposal?"). No retrieved row answers it, which
+ * is exactly why it is worth a model call.
+ *
+ * No data block is attached. There are no job facts for this turn, and
+ * attaching an unrelated working set would invite the model to cite listings
+ * the question never asked about — the failure mode the deterministic layer
+ * exists to prevent. The HARD RULES in the system prompt still forbid invented
+ * figures, and `answerTurn` degrades to the 'advice-unavailable' reply when
+ * every provider is down.
+ *
+ * (A trends reasoner used to live here. `trends` is now an always-deterministic
+ * shape — `resolveDeterministicShape` returns it before any model call — so the
+ * market snapshot is rendered verbatim and that function had no caller.)
+ */
+async function reasonFreeForm(userText: string): Promise<string> {
+  const system = systemPrompt(false, false);
+  const task =
+    'This is a general freelance-craft question. You have NO listing data on this turn, so do not cite, quote or invent any specific job, client, budget, score or market figure. Answer from general freelance practice: one short paragraph of concrete, actionable guidance, ending with at most one next-step question.';
+  const messages: ChatMessage[] = [{ role: 'user', content: [userText, task].join('\n\n') }];
   return runAssistantChat(system, messages);
 }

@@ -130,12 +130,23 @@ test('postedAt is backfilled from rawPayload, and never left null', async () => 
   const nulls = await db.query<{ n: number }>(`SELECT COUNT(*)::int n FROM "opportunities" WHERE "postedAt" IS NULL`);
   assert.equal(nulls.rows[0].n, 0, 'every row ends with a usable postedAt');
 
-  const uw = await db.query<{ posted: Date }>(`SELECT "postedAt" AS posted FROM "opportunities" WHERE id='uw-1'`);
+  // Read back as TEXT, not as a Date. These columns are `timestamp without
+  // time zone` holding UTC wall-clock (the convention Prisma uses), and the
+  // driver materialises that as a JS Date in the TEST RUNNER's local zone — so
+  // `.toISOString()` only agrees with the stored value on a UTC machine. That
+  // made this assertion pass in CI and fail on a developer's laptop for a
+  // migration that was correct. `to_char` renders what is actually stored,
+  // identically everywhere.
+  const uw = await db.query<{ posted: string }>(
+    `SELECT to_char("postedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS posted
+       FROM "opportunities" WHERE id='uw-1'`,
+  );
   assert.equal(
-    uw.rows[0].posted.toISOString(),
+    uw.rows[0].posted,
     '2026-09-28T09:00:00.000Z',
     'the source posting time is used, not the insert time',
   );
+  await db.close();
 });
 
 test('a malformed rawPayload does not abort the migration and falls back to createdAt', async () => {
@@ -145,12 +156,17 @@ test('a malformed rawPayload does not abort the migration and falls back to crea
   await applyMigrations(db);
 
   for (const id of ['bad-1', 'bad-2', 'bad-4']) {
-    const r = await db.query<{ posted: Date; created: Date }>(
-      `SELECT "postedAt" AS posted, "createdAt" AS created FROM "opportunities" WHERE id=$1`, [id],
+    // Text again: two Dates in a non-UTC zone can also straddle a DST
+    // boundary and pick up different offsets, which would make equal stored
+    // values compare unequal.
+    const r = await db.query<{ posted: string; created: string }>(
+      `SELECT to_char("postedAt",  'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS posted,
+              to_char("createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created
+         FROM "opportunities" WHERE id=$1`, [id],
     );
     assert.equal(
-      r.rows[0].posted.toISOString(),
-      r.rows[0].created.toISOString(),
+      r.rows[0].posted,
+      r.rows[0].created,
       `${id} falls back to createdAt rather than failing`,
     );
   }
@@ -165,8 +181,15 @@ test('a future postedAt is clamped to now, never stored as the future', async ()
   await seedProductionLikeRows(db);
   await applyMigrations(db);
 
-  const r = await db.query<{ posted: Date }>(`SELECT "postedAt" AS posted FROM "opportunities" WHERE id='bad-3'`);
-  assert.ok(r.rows[0].posted.getTime() <= Date.now() + 1000, 'clamped to now');
+  // Compared inside the database, against the same UTC wall-clock convention
+  // the migration writes with, so the verdict does not depend on where the
+  // test runs. Read into JS as a Date, a naive-UTC value west of UTC comes
+  // back in the future and this assertion fails on a correct migration.
+  const r = await db.query<{ clamped: boolean }>(
+    `SELECT ("postedAt" <= (NOW() AT TIME ZONE 'UTC')) AS clamped
+       FROM "opportunities" WHERE id='bad-3'`,
+  );
+  assert.ok(r.rows[0].clamped, 'clamped to now, never stored as the future');
   await db.close();
 });
 
