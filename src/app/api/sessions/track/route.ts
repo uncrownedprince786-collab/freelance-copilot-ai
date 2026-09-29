@@ -179,8 +179,10 @@ export async function GET() {
       } else {
         const idleMs = now - lastSeenTime;
         // Must stay above the client heartbeat interval or every live session
-        // reads as Idle between beats. See HEARTBEAT_MS in src/app/page.tsx.
-        status = idleMs <= 10 * 60_000 ? 'Active' : idleMs <= 30 * 60_000 ? 'Idle' : 'Offline';
+        // reads as Idle between beats. HEARTBEAT_MS in src/app/page.tsx is
+        // 20 minutes — raised so an open tab stops holding the scale-to-zero
+        // database awake — so these thresholds moved with it.
+        status = idleMs <= 25 * 60_000 ? 'Active' : idleMs <= 60 * 60_000 ? 'Idle' : 'Offline';
       }
       const location = evs.find((e) => e.country)?.country || '';
       return {

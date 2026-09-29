@@ -329,10 +329,23 @@ function toggle<T>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter(v => v !== value) : [...list, value];
 }
 
-// Presence heartbeat interval. Each beat costs one DB read + one DB write, so
-// this directly controls how often an open tab wakes the scale-to-zero
-// database. /api/sessions/track's "Active" threshold must stay above it.
-const HEARTBEAT_MS = 5 * 60_000;
+/**
+ * Presence heartbeat interval.
+ *
+ * Neon Free scales the database to zero after 5 minutes of inactivity and
+ * that timeout cannot be disabled, so a 5-minute heartbeat was the worst
+ * possible value: every beat landed exactly as the database was about to
+ * suspend, and a single open tab kept it awake indefinitely. The free plan
+ * allows 100 CU-hours per month; one tab left open for a working day at
+ * 1 CU is roughly 240 CU-hours a month on its own.
+ *
+ * 20 minutes leaves the database suspended for three quarters of the time
+ * even with a tab open, and the beat is additionally gated on real user
+ * interaction below — an open-but-idle tab stops beating altogether.
+ *
+ * /api/sessions/track's "Active" threshold must stay above this.
+ */
+const HEARTBEAT_MS = 20 * 60_000;
 
 // Backoff for recovering from an unreachable feed. A fixed retry re-ran the
 // whole fetch forever from every open tab — including while the database was
@@ -385,16 +398,34 @@ function HomeContent() {
     }
   }, []);
 
-  // Session heartbeat. Pauses while the tab is hidden so a background tab
-  // does not keep the scale-to-zero database awake.
+  // Session heartbeat. Skipped while the tab is hidden, and skipped again
+  // unless the person actually did something since the last beat — presence
+  // is worth one write when someone is working, and nothing at all when a
+  // tab has simply been left open. Each beat wakes a database that would
+  // otherwise be suspended, so an ungated timer is a standing compute cost
+  // for no product value.
   useEffect(() => {
     if (!authed) return;
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    // The page load itself counts, so a fresh visit registers immediately.
+    let interacted = true;
+    const mark = () => { interacted = true; };
+    window.addEventListener('pointerdown', mark, { passive: true });
+    window.addEventListener('keydown', mark, { passive: true });
+    document.addEventListener('visibilitychange', mark);
     const beat = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (document.visibilityState === 'hidden') return;
+      if (!interacted) return;
+      interacted = false;
       trackActivity('heartbeat');
     };
     const idle = setInterval(beat, HEARTBEAT_MS);
-    return () => clearInterval(idle);
+    return () => {
+      clearInterval(idle);
+      window.removeEventListener('pointerdown', mark);
+      window.removeEventListener('keydown', mark);
+      document.removeEventListener('visibilitychange', mark);
+    };
   }, [authed]);
 
   useEffect(() => { saveFilters(filters); }, [filters]);

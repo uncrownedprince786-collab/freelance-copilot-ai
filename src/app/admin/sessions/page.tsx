@@ -88,7 +88,17 @@ export default function AdminSessionsPage() {
     }
     fetchSessions();
     // Auto-refresh so admin sees live Online/Offline status.
-    const interval = setInterval(fetchSessions, 30_000);
+    //
+    // Every poll is a database read, and Neon Free suspends after 5 minutes
+    // of inactivity, so a 30-second poll held the database awake for as long
+    // as this tab stayed open — on an admin page that is easy to leave open
+    // all day. Two minutes still tracks presence usefully (the Active window
+    // is 25 minutes) and lets the database suspend between sessions, and the
+    // poll pauses entirely while the tab is hidden.
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      fetchSessions();
+    }, 120_000);
     return () => clearInterval(interval);
   }, [router]);
 

@@ -2,10 +2,27 @@ name: Scheduled Sync + Refresh
 
 on:
   schedule:
-    # Single 30-minute coordinator (spec §6). Sync fetches new jobs; refresh
-    # patches competition signals on active jobs. The 5-min gap lets the sync
-    # commit before refresh reads.
-    - cron: '*/30 * * * *'
+    # Schedule shaped around TWO measured constraints, not a round number.
+    #
+    # 1. Neon Free scales the database to zero after 5 minutes of inactivity
+    #    and that cannot be disabled. Every trigger wakes it — including the
+    #    ones the route then skips, because deciding to skip means reading
+    #    the cooldown record. A '*/30' schedule fired 48 times a day against
+    #    a route whose own cooldown is 45 min at peak and 4 h off-peak, so
+    #    most of those wakes did nothing except cost compute. The free plan
+    #    allows 100 CU-hours/month and each wake holds the compute for at
+    #    least the 5-minute suspend timeout.
+    #
+    # 2. Discovery yield varies about sixfold across the day (3.4 new jobs
+    #    per run at 03:00 UTC against 20.8 at 06:00), so the hours are not
+    #    worth the same.
+    #
+    # Hourly through the active window, four-hourly overnight: 18 triggers a
+    # day instead of 48. Fewer of them are wasted, and because the Apify
+    # integration is now batched and incremental, every one of these can
+    # actually afford to fetch — where previously only two passes a day did.
+    - cron: '0 5-19 * * *'
+    - cron: '0 20,0,4 * * *'
   workflow_dispatch:
 
 jobs:
@@ -30,8 +47,20 @@ jobs:
           fi
           cat /tmp/sync-response.json
 
-      - name: Wait 5 minutes for sync to settle
-        run: sleep 300
+      # Short, deliberately inside Neon's 5-minute suspend window.
+      #
+      # This used to be `sleep 300` — exactly the suspend timeout — so the
+      # refresh landed just as the database went to sleep and paid for a
+      # second cold start on every single cycle. Measured on the run log:
+      # refresh followed sync by 5.5 minutes on average.
+      #
+      # The wait was never needed for correctness. /api/sync is synchronous,
+      # so the pipeline has already committed by the time curl returns, and
+      # /api/sync/refresh answers 429 if a run is still holding the lock.
+      # Twenty seconds is margin, not a settling period, and it keeps the
+      # refresh on the same warm compute the sync just paid for.
+      - name: Brief settle (stay inside the warm window)
+        run: sleep 20
 
       - name: Trigger Refresh
         run: |

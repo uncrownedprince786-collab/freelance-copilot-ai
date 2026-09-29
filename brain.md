@@ -791,6 +791,47 @@ switch costs one re-baseline, never a missed listing); and an empty pass is
 now the *normal* outcome, so it must never be treated as a source failure —
 there is a test for that.
 
+### Neon — rebuilt around scale-to-zero
+
+**Limits, read off Neon's plans page rather than assumed:** Free gives
+**100 CU-hours per project per month**, 0.5 GB storage, 5 GB egress, and
+scales the compute to zero after **5 minutes of inactivity — which cannot be
+disabled**.
+
+Storage is not the constraint: the database is **20 MB of 512 MB** (4%), and
+7-day retention bounds it. Compute is the whole game, and because every wake
+holds the compute for at least the 5-minute suspend timeout, the cost driver
+is **how often something touches the database**, not how much work it does.
+
+Three things were waking it needlessly:
+
+| Cause | Before | After |
+|---|---|---|
+| Presence heartbeat | every **5 min** — exactly the suspend timeout, so one open tab kept the database awake indefinitely | 20 min, and skipped entirely unless the person actually interacted since the last beat |
+| Cron triggers | `*/30` = 48/day against a route whose own cooldown is 45 min / 4 h, so most wakes only read the cooldown and skipped | hourly 05–19 UTC, four-hourly overnight = **18/day**, aligned so nearly every trigger does real work |
+| Refresh after sync | `sleep 300` — precisely the suspend timeout, so refresh paid a second cold start every cycle (measured: 5.5 min after sync on average) | `sleep 20`, inside the warm window, reusing the compute the sync already paid for |
+| Admin sessions page | polled every 30 s, pinning the database awake for as long as the tab was open | 2 min, and paused while hidden |
+
+Roughly **96 wakes a day down to ~18**. At the 5-minute minimum that is about
+8 hours a day of forced runtime reduced to about 1.5 — the difference between
+comfortably inside 100 CU-hours and far outside it, depending on the
+project's compute size.
+
+The heartbeat was the worst of them and the least obvious: the interval had
+been *deliberately* set to 5 minutes with a comment acknowledging it "controls
+how often an open tab wakes the scale-to-zero database" — which is exactly the
+value that guarantees it never sleeps.
+
+Also already landed earlier in Phase 3 and contributing here: write
+suppression for unchanged listings (~1,300 pointless row updates a day), the
+scheduler histogram moved into SQL (1,295 rows → 24, 267 KB → 448 B per
+tick), and the `market_facts` replace-upsert churn.
+
+**Not measurable from SQL:** actual CU-hours consumed, and the project's
+compute size. Both are visible only in the Neon console, and the compute size
+matters — the same wake pattern costs 4× more at 1 CU than at 0.25 CU. Worth
+checking there after a few days.
+
 ### Open issues — none of these are fixed
 
 Carried out of the Phase 4 integration. Each was verified, none is
