@@ -127,6 +127,8 @@ export class ApifyUpworkProvider implements JobProvider {
   // timeout/actor errors) from a normal run that simply returned few or zero
   // jobs. Zero jobs from successful queries is NOT a failure.
   lastRunStatus?: ProviderRunStatus;
+  /** Billed Apify runs consumed by the CURRENT fetch. Reset per fetchJobs. */
+  private billedRuns = 0;
 
   // `opts` is only used by the Active Job Refresh flow, which fetches a wider
   // recency window to catch older-but-still-active listings. The new-job sync
@@ -155,6 +157,9 @@ export class ApifyUpworkProvider implements JobProvider {
     let succeededQueries = 0;
     let skippedQueries = 0;
 
+    // Every attempt below is a separately billed Apify run. Counted here so
+    // cost-per-useful-lead is measured rather than estimated.
+    this.billedRuns = 0;
     const maxResults = opts?.maxResults ?? 8;
     const totalCap = opts?.totalCap ?? 60;
     // Discovery may spend the whole remaining budget; refresh may only spend
@@ -316,6 +321,7 @@ export class ApifyUpworkProvider implements JobProvider {
         : failed ? `all ${queries.length} query attempts failed (API/quota/timeout/actor)` : 'ok',
       queriesTotal: queries.length - skippedQueries,
       queriesFailed: queries.length - skippedQueries - succeededQueries,
+      billedRuns: this.billedRuns,
     };
     console.log(`[ApifyUpworkProvider] Total jobs fetched: ${results.length} (failed=${failed}, skipped=${skippedQueries})`);
     return results;
@@ -344,6 +350,7 @@ export class ApifyUpworkProvider implements JobProvider {
       // the daily budget here — after the availability check above and once for
       // every account retried.
       const remaining = await consumeApifyBudget();
+      this.billedRuns++;
       console.log(`[ApifyUpworkProvider] Fetching Upwork jobs for: "${query}" (account ...${token.slice(-4)}, budget remaining ${remaining})...`);
       // run-sync-get-dataset-items blocks until the actor finishes. Without a
       // deadline a stuck actor holds the sync lock and burns the whole

@@ -5,6 +5,11 @@ export interface ProviderRunStatus {
   reason: string;
   queriesTotal: number;
   queriesFailed: number;
+  /** Billed provider runs this fetch actually cost. Every Apify query
+   *  attempt is billed, including a failover retry on another account, so
+   *  this is counted at the call site rather than inferred from the query
+   *  list. Sources with no per-call cost report 0. */
+  billedRuns?: number;
 }
 
 export interface JobProvider {

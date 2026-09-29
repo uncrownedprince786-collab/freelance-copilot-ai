@@ -8,6 +8,7 @@ import { prisma } from "../lib/db";
 import { isSafeExternalUrl } from "../lib/safeUrl";
 import { identityFields, hasMaterialChange, resolveIdentity, sourcePostedAt } from "../lib/ingestIdentity";
 import { assessListing } from "../lib/assess";
+import { recordSourceRun } from "../lib/sourceHealthStore";
 
 export class JobPipeline {
   private providers: JobProvider[] = [
@@ -41,6 +42,7 @@ export class JobPipeline {
     let apifyJobs: Job[] = [];
     let apifyFailed = false;
     let apifyFailureReason = '';
+    const apifyStartedAt = Date.now();
     try {
       apifyJobs = await apifyProvider.fetchJobs();
       apifyFailed = apifyProvider.lastRunStatus?.failed === true;
@@ -52,6 +54,18 @@ export class JobPipeline {
     }
     console.log(`[JobPipeline] Apify (Upwork): ${apifyJobs.length} jobs (failed=${apifyFailed}).`);
     fetchedJobs.push(...apifyJobs);
+    // Telemetry, never fatal. This is the only place that knows how many
+    // billed Apify runs this fetch actually cost, and cost per USEFUL LEAD
+    // is the number that should decide where scraping effort goes — record
+    // counts rank the high-volume source first, which the measured yield
+    // says is exactly backwards.
+    await recordSourceRun('apify', {
+      ok: !apifyFailed,
+      reason: apifyFailureReason || null,
+      records: apifyJobs.length,
+      durationMs: Date.now() - apifyStartedAt,
+      billedUnits: apifyProvider.lastRunStatus?.billedRuns ?? 0,
+    });
 
     // Freelancer (complementary source). Isolated like Apify: an exception
     // here used to abort the entire pipeline before the save, the market
@@ -60,6 +74,7 @@ export class JobPipeline {
     let freelancerJobs: Job[] = [];
     let freelancerFailed = false;
     let freelancerFailureReason = '';
+    const freelancerStartedAt = Date.now();
     try {
       freelancerJobs = await this.providers[1].fetchJobs();
     } catch (err: unknown) {
@@ -69,6 +84,16 @@ export class JobPipeline {
     }
     console.log(`[JobPipeline] Freelancer: ${freelancerJobs.length} jobs (failed=${freelancerFailed}).`);
     fetchedJobs.push(...freelancerJobs);
+    // Freelancer's own API is free, so billedUnits stays 0 — and the cost
+    // report says "n/a (free)" rather than "0 per lead", which would read as
+    // infinitely efficient.
+    await recordSourceRun('freelancer', {
+      ok: !freelancerFailed,
+      reason: freelancerFailureReason || null,
+      records: freelancerJobs.length,
+      durationMs: Date.now() - freelancerStartedAt,
+      billedUnits: 0,
+    });
 
     // Step 3: Local 7-Day Filter & Hard Filters
     console.log('[JobPipeline] Step 3: Applying 7-Day Age Filter & Hard Filters...');
