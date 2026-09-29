@@ -34,8 +34,10 @@ async function runSync() {
     // that never reached the database went unnoticed.
     if (pipeline.lastWriteFailures > 0) {
       console.error(
-        `\nSync FAILED: ${pipeline.lastWriteFailures} database writes threw. ` +
-        `Jobs were fetched but not persisted.`
+        `\nSync FAILED: ${pipeline.lastWriteFailures} database write(s) failed. ` +
+        (jobs.length === 0
+          ? 'The run aborted before any source was fetched, so no scraping budget was spent.'
+          : 'Jobs were fetched but not persisted.')
       );
       process.exitCode = 1;
       return;
