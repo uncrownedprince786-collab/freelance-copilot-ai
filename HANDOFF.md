@@ -39,6 +39,13 @@ items, none speculative. The first needs a human decision rather than code:
 `market_facts` history before ~2026-09-23 is corrupt and unrecoverable, and
 `/trading` still displays it.
 
+## Deployed — 2026-09-30
+
+Merged to `main` and live on Vercel production (`ed0f76c`). Verified after
+the deploy: all routes 200, input validation enforced, the API payload
+carries the quality layer. The new cron schedule is active now that the
+workflow is on the default branch.
+
 ## Database rollout — DONE (2026-09-30)
 
 The migration and all three passes have been applied to the production Neon

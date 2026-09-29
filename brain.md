@@ -314,38 +314,38 @@ the source omits it, and `client.jobsPosted` populated from
 **Working branch:** `audit/production-hardening` off `dd5a0cf`. `main` is
 untouched — a push to `main` triggers a Vercel production deploy.
 
-### DEPLOYMENT STATE — read this before assuming anything works in production
+### DEPLOYMENT STATE — live
 
-The database and the code are at **different stages**, and that distinction
-is the single most important thing on this page.
+Merged to `main` and deployed to Vercel production on 2026-09-30
+(`ed0f76c`). Database and code are now at the same stage.
 
-| | State |
-|---|---|
-| **Database** | Migrated and backfilled. Identity, duplicate clusters, authenticity, lead scores are all populated on the live 1,332 rows. |
-| **Code** | On the branch only. **Never deployed.** |
+Verified against production immediately after the deploy:
 
-Production therefore runs the **old code against the new schema**. That is
-safe — the migration was purely additive, so old code simply ignores the new
-columns — but it means **none of the improvements are in effect**: not the
-Apify batching, not the Neon wake reductions, not the UI, not the assistant
-honesty fix.
+    /  /about  /intelligence  /api/jobs        all 200
+    /api/jobs?limit=999999                     400 (validation enforced)
+    payload carries leadScore, leadBand, authenticityStatus, leadReasons
+    competition renders "2 proposals when this listing was checked
+      23 hours ago — not a current figure"
 
-Two consequences that are easy to get wrong:
+**The new cron schedule is now active**, because GitHub runs scheduled
+workflows from the default branch: hourly 05–19 UTC, four-hourly overnight,
+18 triggers a day instead of 48, with the refresh moved inside Neon's warm
+window.
 
-1. **The new cron schedule is inert.** GitHub only runs `schedule` triggers
-   from the **default branch**, so `.github/workflows/cron-sync.yml` on this
-   branch does nothing. The old `*/30` schedule is still what fires, against
-   the old deployed code.
-2. **Rows ingested by production right now land without the quality fields**,
-   because the deployed code does not know how to write them. This
-   self-corrects: run `npm run assess -- --apply` and
-   `npm run cluster:duplicates -- --apply` after deploying, and post-sync
-   maintenance takes over from there.
+**Worth watching over the first day or two**, since none of this has run in
+production before:
 
-To get the measured benefits — roughly 5x fresher Upwork data at ~30% of the
-Apify cost, and ~96 Neon wakes a day down to ~18 — the branch has to be
-reviewed and merged. That is a production deploy and is the repo owner's
-decision.
+- The first Apify pass under a new `stateKey` builds an incremental
+  baseline and will return more rows than usual — one-off, roughly $0.025.
+- Empty Apify passes are now the NORMAL outcome. Do not read them as a
+  source failure; `npm run source:health` is the place to check.
+- Rows ingested by the old code between the migration and this deploy may
+  lack quality fields. `npm run assess -- --apply` and
+  `npm run cluster:duplicates -- --apply` catch them up; post-sync
+  maintenance handles it from there.
+- Neon CU-hours are only visible in the Neon console. If the project's
+  compute size is above 0.25 CU, turning it down is the largest remaining
+  lever.
 
 ### Rollout — DONE (2026-09-30), verified
 
