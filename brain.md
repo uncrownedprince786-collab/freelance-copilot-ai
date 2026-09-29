@@ -309,7 +309,7 @@ the source omits it, and `client.jobsPosted` populated from
 | Phase 1 — critical security + cost + test gate | **complete** — `27eb93a` |
 | Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **complete in code, unapplied** — every engine built and tested; nothing has touched the database and no UI reads it |
 | Phase 3 — Neon/Apify cost reduction | **substantially complete** — write amplification, scheduler query, budget allocation, source health, yield-based scheduling, ops surface and post-sync maintenance all landed; retention archiving (§19) still open |
-| Phase 4 — UX revamp, chatbot deterministic-first | not started |
+| Phase 4 — UX revamp, chatbot deterministic-first | **complete** — feed, job detail, About and Intelligence all read the quality layer (`d8488a2`); assistant honesty fixed (`e21ec7e`) |
 
 **Working branch:** `audit/production-hardening` off `dd5a0cf`. Pushed. Not
 deployed, not merged. `main` is untouched — a push to `main` triggers a Vercel
@@ -676,6 +676,47 @@ serve, so most runs are Freelancer-only. Yield-based scheduling now makes
 that waste harmless rather than random, but the cadence itself is still
 worth a decision.
 
+### Phase 4 — UI (`d8488a2`)
+
+Built on three parallel tracks over disjoint files, then verified here
+rather than accepted on report.
+
+- **Dashboard + jobs API.** Latest and Recommended are separate orders,
+  sorted in SQL, with no blended third option and no client-side re-sorting.
+  `limit=999999` is rejected with 400, not clamped — silently returning 100
+  misreports what was returned. Every score carries a "Why? (n)" disclosure
+  with reasons, risks and translated authenticity codes. Filters offer only
+  what the data supports: `paymentVerified` and `clientName` appear nowhere,
+  and `verified` is never offered because no row can reach it.
+- **Job detail.** "Published by {platform}" against "Lead Hunter's
+  assessment", so an inferred value is never shown as a source fact. Absent
+  values read "Not published by this source". The imperative `window.open`
+  sink was replaced with a validated anchor. The legacy `score` is demoted to
+  a footnote — it has no recorded reasoning, so showing it as a verdict was
+  the bug.
+- **About + Intelligence.** Every About figure traces to this file. A trend
+  now requires a named metric, both period bounds, a threshold, per-period n
+  and a significance test (72h vs previous 72h, with a 3h capture-lag guard).
+  Its most valuable output is a refusal: useful-lead rate moved 13.2% → 24.9%
+  at p<0.001 and is deliberately NOT reported as a trend, because freshness
+  is a lead-score input and the current period is by construction 72h
+  younger. It renders as "measured, not attributable".
+
+**Verified in a browser at 375px:** no horizontal overflow on the feed or
+the detail page, zero overflowing elements, and the rendered text contains
+no "so far" phrasing anywhere — competition reads "4 proposals when this
+listing was checked 16 hours ago — not a current figure" with a snapshot
+flag.
+
+### Bugs found during integration, all verified against production
+
+| Bug | Evidence | State |
+|---|---|---|
+| `market_facts` destroys its own history | 09-23..09-29 match live rows exactly; 09-22 reads 37, 09-21 reads **1**, 09-20 reads 15, against real intake of ~190/day | Writer fixed (a day closes at 6 days, inside retention). **Existing corrupt rows are unrecoverable** — the source rows are deleted |
+| `budgetType` empty on every row | 1,332 empty while the budget JSON had the type on all of them (435 hourly / 897 fixed) | Both write paths fixed + data-only migration; 1,332 → 0 empty |
+| `/opportunities/[id]` unreachable for every row | `IdSchema = z.string().uuid()` vs source-derived keys like `fl-…-40740654` | Fixed |
+| "Hired so far" | `hiresCount` is also captured once and never refreshed — same bug, different field | Fixed |
+
 ### What is NOT done, and what is NOT verified
 
 **Not built:** the UI does not read any of the Phase 2 columns. The feed still
@@ -700,6 +741,43 @@ Also fixed: the three scripts needed `--conditions=react-server`, because
 `src/lib/db.ts` imports `server-only`. Note that `npm run sync` still lacks
 the flag and will throw the same error — untested here because running it
 would spend Apify quota.
+
+### Open issues — none of these are fixed
+
+Carried out of the Phase 4 integration. Each was verified, none is
+speculative.
+
+1. **`market_facts` history before ~2026-09-23 is wrong and cannot be
+   recovered** — the listings it was derived from are deleted. The writer no
+   longer corrupts new days, but `/trading` still reads the old rows and
+   will show badly undercounted daily volumes. Deleting those rows would be
+   more honest than displaying them; that is a call for the repo owner, not
+   something to do unasked.
+2. **`usdBudgetMidpoint` and `parseBudget` disagree on a missing currency.**
+   `marketIntelligence.ts` assumes USD on any platform; `leadScore.ts`
+   assumes it only on Upwork, which is the rule that avoids the 49× rupee
+   error. So `/trading` budget charts dollar-denominate currency-less
+   Freelancer rows.
+3. **`/trading` still presents LLM-written market commentary as analysis**
+   (`marketSummary`, `aiInsights`, `recommendedSkillsToLearn`) — the same
+   class of problem removed from `/intelligence`.
+4. **`/opportunities/[id]` duplicates `/job/[id]`.** Nothing links to it.
+   Both were brought to the same vocabulary rather than allowed to diverge
+   further, but one should go.
+5. **`/api/intelligence` is now dead code** — `/intelligence` was its only
+   consumer.
+6. **`/about` has no nav entry point.**
+7. **The budget formatter exists in three places** and the status vocabulary
+   in two. Worth one shared module.
+8. **`interviewingCount` / `hiresCount` default to 0**, so a published zero
+   and an unpublished field are indistinguishable. The UI says "Not
+   published" for 0, which is a guess in the other direction; the real fix
+   is a nullable column.
+9. **Retention archiving (§19) is not built** — the policy still hard-deletes
+   at 7 days instead of moving rows to an archive.
+10. **The sync cadence is ~4× what the Apify budget can serve.** Yield-based
+    scheduling makes the surplus harmless rather than random, but the cadence
+    itself still deserves a decision.
 
 ### Known-accepted dependency advisories
 
