@@ -15,7 +15,8 @@ The branch tip is green and verified:
 
     typecheck   clean
     lint        0 errors, 7 pre-existing warnings
-    tests       159 unit + 21 PGlite + 77 grounding + 9 ranking, all passing
+    tests       214 unit + 21 PGlite + 77 grounding + 9 ranking, all passing
+    browser     375px, no horizontal overflow on feed or job detail
     build       OK
 
 That was not true of the previous tip (`7b3755a`/`82d464f`), which did not
@@ -23,33 +24,20 @@ compile. `5f82a95` fixed it — see the commit message for the three defects.
 
 ## Where it stopped
 
-**Phase 2 is complete in code and has never touched the database.** Built and
-tested: the migration, job identity, identity-based ingestion, duplicate
-clustering, the authenticity engine, freshness, lead scoring, and the
-assessment pass that writes the quality columns. brain.md §8 has the
-methodology and every measured number behind them.
+All four phases are done and applied. brain.md §8 has the methodology, the
+measured numbers behind every decision, and an explicit open-issues list.
 
-It stopped at the point where the next step needs a decision rather than more
-code: applying the migration to production. The standing constraints forbid
-running migrations against production from this work, so that call is the
-repo owner's.
+    Phase 1  security, cost and the test gate          complete
+    Phase 2  identity, duplicates, authenticity,
+             freshness, lead scoring                   complete and applied
+    Phase 3  Apify/Neon cost, source health, cron      complete except §19
+    Phase 4  feed, job detail, About, Intelligence,
+             assistant honesty                         complete
 
-Not started:
-
-1. **UI (§23–29).** Nothing reads the new columns. The feed still sorts by
-   `createdAt`; there is no separate Latest vs Recommended; the job detail
-   page does not distinguish source fact from derived value; Trending is
-   untouched.
-2. **Cron wiring.** `cluster:duplicates` and `assess` are scripts, not
-   scheduled passes.
-3. **Phase 3** — Apify/Neon cost reduction, adaptive scheduling, source
-   health. Note the measurement that motivates it: 781 of 1,332 live rows
-   (59%) are already stale or expired.
-
-Known sharp edge: `npm run sync` lacks `--conditions=react-server`, which
-`src/lib/db.ts` needs because it imports `server-only`. The three data
-scripts were fixed; sync was left alone because running it to confirm would
-spend Apify quota.
+**Read brain.md "Open issues" before picking anything up.** Ten verified
+items, none speculative. The first needs a human decision rather than code:
+`market_facts` history before ~2026-09-23 is corrupt and unrecoverable, and
+`/trading` still displays it.
 
 ## Database rollout — DONE (2026-09-30)
 
