@@ -20,7 +20,7 @@
         "source:health": "tsx --conditions=react-server scripts/source-health.ts",
         "test:apify": "tsx scripts/test-apify-accounts.ts",
         "test:refresh": "tsx scripts/test-refresh-batching.ts",
-        "sync": "tsx scripts/sync.ts"
+        "sync": "tsx --conditions=react-server scripts/sync.ts"
     },
     "dependencies": {
         "@google/genai": "^2.17.1",
