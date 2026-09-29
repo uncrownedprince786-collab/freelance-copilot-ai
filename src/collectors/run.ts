@@ -3,6 +3,7 @@ import { UpworkCollector } from "./UpworkCollector";
 import { FreelancerCollector } from "./FreelancerCollector";
 import { prisma } from "@/lib/db";
 import { RawOpportunity } from "./types";
+import { identityFields, resolveIdentity, sourcePostedAt } from "@/lib/ingestIdentity";
 
 // In-scope CLI collection sources: Upwork + Freelancer only. Generic/public
 // remote feeds were intentionally removed to keep collection focused.
@@ -130,37 +131,69 @@ export async function runAllCollectors(): Promise<{
       const postedAt = (item.postedAt || item.postedDate) ? new Date((item.postedAt || item.postedDate) as string) : null;
       const sourceIso = postedAt && !isNaN(postedAt.getTime()) ? postedAt.toISOString() : null;
       const legacyPayload = sourceIso ? JSON.stringify({ postedAt: sourceIso }) : "{}";
-      await prisma.opportunity.upsert({
-        where: { url: item.url },
-        update: {
-          title: item.title?.trim() || "Untitled Job",
-          description: item.description?.trim() || "",
-          budget: cleanedBudget,
-          platform: item.platform,
-          country: item.country,
-          clientName: item.clientName,
-          clientSpend: item.clientSpend,
-          clientReviews: item.clientReviews,
-          connections: item.connections,
-        },
-        create: {
-          title: item.title?.trim() || "Untitled Job",
-          description: item.description?.trim() || "",
-          budget: cleanedBudget,
-          platform: item.platform, // primary source
-          url: item.url,
-          score: baseScore,
-          risk: "Medium",
-          createdAt: new Date(),
-          status: item.status || "OPEN",
-          country: item.country,
-          clientName: item.clientName,
-          clientSpend: item.clientSpend,
-          clientReviews: item.clientReviews,
-          connections: item.connections,
-          rawPayload: legacyPayload,
-        },
+      // Same identity resolution as JobPipeline: source id first, then the
+      // exact URL, then the canonical one. Two write paths with two different
+      // notions of identity would let a duplicate in through whichever one is
+      // weaker.
+      const seenAt = new Date();
+      const { identity, existingId } = await resolveIdentity(prisma, {
+        platform: item.platform,
+        url: item.url,
+        title: item.title,
+        description: item.description,
+        sourceJobId: item.sourceJobId,
       });
+      const idFields = identityFields(identity, sourcePostedAt(postedAt, seenAt), seenAt);
+
+      const updateData = {
+        title: item.title?.trim() || "Untitled Job",
+        description: item.description?.trim() || "",
+        budget: cleanedBudget,
+        platform: item.platform,
+        country: item.country,
+        clientName: item.clientName,
+        clientSpend: item.clientSpend,
+        clientReviews: item.clientReviews,
+        connections: item.connections,
+        ...idFields,
+      };
+
+      const createData = {
+        title: item.title?.trim() || "Untitled Job",
+        description: item.description?.trim() || "",
+        budget: cleanedBudget,
+        platform: item.platform, // primary source
+        url: item.url,
+        score: baseScore,
+        risk: "Medium",
+        createdAt: new Date(),
+        status: item.status || "OPEN",
+        country: item.country,
+        clientName: item.clientName,
+        clientSpend: item.clientSpend,
+        clientReviews: item.clientReviews,
+        connections: item.connections,
+        rawPayload: legacyPayload,
+        ...idFields,
+        firstSeenAt: seenAt,
+      };
+
+      if (existingId) {
+        await prisma.opportunity.update({ where: { id: existingId }, data: updateData });
+      } else {
+        try {
+        await prisma.opportunity.create({ data: createData });
+        } catch (createErr: unknown) {
+        // Concurrent run won the race. Degrade to the URL-keyed upsert this
+        // path used before rather than dropping the record.
+        if ((createErr as { code?: string })?.code !== "P2002") throw createErr;
+        await prisma.opportunity.upsert({
+        where: { url: item.url },
+        update: updateData,
+        create: createData,
+        });
+        }
+      }
       totalImported++;
     } catch (dbError) {
       console.error(`Error upserting ${item.url}:`, dbError);

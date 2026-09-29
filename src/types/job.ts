@@ -28,6 +28,9 @@ export interface JobClient {
 export interface Job {
   id: string;
   url: string;
+  /** The source's own id, when the adapter had it. A source fact — see
+   *  RawOpportunity.sourceJobId and lib/identity.ts. */
+  sourceJobId?: string | null;
   title: string;
   description: string;
   skills: string[];

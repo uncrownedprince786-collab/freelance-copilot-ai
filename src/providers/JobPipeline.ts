@@ -6,6 +6,7 @@ import { logCronRun } from "../lib/cronLogger";
 import { recordMarketFacts } from "../lib/marketFacts";
 import { prisma } from "../lib/db";
 import { isSafeExternalUrl } from "../lib/safeUrl";
+import { identityFields, resolveIdentity, sourcePostedAt } from "../lib/ingestIdentity";
 
 export class JobPipeline {
   private providers: JobProvider[] = [
@@ -300,63 +301,103 @@ export class JobPipeline {
           ...(extra.memberSince ? { memberSince: extra.memberSince } : {}),
         };
 
-        await prisma.opportunity.upsert({
-          where: { url: job.url },
-          update: {
-            title: job.title || 'Untitled Job',
-            description: job.description || '',
-            budget: budgetStr,
-            platform: job.platform || 'Upwork',
-            score: job.score ?? 70,
-            country: job.country || clientObj.country || '',
-            clientName: job.clientName || clientObj.name || '',
-            clientSpend: job.clientSpend || '',
-            clientReviews: job.clientReviews || '',
-            connections: job.connections || 0,
-            budgetType: job.budgetType || '',
-            experienceLevel: job.experienceLevel || '',
-            duration: job.duration || '',
-            skills: skillsStr,
-            proposalCount: typeof job.proposalCount === 'number' && job.proposalCount > 0 ? job.proposalCount : undefined,
-            interviewingCount: typeof job.interviewingCount === 'number' && job.interviewingCount > 0 ? job.interviewingCount : undefined,
-            hiresCount: typeof job.hiresCount === 'number' && job.hiresCount > 0 ? job.hiresCount : undefined,
-            paymentVerified: clientObj.paymentVerified === true,
-            clientRating: clientObj.rating ? String(clientObj.rating) : '',
-            jobsPosted: clientObj.jobsPosted ?? null,
-            applied: job.applied || false,
-            rawPayload: JSON.stringify(payload),
-          },
-          create: {
-            id: job.id,
-            url: job.url,
-            title: job.title || 'Untitled Job',
-            description: job.description || '',
-            budget: budgetStr,
-            platform: job.platform || 'Upwork',
-            score: job.score ?? 70,
-            createdAt: new Date(),
-            country: job.country || clientObj.country || '',
-            clientName: job.clientName || clientObj.name || '',
-            clientSpend: job.clientSpend || '',
-            clientReviews: job.clientReviews || '',
-            connections: job.connections || 0,
-            budgetType: job.budgetType || '',
-            experienceLevel: job.experienceLevel || '',
-            duration: job.duration || '',
-            skills: skillsStr,
-            proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
-            interviewingCount: job.interviewingCount || 0,
-            hiresCount: job.hiresCount || 0,
-            paymentVerified: clientObj.paymentVerified === true,
-            clientRating: clientObj.rating ? String(clientObj.rating) : '',
-            jobsPosted: clientObj.jobsPosted ?? null,
-            applied: job.applied || false,
-            rawPayload: JSON.stringify(payload),
-          },
+        // Identity resolution replaces the URL-keyed upsert. One query, and
+        // it matches on the source's own id first, so the same Freelancer
+        // project arriving under its slug URL and its slug+id URL updates one
+        // row instead of creating two. Falls back to the exact URL, then to
+        // the canonical URL. See lib/ingestIdentity.ts for why contentHash is
+        // not a match key.
+        const seenAt = new Date();
+        const { identity, existingId } = await resolveIdentity(prisma, {
+          platform: job.platform || 'Upwork',
+          url: job.url,
+          title: job.title,
+          description: job.description,
+          sourceJobId: job.sourceJobId,
         });
+        const idFields = identityFields(identity, sourcePostedAt(job.postedAt, seenAt), seenAt);
+
+        const updateData = {
+          title: job.title || 'Untitled Job',
+          description: job.description || '',
+          budget: budgetStr,
+          platform: job.platform || 'Upwork',
+          score: job.score ?? 70,
+          country: job.country || clientObj.country || '',
+          clientName: job.clientName || clientObj.name || '',
+          clientSpend: job.clientSpend || '',
+          clientReviews: job.clientReviews || '',
+          connections: job.connections || 0,
+          budgetType: job.budgetType || '',
+          experienceLevel: job.experienceLevel || '',
+          duration: job.duration || '',
+          skills: skillsStr,
+          proposalCount: typeof job.proposalCount === 'number' && job.proposalCount > 0 ? job.proposalCount : undefined,
+          interviewingCount: typeof job.interviewingCount === 'number' && job.interviewingCount > 0 ? job.interviewingCount : undefined,
+          hiresCount: typeof job.hiresCount === 'number' && job.hiresCount > 0 ? job.hiresCount : undefined,
+          paymentVerified: clientObj.paymentVerified === true,
+          clientRating: clientObj.rating ? String(clientObj.rating) : '',
+          jobsPosted: clientObj.jobsPosted ?? null,
+          applied: job.applied || false,
+          rawPayload: JSON.stringify(payload),
+          ...idFields,
+        };
+
+        const createData = {
+          id: job.id,
+          url: job.url,
+          title: job.title || 'Untitled Job',
+          description: job.description || '',
+          budget: budgetStr,
+          platform: job.platform || 'Upwork',
+          score: job.score ?? 70,
+          createdAt: new Date(),
+          country: job.country || clientObj.country || '',
+          clientName: job.clientName || clientObj.name || '',
+          clientSpend: job.clientSpend || '',
+          clientReviews: job.clientReviews || '',
+          connections: job.connections || 0,
+          budgetType: job.budgetType || '',
+          experienceLevel: job.experienceLevel || '',
+          duration: job.duration || '',
+          skills: skillsStr,
+          proposalCount: typeof job.proposalCount === 'number' ? job.proposalCount : null,
+          interviewingCount: job.interviewingCount || 0,
+          hiresCount: job.hiresCount || 0,
+          paymentVerified: clientObj.paymentVerified === true,
+          clientRating: clientObj.rating ? String(clientObj.rating) : '',
+          jobsPosted: clientObj.jobsPosted ?? null,
+          applied: job.applied || false,
+          rawPayload: JSON.stringify(payload),
+          ...idFields,
+          // createdAt has always been the retention anchor; firstSeenAt makes
+          // that explicit. Create-only — an update must never move it.
+          firstSeenAt: seenAt,
+        };
+
+        if (existingId) {
+          await prisma.opportunity.update({ where: { id: existingId }, data: updateData });
+        } else {
+          try {
+          await prisma.opportunity.create({ data: createData });
+          } catch (createErr: unknown) {
+          // A concurrent run inserted this listing between the lookup and
+          // the write, or the generated primary key already belongs to
+          // another row. Fall back to the URL-keyed upsert this path used
+          // before, so a race degrades to the old behaviour instead of
+          // dropping the record. Ingestion has to survive retries and
+          // overlapping runs.
+          if ((createErr as { code?: string })?.code !== 'P2002') throw createErr;
+          await prisma.opportunity.upsert({
+          where: { url: job.url },
+          update: updateData,
+          create: createData,
+          });
+          }
+        }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
-        console.error('[JobPipeline] DB upsert error:', err.message);
+        console.error('[JobPipeline] DB write error:', err.message);
       }
     }
   }
