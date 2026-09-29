@@ -305,15 +305,47 @@ the source omits it, and `client.jobsPosted` populated from
 |---|---|
 | Forensic audit (§3) | **complete** — section 5 |
 | brain.md rewritten as source of truth (§2) | **complete** |
-| Baseline verification | typecheck ✅ · lint ✅ · tests ✅ · build ✅ at `cdfbb54` |
+| Baseline verification | typecheck ✅ · lint ✅ (0 errors, 6 warnings) · **224 tests** ✅ · build ✅ at `879e2e5` |
 | Phase 1 — critical security + cost + test gate | **complete** — `27eb93a` |
-| Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **complete in code, unapplied** — every engine built and tested; nothing has touched the database and no UI reads it |
+| Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **complete and applied to the database** — see Rollout below |
 | Phase 3 — Neon/Apify cost reduction | **substantially complete** — write amplification, scheduler query, budget allocation, source health, yield-based scheduling, ops surface and post-sync maintenance all landed; retention archiving (§19) still open |
 | Phase 4 — UX revamp, chatbot deterministic-first | **complete** — feed, job detail, About and Intelligence all read the quality layer (`d8488a2`); assistant honesty fixed (`e21ec7e`) |
 
-**Working branch:** `audit/production-hardening` off `dd5a0cf`. Pushed. Not
-deployed, not merged. `main` is untouched — a push to `main` triggers a Vercel
-production deploy.
+**Working branch:** `audit/production-hardening` off `dd5a0cf`. `main` is
+untouched — a push to `main` triggers a Vercel production deploy.
+
+### DEPLOYMENT STATE — read this before assuming anything works in production
+
+The database and the code are at **different stages**, and that distinction
+is the single most important thing on this page.
+
+| | State |
+|---|---|
+| **Database** | Migrated and backfilled. Identity, duplicate clusters, authenticity, lead scores are all populated on the live 1,332 rows. |
+| **Code** | On the branch only. **Never deployed.** |
+
+Production therefore runs the **old code against the new schema**. That is
+safe — the migration was purely additive, so old code simply ignores the new
+columns — but it means **none of the improvements are in effect**: not the
+Apify batching, not the Neon wake reductions, not the UI, not the assistant
+honesty fix.
+
+Two consequences that are easy to get wrong:
+
+1. **The new cron schedule is inert.** GitHub only runs `schedule` triggers
+   from the **default branch**, so `.github/workflows/cron-sync.yml` on this
+   branch does nothing. The old `*/30` schedule is still what fires, against
+   the old deployed code.
+2. **Rows ingested by production right now land without the quality fields**,
+   because the deployed code does not know how to write them. This
+   self-corrects: run `npm run assess -- --apply` and
+   `npm run cluster:duplicates -- --apply` after deploying, and post-sync
+   maintenance takes over from there.
+
+To get the measured benefits — roughly 5x fresher Upwork data at ~30% of the
+Apify cost, and ~96 Neon wakes a day down to ~18 — the branch has to be
+reviewed and merged. That is a production deploy and is the repo owner's
+decision.
 
 ### Rollout — DONE (2026-09-30), verified
 
