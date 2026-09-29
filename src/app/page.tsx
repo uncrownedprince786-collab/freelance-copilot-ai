@@ -750,7 +750,7 @@ function HomeContent() {
             ))}
           </FilterGroup>
 
-          <FilterGroup label="Lead band" hint="This system's own assessment">
+          <FilterGroup label="Lead band">
             {LEAD_BANDS.map(b => (
               <Pill
                 key={b}
@@ -763,7 +763,7 @@ function HomeContent() {
             ))}
           </FilterGroup>
 
-          <FilterGroup label="Authenticity" hint="Deterministic checks, never a model verdict">
+          <FilterGroup label="Authenticity">
             {AUTH_STATUSES
               // Only offer a status the data actually contains. `verified` is
               // unreachable by design, so it is never rendered as a choice.
@@ -780,7 +780,7 @@ function HomeContent() {
               ))}
           </FilterGroup>
 
-          <FilterGroup label="Age" hint="By the source's posting time">
+          <FilterGroup label="Age">
             {FRESHNESS_STATES.map(s => (
               <Pill
                 key={s}
@@ -791,7 +791,7 @@ function HomeContent() {
             ))}
           </FilterGroup>
 
-          <FilterGroup label="Budget" hint="As the source stated it">
+          <FilterGroup label="Budget">
             {BUDGET_TYPES.map(t => (
               <Pill
                 key={t}
@@ -802,7 +802,7 @@ function HomeContent() {
             ))}
           </FilterGroup>
 
-          <FilterGroup label="Competition" hint="Counts as captured, not as they are now">
+          <FilterGroup label="Competition">
             {COMPETITION_BUCKETS.map(c => (
               <Pill
                 key={c}
@@ -813,7 +813,7 @@ function HomeContent() {
             ))}
           </FilterGroup>
 
-          <FilterGroup label="Skills" hint="Every skill must be present. Most listings publish no skill list and are excluded when this is used.">
+          <FilterGroup label="Skills">
             {filters.skills.map(s => (
               <span key={s} style={styles.skillChip} className="lh-field">
                 {s}
@@ -853,10 +853,6 @@ function HomeContent() {
                 Collapse confirmed repeats to one listing
               </span>
             </label>
-            <span className="lh-muted" style={styles.groupHint}>
-              Only confirmed repeats are hidden, and only when the listing they repeat is still
-              present. Possible duplicates always stay visible.
-            </span>
           </FilterGroup>
 
           <div style={styles.resultLine}>
@@ -1141,12 +1137,14 @@ function JobCard({ job, view, expanded, onToggle, onOpen }: {
 }
 
 /* ── Filter primitives ───────────────────────────────────────────── */
-function FilterGroup({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+// The per-row explanatory notes were removed: nine of them turned the
+// filter panel into a wall of grey text. What each filter means belongs on
+// /about, not beside every row of a control someone uses daily.
+function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={styles.filterRow}>
       <span className="lh-muted" style={styles.filterLabel}>{label}</span>
       <div style={styles.filterOptions}>{children}</div>
-      {hint && <span className="lh-muted" style={styles.groupHint}>{hint}</span>}
     </div>
   );
 }
@@ -1243,9 +1241,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   filtersBox: {
-    background: '#fff', borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
-    borderRadius: 12, padding: '14px 16px', marginBottom: 20,
-    display: 'flex', flexDirection: 'column', gap: 10,
+    background: '#fff',
+    borderWidth: '1px', borderStyle: 'solid', borderColor: '#e2e8f0',
+    borderRadius: 16, padding: '16px 20px', marginBottom: 24,
+    display: 'flex', flexDirection: 'column', gap: 12,
+    boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
   },
   filterRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   filterOptions: { display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 },
@@ -1253,7 +1253,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase',
     letterSpacing: '0.06em', whiteSpace: 'nowrap', minWidth: 84,
   },
-  groupHint: { fontSize: 11, fontStyle: 'italic', flex: '1 1 160px', minWidth: 0 },
   searchInput: {
     flex: '1 1 240px', minWidth: 0,
     borderWidth: '1px', borderStyle: 'solid', borderColor: '#dbe2ea',
