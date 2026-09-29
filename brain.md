@@ -308,7 +308,7 @@ the source omits it, and `client.jobsPosted` populated from
 | Baseline verification | typecheck ✅ · lint ✅ · tests ✅ · build ✅ at `cdfbb54` |
 | Phase 1 — critical security + cost + test gate | **complete** — `27eb93a` |
 | Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **complete in code, unapplied** — every engine built and tested; nothing has touched the database and no UI reads it |
-| Phase 3 — Neon/Apify cost reduction (remainder) | **in progress** — write amplification, scheduler query and budget allocation done (`05701b3`, `c2be9df`); source health, adaptive scheduling and the admin surface not started |
+| Phase 3 — Neon/Apify cost reduction | **substantially complete** — write amplification, scheduler query, budget allocation, source health, yield-based scheduling, ops surface and post-sync maintenance all landed; retention archiving (§19) still open |
 | Phase 4 — UX revamp, chatbot deterministic-first | not started |
 
 **Working branch:** `audit/production-hardening` off `dd5a0cf`. Pushed. Not
@@ -636,12 +636,45 @@ first won.
   production: **1,295 rows → 24, 267 KB → 448 B, 1,110ms → 232ms**, identical
   distribution. A PGlite test pins the UTC semantics.
 
-**Still open in Phase 3:** wiring the hour ranking into the scheduler,
-per-source health records with consecutive-failure backoff (§21), cost per
-useful lead as a stored metric (§51), and the admin surface for all of it
-(§35). Also unresolved: the sync cadence (~10 runs/day) is four times what
-the Apify budget can serve, so most runs are Freelancer-only — that is the
-next scheduling decision, not a bug.
+**Then completed** (`4d88dad`, `76c4ce4`, `2c5010a`, `d4ae046`, `8049746`):
+
+- *Source health and cost telemetry* (§21, §51). Rolling per-source records
+  in SystemKv beside the existing `provider:<name>` entries, with
+  exponential capped backoff. Yield comes from ONE grouped query so the
+  admin surface does not get more expensive as the table grows. Billed Apify
+  runs are counted at the call site, because every query attempt is billed
+  including a failover retry on another account.
+- *Yield-based discovery scheduling* (§16). `shouldRunApifyDiscovery` funds
+  the top-yield hours first and releases surplus so the allowance is still
+  fully spent. Fails OPEN — a telemetry problem must never stop ingestion —
+  and a deliberate schedule skip is not recorded as a source failure, which
+  would otherwise grow the backoff streak and retire a healthy source.
+- *Operations surface* at `/admin/health` (§35). Source yield, health and
+  backoff, Apify budget and reserve, data health, cron health.
+- *Post-sync maintenance* (§42). Clustering and assessment refresh now run
+  after a sync from `lib/qualityMaintenance.ts`, and the two scripts became
+  thin reporters around the same functions, so there is one implementation
+  of each pass. Rate-limited to once per `QUALITY_MAINTENANCE_INTERVAL_MIN`
+  (default 180) because clustering reads every row; the writes are already
+  suppressed, so the READ is the cost worth bounding.
+- *`npm run sync` was broken.* `src/lib/db.ts` imports `server-only`, which
+  throws outside the react-server condition, so the manual CLI sync failed
+  at module load. The deployed path was never affected. Fixed.
+
+**Distinctions the telemetry is careful about**, each one a way to lie with a
+number: "never observed" is not "observed to be zero" (an unmeasured source
+is UNRANKED, not ranked last); a free source reports `n/a (free)` for cost
+per lead rather than `0`, which would read as infinitely efficient; a run
+that did not time itself is not folded into the duration mean as a zero; and
+a corrupt `nextEligibleAt` fails open so bad telemetry cannot retire a
+working source.
+
+**Still open in Phase 3:** hot/warm/cold retention separation (§19) — the
+current policy hard-deletes at 7 days rather than archiving. Also unresolved:
+the sync cadence (~10 runs/day) is four times what the Apify budget can
+serve, so most runs are Freelancer-only. Yield-based scheduling now makes
+that waste harmless rather than random, but the cadence itself is still
+worth a decision.
 
 ### What is NOT done, and what is NOT verified
 
@@ -698,6 +731,7 @@ npm run cluster:duplicates           # dry run: duplicate clusters
 npm run cluster:duplicates -- --apply
 npm run assess                       # dry run: authenticity + lead scores
 npm run assess -- --apply
+npm run source:health                # source yield, cost and backoff report
 ```
 
 All three write scripts are dry by default and print a full report before
