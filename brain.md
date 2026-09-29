@@ -305,14 +305,56 @@ the source omits it, and `client.jobsPosted` populated from
 |---|---|
 | Forensic audit (§3) | **complete** — section 5 |
 | brain.md rewritten as source of truth (§2) | **complete** |
-| Baseline verification | typecheck ✅ · lint ✅ (7 warnings) · build ✅ at `dd5a0cf` |
-| Critical security fixes | in progress |
-| Schema + dedup + authenticity + lead scoring | not started |
-| Cost reduction (Neon + Apify) | not started |
-| UX revamp | not started |
-| Tests + CI | not started |
+| Baseline verification | typecheck ✅ · lint ✅ · build ✅ at `dd5a0cf` |
+| Phase 1 — critical security + cost + test gate | **complete** — `27eb93a` |
+| Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **blocked**: needs a migration decision (section 6.3) and a database to verify against |
+| Phase 3 — Neon/Apify cost reduction (remainder) | not started |
+| Phase 4 — UX revamp, chatbot deterministic-first | not started |
 
-**Working branch:** `audit/production-hardening` off `dd5a0cf`.
+**Working branch:** `audit/production-hardening` off `dd5a0cf`. Not pushed, not
+deployed.
+
+### Phase 1 — what shipped (`27eb93a`)
+
+Verified: `tsc --noEmit` ✅ · `eslint` ✅ (7 pre-existing warnings, 0 errors) ·
+**121 tests** ✅ (35 new unit + 77 grounding + 9 ranking) · production build ✅.
+
+- **next 16.3.0 → 16.3.7** — closes two unauthenticated RCE advisories.
+- **`/api/sessions/track`** — now authenticated; identity from signed cookie
+  claims; every stored field explicitly picked, clamped and byte-capped.
+- **`/api/analyze`** — requires `opportunityId` and reads the prompt text from
+  the database instead of the request body. No longer an open LLM proxy.
+- **Prompt injection** — scraped text fenced and demoted to data in `MultiAI`,
+  `gemini` and the agent route; fence markers and newlines stripped.
+- **`SESSION_SIGNING_SECRET`** split from `CRON_SECRET` (falls back for
+  compatibility). Constant-time login. Logout clears the guest cookie.
+- **Durable quotas** in `SystemKv` (atomic, fail-closed) for login, guest-cookie
+  minting, `/api/analyze`, `/api/agent`.
+- **Atomic run locks** (`lib/runLock.ts`), fail-closed.
+- **Apify** — token in an `Authorization` header, 90 s deadline, budget
+  re-checked before every account retry.
+- **Failure isolation** — Freelancer errors no longer abort the pipeline; a
+  failed source logs `WARNING` instead of `SUCCESS`.
+- **Write amplification** — the pipeline persists only new and changed rows,
+  not the entire store, on every sync.
+- **Scale-to-zero** — heartbeat 90 s → 5 min and paused when the tab is hidden;
+  empty-feed retry now backs off.
+- **Error honesty** — `/api/jobs` fails with a status; the dashboard
+  distinguishes "feed unavailable" from "no jobs yet".
+- **Source-of-truth** — `connects` is no longer invented from the budget;
+  `jobsPosted` no longer reads from the review count.
+- **Testing** — Node's built-in runner via `tsx` (no new dependency),
+  `npm test` / `test:all` / `verify`, and a CI workflow. `test-ranking.ts` was
+  previously unrunnable (bad import) and is fixed.
+
+### Known-accepted dependency advisories
+
+5 `high` advisories remain, all inside the **Prisma CLI's own** chain
+(`@prisma/config` → `deepmerge-ts`, and `mysql2`, which this project never
+loads because it uses Postgres). npm's only remedy is downgrading
+`prisma` 7 → 6, a worse trade. The CI audit gate is therefore set at
+`critical` (which would have caught the Next.js RCE) with a non-blocking
+full report. Revisit when Prisma ships a patched CLI.
 
 ---
 
