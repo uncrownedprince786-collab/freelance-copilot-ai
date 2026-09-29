@@ -6,8 +6,6 @@ import {
   AgentJobCard,
   AgentProposalDraft,
   AgentResultSet,
-  AGENT_GREETING,
-  AGENT_GUIDANCE,
   AGENT_SUGGESTIONS,
   applyProposalEdit,
   buildTrendsSnapshot,
@@ -21,6 +19,15 @@ import {
   serializeJobsForLLM,
   serializeResultSetsForLLM,
 } from '@/lib/agentTools';
+import {
+  AgentSource,
+  API_ERROR,
+  COMPARE_NO_CONTEXT,
+  DeterministicInput,
+  EMPTY_INPUT,
+  deterministicReply,
+  resolveDeterministicShape,
+} from '@/lib/agentTypes';
 import { runAssistantChat, ChatMessage } from '@/services/ai/agentChat';
 
 export const dynamic = 'force-dynamic';
@@ -42,90 +49,29 @@ const MAX_MESSAGES = 20;
 const MAX_MSG_LEN = 2000;
 const MAX_JOBS = 12;
 
-const INJECTION_REDIRECT =
-  `I'm focused on helping you with freelance and job-market decisions — I can't share internal instructions, configuration, or technical details.
-
-I can help you analyze opportunities, find relevant jobs, understand the market, and decide what to focus on. Try asking: "Find me recent React jobs" or "What skills are in demand?"`;
-
-const COMPARE_NO_CONTEXT =
-  `I don't have any opportunities to compare yet. Tell me a skill or role and I'll pull up a ranked set you can compare — for example: "Find me recent Laravel jobs".`;
-
-const NO_RESULTS = (terms: string) =>
-  `I couldn't find current listings matching "${terms}" in the live feed. You can try a different skill, remove filters, or broaden the time range. Want me to show you the top opportunities right now instead?`;
-
-const EMPTY_INPUT =
-  `I'm here to help with freelance opportunities, market trends, and job analysis. Could you tell me what you're looking for? For example: "Find me recent React jobs" or "What skills are in demand?"`;
-
-const API_ERROR =
-  `I'm having trouble reaching the job data right now. Please try again in a moment, or let me know what type of opportunities you're interested in.`;
-
-// Ground-truth fallback when no AI provider is configured/available. Never
-// fabricates: it only restates the data the tools actually retrieved.
-function fallbackReply(intent: AgentIntent, lastMsg: string, cards: AgentJobCard[], snapshotText: string, hasSets = false): string {
-  if (intent === 'greeting') return AGENT_GREETING;
-  if (intent === 'injection') return INJECTION_REDIRECT;
-  if (intent === 'guidance') return AGENT_GUIDANCE;
-  if (intent === 'trends') return snapshotText || 'Market intelligence is still being computed — check back after the next sync.';
-  if (intent === 'compare' && cards.length === 0 && !hasSets) return COMPARE_NO_CONTEXT;
-  if (intent === 'compare' && cards.length === 0) {
-    return `I don't have a fresh list to rank on this turn, but I did show you earlier result sets — tell me which list or job you'd like me to compare (e.g. "the first list").`;
+/**
+ * Deterministic-first dispatch.
+ *
+ * `resolveDeterministicShape` (src/lib/agentTypes.ts) holds the explicit
+ * allowlist of question shapes the retrieved data already answers in full.
+ * When a turn matches one, this route answers it directly and never calls a
+ * model. Only the residue — open-ended comparison questions and free-form
+ * craft advice — costs a model call, and when every provider fails the same
+ * deterministic answerer produces the degraded reply.
+ */
+async function answerTurn(
+  input: DeterministicInput,
+  llm: () => Promise<string>,
+): Promise<{ reply: string; source: AgentSource }> {
+  const shape = resolveDeterministicShape(input);
+  if (shape) {
+    return { reply: deterministicReply(input), source: 'deterministic' };
   }
-
-  if (cards.length === 0) return NO_RESULTS(lastMsg.slice(0, 60));
-
-  const count = cards.length;
-  const plural = count === 1 ? 'y' : 'ies';
-  const ranked = [...cards].sort((a, b) => b.score - a.score);
-  const top = ranked[0];
-
-  // Detect specific follow-up questions
-  const lowerMsg = lastMsg.toLowerCase();
-  const isWhyBetter = /why (is|'s) (the )?(top|first|best|#1|one) better/i.test(lowerMsg);
-  const isMoreLike = /(more like|similar|same kind)/i.test(lowerMsg);
-  const isWhatFocus = /(what should i|what to|focus on|prioritize)/i.test(lowerMsg);
-
-  if (intent === 'compare') {
-    if (isWhyBetter && ranked.length >= 2) {
-      const second = ranked[1];
-      const reasons: string[] = [];
-      if (top.score > second.score) reasons.push(`higher score (${top.score}% vs ${second.score}%)`);
-      if (top.proposalCount != null && second.proposalCount != null && top.proposalCount < second.proposalCount) reasons.push(`fewer proposals (${top.proposalCount} vs ${second.proposalCount})`);
-      if (top.paymentVerified && !second.paymentVerified) reasons.push('verified payment');
-      if (top.clientSpend && !second.clientSpend) reasons.push('client has spend history');
-      if (top.repeatClient && !second.repeatClient) reasons.push('repeat client with other open listings');
-      if (top.actFast && !second.actFast) reasons.push('fresh with low competition (act fast)');
-      if (top.country && top.country === 'United States') reasons.push('US-based client');
-      const reasonStr = reasons.length ? reasons.join(', ') : 'stronger overall signals';
-      return `The top pick is "${top.title}" (${top.platform}, ${top.budget}, ${top.score}%). It beats "${second.title}" because: ${reasonStr}. Open it for the full assessment and a tailored proposal.`;
-    }
-    if (isMoreLike) {
-      const platform = top.platform;
-      const skills = top.skills.filter(Boolean).slice(0, 3);
-      const similar = ranked.filter(j => j !== top && j.platform === platform).slice(0, 3);
-      if (similar.length) {
-        const titles = similar.map(s => `"${s.title}" (${s.score}%, ${s.budget})`).join(', ');
-        return `More ${platform} jobs like "${top.title}": ${titles}. They share the ${platform} platform and similar budget range.${skills.length ? ` Want me to filter by a specific skill (e.g. "${skills[0]}") or budget?` : ' Want me to filter by budget?'}`;
-      }
-      return `The top match is "${top.title}" on ${platform} (${top.budget}). I don't see other ${platform} jobs in this set with a similar profile. Try broadening to all platforms or a different skill.`;
-    }
-    if (isWhatFocus) {
-      const highScore = ranked.filter(j => j.score >= 70);
-      const lowComp = ranked.filter(j => j.proposalCount != null && j.proposalCount <= 10);
-      const verified = ranked.filter(j => j.paymentVerified);
-      const fast = ranked.filter(j => j.actFast);
-      const tips: string[] = [];
-      if (highScore.length) tips.push(`${highScore.length} high-score (70%+) opportunities`);
-      if (lowComp.length) tips.push(`${lowComp.length} with ≤10 proposals`);
-      if (verified.length) tips.push(`${verified.length} with verified payment`);
-      if (fast.length) tips.push(`${fast.length} fresh + low competition (act fast)`);
-      return `Focus on: ${tips.join('; ')}. The top-ranked "${top.title}" (${top.score}%)${top.actFast ? ' ⚡ act fast' : ''} is your strongest signal.`;
-    }
-
-    // General compare
-    return `I found ${count} matching opportunit${plural}. The strongest by its own signals is "${top.title}" (${top.platform}, ${top.budget}, ${top.score}%${top.actFast ? ', act fast' : ''}${top.proposalCount != null ? `, ${top.proposalCount} proposals` : ''}${top.paymentVerified ? ', verified payment' : ''}). Open it to see the full assessment and generate a tailored proposal.`;
-  }
-
-  return `I found ${count} matching opportunit${plural}. They're ranked by each job's own opportunity signals, with the strongest matches shown first. Open a job to see its full assessment and generate a tailored proposal.`;
+  const llmReply = await llm();
+  if (llmReply) return { reply: llmReply, source: 'llm' };
+  // Every provider failed. Say the most useful true thing we can, and report
+  // the reply as deterministic so the outage is visible in the UI.
+  return { reply: deterministicReply(input), source: 'deterministic' };
 }
 
 function sanitizeMessage(s: unknown, max = MAX_MSG_LEN): string {
@@ -152,6 +98,7 @@ function sanitizeJob(card: unknown): AgentJobCard | null {
     platform: str(c.platform) || 'Upwork',
     budget: str(c.budget) || 'Negotiable',
     score: Number(c.score) || 0,
+    opportunityReason: str(c.opportunityReason),
     proposalCount: c.proposalCount == null ? null : Number(c.proposalCount) || 0,
     postedAt: str(c.postedAt),
     country: str(c.country),
@@ -169,7 +116,7 @@ function sanitizeJob(card: unknown): AgentJobCard | null {
 function followUpSuggestions(intent: AgentIntent, cards: AgentJobCard[]): string[] {
   if (intent === 'compare') return ['Why is the top one better?', 'Find me more like this', 'What should I focus on?'];
   if (intent === 'trends') return ['What should I learn?', 'Which jobs should I prioritize?', 'Show me recent React jobs'];
-  if (intent === 'guidance') return AGENT_SUGGESTIONS;
+  if (intent === 'guidance' || intent === 'advice') return AGENT_SUGGESTIONS;
   if (cards.length === 0) return AGENT_SUGGESTIONS;
   if (cards.length > 0) {
     const top = [...cards].sort((a, b) => b.score - a.score)[0];
@@ -241,13 +188,13 @@ export async function POST(request: NextRequest) {
   if (!lastUserMsg) {
     // No usable text (empty body, whitespace-only, or entirely sanitized away)
     // → a gentle nudge, not a 400, so chat clients recover gracefully.
-    return NextResponse.json({ reply: EMPTY_INPUT, tool: 'greeting', suggestions: AGENT_SUGGESTIONS }, { headers: secureHeaders });
+    return NextResponse.json({ reply: EMPTY_INPUT, tool: 'greeting', source: 'deterministic', suggestions: AGENT_SUGGESTIONS }, { headers: secureHeaders });
   }
 
   // Handle empty/whitespace input
   const userContent = lastUserMsg.content.trim();
   if (!userContent) {
-    return NextResponse.json({ reply: EMPTY_INPUT, tool: 'greeting', suggestions: AGENT_SUGGESTIONS }, { headers: secureHeaders });
+    return NextResponse.json({ reply: EMPTY_INPUT, tool: 'greeting', source: 'deterministic', suggestions: AGENT_SUGGESTIONS }, { headers: secureHeaders });
   }
 
   // Cap very long input
@@ -305,6 +252,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({
             reply: `I've kept your draft for "${activeProposal.title}" as-is because ${why}. Single-line polish isn't worth weakening the proposal — I can make it shorter or start a fresh version if you'd like.`,
             tool: 'proposal',
+            source: 'deterministic',
             proposal: activeProposal,
             suggestions: ['Make it shorter', 'New proposal for the top job', 'Compare the top opportunities'],
           }, { headers: secureHeaders });
@@ -313,14 +261,19 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({
             reply: `I can make it shorter or start over. Every line stays grounded in the listing — I can't add invented experience or portfolio claims. What would you like to change?\n\n${activeProposal.text}`,
             tool: 'proposal',
+            source: 'deterministic',
             proposal: activeProposal,
             suggestions: ['Make it shorter', 'New proposal for the top job'],
           }, { headers: secureHeaders });
         }
-        const updated = applyProposalEdit(activeProposal, edit);
+        // The edit is re-enforced against the listing's requirements and
+        // re-validated inside applyProposalEdit, so shortening cannot silently
+        // drop a required keyword. Report the outcome rather than assuming it.
+        const updated = await applyProposalEdit(activeProposal, edit);
         return NextResponse.json({
-          reply: `Here's the ${edit === 'shorter' ? 'shortened' : 'fresh'} draft for "${activeProposal.title}".`,
+          reply: `Here's the ${edit === 'shorter' ? 'shortened' : 'fresh'} draft for "${activeProposal.title}". ${describeVerification(updated)}`,
           tool: 'proposal',
+          source: 'deterministic',
           proposal: updated,
           suggestions: ['Make it shorter', 'Compare the top opportunities', 'Find me recent React jobs'],
         }, { headers: secureHeaders });
@@ -333,16 +286,18 @@ export async function POST(request: NextRequest) {
             ? `I can write a tailored proposal for any job in the current list. Tell me which one — by number (e.g. "the first one" or "job #3") or by name.`
             : `I need an opportunity to write a proposal for. Ask me to find jobs first (e.g. "Find me recent React jobs"), then tell me which one to draft for.`,
           tool: 'proposal',
+          source: 'deterministic',
           suggestions: workingJobs.length ? ['Proposal for the top job'] : AGENT_SUGGESTIONS,
         }, { headers: secureHeaders });
       }
       const draft = await generateAgentProposal(target);
       if (!draft.text) {
-        return NextResponse.json({ reply: draft.note || 'I could not generate a proposal for that listing right now.', tool: 'proposal' }, { headers: secureHeaders });
+        return NextResponse.json({ reply: draft.note || 'I could not generate a proposal for that listing right now.', tool: 'proposal', source: 'deterministic' }, { headers: secureHeaders });
       }
       return NextResponse.json({
-        reply: `Here's a tailored proposal for "${target.title}". It's grounded only in the listing's real requirements${draft.verified ? '.' : ` (note: ${draft.note}).`}`,
+        reply: `Here's a draft proposal for "${target.title}". ${describeVerification(draft)}`,
         tool: 'proposal',
+        source: 'deterministic',
         proposal: draft,
         suggestions: ['Make it shorter', 'More professional', 'Compare the top opportunities'],
       }, { headers: secureHeaders });
@@ -350,10 +305,10 @@ export async function POST(request: NextRequest) {
 
     const intent: AgentIntent = classifyIntent(cappedContent, workingJobs.length, resultSets.length > 0);
 
-    let reply = '';
     let cards: AgentJobCard[] = workingJobs;
-    let snapshotText = '';
     let tool: string = intent;
+    let filtersNote = '';
+    let snapshotText = '';
 
     // "which is the best job?" with nothing to compare yet → surface real
     // ranked opportunities as structured cards (the UI renders `jobs`), not
@@ -364,61 +319,75 @@ export async function POST(request: NextRequest) {
       const result = await runJobSearch(cleanQuery, MAX_JOBS);
       cards = result.jobs;
       tool = 'compare';
-      if (cards.length > 0) {
-        const dataCtx = serializeJobsForLLM(cards, MAX_JOBS);
-        const countNote = `Returned ${cards.length} matching opportunit${cards.length === 1 ? 'y' : 'ies'}, shown as cards below.`;
-        reply = await reasonOverJobs('compare', cappedContent, cards, dataCtx, `Filters: ${result.filtersNote}. ${countNote}`, resultSets);
-        if (!reply) reply = fallbackReply('compare', cappedContent, cards, '', resultSets.length > 0);
-      } else {
-        reply = COMPARE_NO_CONTEXT;
-      }
+      const input: DeterministicInput = {
+        intent: 'compare',
+        text: cappedContent,
+        cards,
+        filtersNote: result.filtersNote,
+        hasResultSets: resultSets.length > 0,
+      };
+      const answer = await answerTurn(input, () =>
+        reasonOverJobs(
+          'compare',
+          cappedContent,
+          cards,
+          serializeJobsForLLM(cards, MAX_JOBS),
+          `Filters: ${result.filtersNote}. Returned ${cards.length} matching opportunit${cards.length === 1 ? 'y' : 'ies'}, shown as cards below.`,
+          resultSets,
+        ),
+      );
       return NextResponse.json({
-        reply,
+        reply: answer.reply,
         tool,
+        source: answer.source,
         jobs: cards.length ? cards : undefined,
         suggestions: followUpSuggestions('compare', cards),
       }, { headers: secureHeaders });
     }
 
-    if (intent === 'greeting' || intent === 'injection' || intent === 'guidance') {
-      reply = fallbackReply(intent, cappedContent, cards, '');
-    } else if (intent === 'trends') {
-      const snap = await buildTrendsSnapshot();
-      snapshotText = snap.text;
+    // Retrieval runs first (it is deterministic and the answer depends on it);
+    // only then does the allowlist decide whether a model call is warranted.
+    if (intent === 'trends') {
+      snapshotText = (await buildTrendsSnapshot()).text;
       tool = 'trends';
-    } else if (intent === 'compare') {
-      // Reason over the current working set (jobs from the last search).
-      if (cards.length > 0 || resultSets.length > 0) {
-        reply = await reasonOverJobs('compare', cappedContent, cards, undefined, undefined, resultSets);
-        if (!reply) reply = fallbackReply(intent, cappedContent, cards, '', resultSets.length > 0);
-      } else {
-        reply = COMPARE_NO_CONTEXT;
-      }
-    } else {
-      // search or refine over the live feed.
+    } else if (intent === 'search' || intent === 'refine') {
       const result = intent === 'refine' && workingJobs.length > 0
         ? await refineWorkingSet(workingJobs, cappedContent)
         : await runJobSearch(cappedContent, MAX_JOBS);
       cards = result.jobs;
-      const dataCtx = serializeJobsForLLM(cards, MAX_JOBS);
-      const countNote = `Returned ${cards.length} matching opportunit${cards.length === 1 ? 'y' : 'ies'}, shown as cards below.`;
-      if (cards.length > 0) {
-        reply = await reasonOverJobs(intent === 'refine' ? 'refine' : 'search', cappedContent, cards, dataCtx, `Filters: ${result.filtersNote}. ${countNote}`, resultSets);
-        if (!reply) reply = fallbackReply(intent, cappedContent, cards, '');
-      } else {
-        reply = NO_RESULTS(extractTermsForMessage(cappedContent));
-      }
+      filtersNote = result.filtersNote;
     }
 
-    // trends → build an LLM answer, falling back to the deterministic snapshot.
-    if (intent === 'trends') {
-      reply = await reasonOverTrends(cappedContent, snapshotText);
-      if (!reply) reply = snapshotText || 'Market intelligence is still being computed — check back after the next sync.';
-    }
+    const input: DeterministicInput = {
+      intent,
+      text: cappedContent,
+      cards,
+      snapshotText,
+      filtersNote,
+      hasResultSets: resultSets.length > 0,
+    };
+
+    const answer = await answerTurn(input, () => {
+      if (intent === 'advice') return reasonFreeForm(cappedContent);
+      if (intent === 'compare') {
+        return reasonOverJobs('compare', cappedContent, cards, undefined, undefined, resultSets);
+      }
+      // search / refine residue — currently unreachable (both shapes are
+      // allowlisted), kept so a future non-allowlisted shape still has a path.
+      return reasonOverJobs(
+        intent === 'refine' ? 'refine' : 'search',
+        cappedContent,
+        cards,
+        serializeJobsForLLM(cards, MAX_JOBS),
+        `Filters: ${filtersNote}. Returned ${cards.length} matching opportunit${cards.length === 1 ? 'y' : 'ies'}, shown as cards below.`,
+        resultSets,
+      );
+    });
 
     return NextResponse.json({
-      reply,
+      reply: answer.reply,
       tool,
+      source: answer.source,
       jobs: intent === 'search' || intent === 'refine' || intent === 'compare' ? cards : undefined,
       suggestions: followUpSuggestions(intent, cards),
     }, { headers: secureHeaders });
@@ -428,6 +397,7 @@ export async function POST(request: NextRequest) {
       {
         reply: API_ERROR,
         tool: 'error',
+        source: 'deterministic',
         suggestions: AGENT_SUGGESTIONS,
       },
       { headers: secureHeaders },
@@ -435,8 +405,11 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function extractTermsForMessage(text: string): string {
-  return text.replace(/<[^>]*>/g, ' ').trim().slice(0, 80) || 'that request';
+/** Honest one-liner about whether the draft passed the grounding checks. */
+function describeVerification(draft: AgentProposalDraft): string {
+  return draft.verified
+    ? `It passed every grounding check and is built only from the listing's real requirements.`
+    : `One grounding check did not pass — ${draft.note} Everything in it still comes from the listing, but review that point before you send it.`;
 }
 
 function systemPrompt(hasJobs: boolean, hasTrends: boolean): string {

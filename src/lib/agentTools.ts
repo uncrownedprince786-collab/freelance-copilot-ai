@@ -1,38 +1,36 @@
+import { cache } from 'react';
 import { buildJobFeed, JobFeedItem } from './jobFeed';
 import { getRawJobs } from './jobsCache';
 import { compareOpportunities } from './opportunityRanking';
 import { parseSmartSearch, SmartSearchResult } from '@/app/api/search/route';
 import { computeMarketIntelligence } from './marketIntelligence';
 import { getHistoricalTrends } from './marketFacts';
-import { AGENT_GREETING, AGENT_SUGGESTIONS } from './agentTypes';
-import { generateGroundedProposal, validateProposal, extractJobInstructions } from './proposalGrounding';
+import {
+  AGENT_GREETING,
+  AGENT_GUIDANCE,
+  AGENT_SUGGESTIONS,
+  AgentIntent,
+  AgentJobCard,
+  AgentProposalDraft,
+  AgentResultSet,
+  looksLikeAdviceQuestion,
+} from './agentTypes';
+import {
+  ensureEndsWithWord,
+  ensureIncludesKeywords,
+  ensureStartsWithWord,
+  generateGroundedProposal,
+  validateProposal,
+  extractJobInstructions,
+  ExtractedInstructions,
+} from './proposalGrounding';
 
 /**
- * Server-only types for the Agent tool layer.
- * These are not exported to client components.
+ * Server-only tool layer for the Agent. The card/intent/result-set types live
+ * in agentTypes.ts (client-safe) and are re-exported here so server consumers
+ * have a single import site.
  */
-
-/** Compact card the client renders under an agent message. */
-export interface AgentJobCard {
-  id: string;
-  title: string;
-  platform: string;
-  budget: string;
-  score: number;
-  proposalCount: number | null;
-  postedAt: string;
-  country: string;
-  clientName: string;
-  clientSpend: string;
-  paymentVerified: boolean;
-  skills: string[];
-  repeatClient: boolean;
-  repeatClientCount: number;
-  actFast: boolean;
-  category: string;
-}
-
-export type AgentIntent = 'greeting' | 'search' | 'refine' | 'trends' | 'compare' | 'guidance' | 'injection';
+export type { AgentIntent, AgentJobCard, AgentProposalDraft, AgentResultSet } from './agentTypes';
 
 export interface AgentSearchResult {
   jobs: AgentJobCard[];
@@ -49,7 +47,16 @@ export interface TrendsSnapshot {
 }
 
 // Re-export client-safe constants for server-side consumers (like /api/agent)
-export { AGENT_GREETING, AGENT_SUGGESTIONS };
+export { AGENT_GREETING, AGENT_GUIDANCE, AGENT_SUGGESTIONS };
+
+/**
+ * One feed build per request. `buildJobFeed()` reads and assembles up to 500
+ * rows; several tools here need the full items to look up jobs the caller only
+ * holds as cards, and they used to each rebuild it. React's `cache` memoizes
+ * per request in the App Router, and degrades to a plain call elsewhere (tests,
+ * scripts), so correctness never depends on it.
+ */
+const agentFeed = cache(async (): Promise<JobFeedItem[]> => buildJobFeed());
 
 const STOPWORDS = new Set([
   'a', 'an', 'the', 'and', 'or', 'for', 'from', 'of', 'to', 'in', 'on', 'at', 'with',
@@ -73,6 +80,10 @@ export function shapeJobCard(job: JobFeedItem): AgentJobCard {
     platform: job.platform,
     budget: job.budget,
     score: job.score,
+    // The score is never carried without its basis — the panel colour-codes the
+    // percentage, and a colour-coded number with no stated reason is not an
+    // explanation of anything.
+    opportunityReason: job.opportunityReason || '',
     proposalCount: job.proposalCount ?? null,
     postedAt: job.postedAt,
     country: job.country || '',
@@ -150,6 +161,15 @@ export function classifyIntent(text: string, workingCount: number, hasPriorSets 
   if (workingCount > 0) {
     const kw = lower.split(/\s+/).filter(w => w && !STOPWORDS.has(w) && !/[\d$€£%]/.test(w)).length;
     if (kw === 0) return 'compare';
+  }
+
+  // Free-form craft questions ("what makes a good proposal?", "how should I
+  // price this?"). No retrieval answers these, and running them as a keyword
+  // search returns nothing — this is the one place a language model earns its
+  // call. Checked before `guidance` so a real advice question is not answered
+  // with the platform blurb.
+  if (looksLikeAdviceQuestion(lower)) {
+    return 'advice';
   }
 
   if (/(help|how (do|can|to|should)|what can you|what do you do|features?|guide|get started|where (can|do|should)|about (this|the) platform|navigate|use the (platform|app|dashboard)|learn more about)/i.test(lower)) {
@@ -251,7 +271,7 @@ export function describeFilters(f: SmartSearchResult, applied: boolean): string 
 
 /** Search the live feed using the same smart-search parser as the dashboard. */
 export async function runJobSearch(rawText: string, limit = 12): Promise<AgentSearchResult> {
-  const feed = await buildJobFeed();
+  const feed = await agentFeed();
   const parsed = parseSmartSearch(rawText);
   const filtered = feed.filter(j => applySmartFilters(j, parsed));
   // Same underlying opportunity intelligence as the main product: freshest
@@ -296,8 +316,10 @@ export async function refineWorkingSet(working: AgentJobCard[], rawText: string)
   if (!hasFilters) {
     return { jobs: working.slice(0, 8), total: working.length, filtersNote: 'no filter detected in that request' };
   }
-  // Rebuild full items so filter helpers can inspect budgets/descriptions.
-  const feed = await buildJobFeed();
+  // Full items are needed so filter helpers can inspect budgets/descriptions;
+  // `agentFeed` is memoized per request so this never rebuilds a feed another
+  // tool already built on this turn.
+  const feed = await agentFeed();
   const byId = new Map(feed.map(j => [j.id, j]));
   const filtered = working
     .map(c => byId.get(c.id))
@@ -330,19 +352,6 @@ export async function buildTrendsSnapshot(): Promise<TrendsSnapshot> {
   return { text, topSkills: top, direction, avgJobsPerDay7: intel.avgJobsPerDay7, totalJobs: intel.totalJobs };
 }
 
-// ── Guidance tool ──────────────────────────────────────────────────────
-
-export const AGENT_GUIDANCE =
-  `Lead Hunter monitors live freelance listings from Upwork and Freelancer, scores each opportunity from the real listing signals, and shows budget, competition, client activity, and market trends.
-
-I can:
-- Find relevant jobs — tell me a skill or role, e.g. "React Native jobs".
-- Filter by time, budget type, budget cap, country, or opportunity tier.
-- Analyze a job or compare opportunities and tell you which to prioritize and why.
-- Explain the market — skills in demand, posting hours, budget ranges, competition.
-
-Try: "Find me recent Laravel jobs", "Which of these is the best?", "What skills are in demand?"`;
-
 /** Render a working set as compact lines for the LLM to reason over. */
 export function serializeJobsForLLM(cards: AgentJobCard[], max = 8): string {
   const lines = cards.slice(0, max).map((c, i) => {
@@ -371,11 +380,6 @@ export function serializeJobsForLLM(cards: AgentJobCard[], max = 8): string {
 // ("the second one from the marketing list", "the previous list") can be
 // resolved instead of failing as a fresh search.
 
-export interface AgentResultSet {
-  label: string;
-  jobs: AgentJobCard[];
-}
-
 export function serializeResultSetsForLLM(sets: AgentResultSet[], currentCards: AgentJobCard[], max = 8): string {
   const blocks: string[] = [];
   sets.slice(-3).forEach((set, i) => {
@@ -396,14 +400,6 @@ export function serializeResultSetsForLLM(sets: AgentResultSet[], currentCards: 
 // Drafts a grounded cover letter for a resolved job and supports a small set
 // of deterministic edits. Proposals are ONLY ever grounded in the job's real
 // listing data — never fabricated candidate experience.
-
-export interface AgentProposalDraft {
-  jobId: string;
-  title: string;
-  text: string;
-  verified: boolean;
-  note?: string;
-}
 
 const PROPOSAL_ASK =
   /(write|draft|create|generate|prepare|compose|start|make|send|submit|help me (with a|write|prepare|draft))\b.{0,50}?\b(proposal|cover letter|bid|pitch|application|intro)/i;
@@ -464,7 +460,7 @@ export function resolveProposalTarget(text: string, cards: AgentJobCard[]): Agen
 }
 
 export async function generateAgentProposal(card: AgentJobCard): Promise<AgentProposalDraft> {
-  const feed = await buildJobFeed();
+  const feed = await agentFeed();
   const job = feed.find(j => j.id === card.id);
   if (!job) {
     return { jobId: card.id, title: card.title, text: '', verified: false, note: 'The job data for this listing is not available right now.' };
@@ -487,22 +483,69 @@ export async function generateAgentProposal(card: AgentJobCard): Promise<AgentPr
   };
 }
 
-/** Deterministic, grounded proposal edits. Longer/professional edits cannot
- *  invent content, so they return the draft unchanged and the caller explains. */
-export function applyProposalEdit(draft: AgentProposalDraft, edit: ProposalEdit): AgentProposalDraft {
+/**
+ * The pure text transformation of an edit. Shortening deliberately drops the
+ * middle of the draft — which is exactly where `ensureIncludesKeywords` inserts
+ * a client's required keywords — so this must never be surfaced without the
+ * re-enforcement step below.
+ */
+export function editProposalText(text: string, edit: ProposalEdit): string {
+  const sentences = text.split(/(?<=[.!?])\s+/).filter(s => s.trim());
   if (edit === 'shorter') {
-    const sentences = draft.text.split(/(?<=[.!?])\s+/).filter(s => s.trim());
     const head = sentences.slice(0, 2).join(' ').trim();
     const tail = sentences.length > 2 ? sentences[sentences.length - 1].trim() : '';
-    const text = tail ? `${head} ${tail}` : head;
-    return { ...draft, text };
+    return tail ? `${head} ${tail}` : head;
   }
-  if (edit === 'trimEnd') {
-    const sentences = draft.text.split(/(?<=[.!?])\s+/).filter(s => s.trim());
-    if (sentences.length > 1) {
-      return { ...draft, text: sentences.slice(0, -1).join(' ').trim() };
-    }
-    return { ...draft };
+  if (edit === 'trimEnd' && sentences.length > 1) {
+    return sentences.slice(0, -1).join(' ').trim();
   }
-  return { ...draft };
+  return text;
+}
+
+/**
+ * Re-apply the listing's machine-checkable requirements (required opening word,
+ * required keywords, required ending word) to an edited draft. Same guards the
+ * generator itself ends with, so an edit cannot silently drop a requirement.
+ */
+export function enforceProposalInstructions(
+  text: string,
+  instructions: ExtractedInstructions,
+  openingWord = instructions.openingWord,
+): string {
+  let out = ensureStartsWithWord(text, openingWord);
+  out = ensureIncludesKeywords(out, instructions.keywords);
+  return ensureEndsWithWord(out, instructions.endingWord);
+}
+
+/** Deterministic, grounded proposal edits. Longer/professional edits cannot
+ *  invent content, so they return the draft unchanged and the caller explains.
+ *  Every edit is re-enforced against the listing's requirements and re-validated
+ *  before it is handed back, so "make it shorter" can no longer break a client's
+ *  required-keyword filter or drop a required opening/ending word. */
+export async function applyProposalEdit(draft: AgentProposalDraft, edit: ProposalEdit): Promise<AgentProposalDraft> {
+  const edited = editProposalText(draft.text, edit);
+  const feed = await agentFeed();
+  const job = feed.find(j => j.id === draft.jobId);
+  if (!job) {
+    return {
+      ...draft,
+      text: edited,
+      verified: false,
+      note: 'The listing data for this job is not available right now, so the edited draft could not be re-checked against the client\'s stated requirements.',
+    };
+  }
+  const instructions = extractJobInstructions(job.description || '');
+  const text = enforceProposalInstructions(edited, instructions);
+  const validation = validateProposal(
+    text,
+    { title: job.title, skills: job.skills, description: job.description },
+    instructions.openingWord,
+    instructions,
+  );
+  return {
+    ...draft,
+    text,
+    verified: validation.ok,
+    note: validation.ok ? undefined : validation.issues[0],
+  };
 }
