@@ -305,14 +305,30 @@ the source omits it, and `client.jobsPosted` populated from
 |---|---|
 | Forensic audit (§3) | **complete** — section 5 |
 | brain.md rewritten as source of truth (§2) | **complete** |
-| Baseline verification | typecheck ✅ · lint ✅ · build ✅ at `dd5a0cf` |
+| Baseline verification | typecheck ✅ · lint ✅ · tests ✅ · build ✅ at `cdfbb54` |
 | Phase 1 — critical security + cost + test gate | **complete** — `27eb93a` |
-| Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **blocked**: needs a migration decision (section 6.3) and a database to verify against |
+| Phase 2 — schema, dedup, authenticity, lead scoring, freshness | **in progress** — migration + identity layer done (`00ac705`, `cdfbb54`); clustering, authenticity and lead scoring not started |
 | Phase 3 — Neon/Apify cost reduction (remainder) | not started |
 | Phase 4 — UX revamp, chatbot deterministic-first | not started |
 
-**Working branch:** `audit/production-hardening` off `dd5a0cf`. Not pushed, not
-deployed.
+**Working branch:** `audit/production-hardening` off `dd5a0cf`. Pushed. Not
+deployed, not merged. `main` is untouched — a push to `main` triggers a Vercel
+production deploy.
+
+### Rollout order — read before deploying
+
+The migration `20260929115314_data_quality_identity_and_scoring` has **not been
+applied to production**, and the ingestion code on this branch now writes the
+columns it creates. Deploying this branch before applying the migration would
+break every ingest.
+
+    1. apply the migration        (prisma migrate deploy)
+    2. npm run backfill:identity  (dry run first — it is dry by default)
+    3. npm run backfill:identity -- --apply
+    4. deploy
+
+Step 2 is safe to run repeatedly: it only ever writes a column that is still
+NULL.
 
 ### Phase 1 — what shipped (`27eb93a`)
 
@@ -347,6 +363,93 @@ Verified: `tsc --noEmit` ✅ · `eslint` ✅ (7 pre-existing warnings, 0 errors)
   `npm test` / `test:all` / `verify`, and a CI workflow. `test-ranking.ts` was
   previously unrunnable (bad import) and is fixed.
 
+### Phase 2 — what shipped so far (`5f82a95`, `00ac705`, `cdfbb54`)
+
+**Baseline first.** The branch tip did not compile: the deterministic-first
+agent refactor called a `reasonFreeForm` that was never written, and left a
+`reasonOverTrends` with no caller (`trends` is an always-deterministic shape).
+The migration rehearsal also asserted on timestamps read back as JS `Date`s —
+`timestamp without time zone` holding UTC wall-clock, materialised by the
+driver in the runner's local zone, so the suite passed only on a UTC machine.
+Assertions now compare `to_char` text or run inside the database. And no npm
+script globbed `*.pgtest.ts`, so 21 tests — including the lock and quota tests
+that gate login — never ran. `test:pg` now runs them, inside `test:all`.
+
+**Measured data quality** (read-only probes over the 1,332 live rows, not
+estimates):
+
+| Fact | Value |
+|---|---|
+| Rows | 1,332 — Freelancer 1,134, Upwork 198 |
+| Freelancer rows with a project id in the URL | 149 (13%) |
+| Upwork rows with the source ciphertext in the URL | 198 (100%) |
+| Stored URLs carrying a query string or fragment | 0 |
+| Exact-duplicate clusters (identical platform+title+description) | 1 |
+| Title collisions | 3 — and they are three *different* cases |
+
+The three title collisions are the whole product question in miniature:
+
+- **CEO Interview Presentation Creation** — byte-identical 836-char
+  descriptions, two URLs (slug, and slug+id), two budgets, a day apart. One
+  project, or a repost of it.
+- **Convert PDF Forms to Excel** — same title, same budget, rewritten
+  description. Probably a repost.
+- **Lead-Generating Social Media Campaign** — same title, two distinct project
+  ids, different budgets and descriptions. Two genuinely different jobs.
+
+Title similarity alone would merge all three. That is why nothing merges on
+similarity, and why the content hash is evidence rather than an instruction.
+
+**Root cause of the duplicates.** `FreelancerCollector` builds the URL as
+`/projects/${seo_url || project.id}`, and `seo_url` sometimes ends with the
+project id and sometimes does not. Both write paths upserted on
+`where: { url }`, so one project under two addresses became two rows.
+
+**Identity (`src/lib/identity.ts`)** — three deterministic keys, pure
+functions, no clock/DB/network/model:
+
+| Key | Rule | Null when |
+|---|---|---|
+| `sourceJobId` | Upwork: ciphertext from `/jobs/~0…` (bare and slug forms). Freelancer: trailing 6+ digit project id. | the source gave none — never a guess |
+| `canonicalUrl` | folds scheme, `www`, trailing slash, param order, path case (known platforms only); drops fragments and a listed set of tracking params. **Unrecognised params are kept** — one may be the only thing separating two jobs. | the URL is not a safe absolute http(s) URL |
+| `contentHash` | sha256 over platform + normalised title + description | under 24 chars of content, so malformed rows do not all hash alike |
+
+`canonicalUrl` is a comparison key, never a link. The UI keeps opening the
+original `url` (§27).
+
+**Ingestion (`src/lib/ingestIdentity.ts`)** now resolves identity before
+writing — source id, then exact URL, then canonical URL — in **one** query, and
+carries the source's own id through from the collector (`project.id` was
+already in hand and was being dropped). `contentHash` is stored but is *not* a
+match key: the measured identical-content pair has two different budgets, so it
+may be a real second opportunity, and merging it at ingest would destroy it.
+`postedAt`, `firstSeenAt` and `lastSeenAt` are now written at ingest — the
+migration only backfilled existing rows, so every new row would have had them
+NULL.
+
+**Dry run over all 1,332 production rows** (read-only): `sourceJobId`
+Freelancer 13% / Upwork 100%, `canonicalUrl` 100%, `contentHash` 100%,
+**0** groups that would violate the unique `(platform, sourceJobId)` index, 0
+canonical-URL collisions, 1 content-hash cluster.
+
+**Honest scale of the win.** One exact duplicate in 1,332 rows is a small
+finding, and it is reported as one. The value is preventive: the slug-vs-id
+split will keep producing duplicates for as long as the URL is the only
+identity, and Freelancer source-id coverage goes from 13% to effectively
+complete for new rows.
+
+**Not done in this phase:** duplicate clustering and canonical selection,
+the authenticity engine, lead scoring, freshness states. The columns exist and
+carry documented defaults (`duplicateStatus: unknown`,
+`authenticityStatus: uncertain`, `leadScore: null`); nothing computes them yet,
+and nothing in the UI reads them.
+
+**Not verified:** `scripts/backfill-identity.ts` has never been executed.
+Production does not have the columns yet, and there is no local Postgres server
+to rehearse against (Docker needs elevation on this machine; PGlite is not a
+server Prisma can dial). Its logic is `identity.ts`, which is tested, and its
+dry-run path is the same code as the probe that produced the numbers above.
+
 ### Known-accepted dependency advisories
 
 5 `high` advisories remain, all inside the **Prisma CLI's own** chain
@@ -363,9 +466,16 @@ full report. Revisit when Prisma ships a patched CLI.
 ```bash
 npx tsc --noEmit      # typecheck
 npm run lint          # eslint
+npm test              # unit tests (src/**/*.test.ts)
+npm run test:pg       # PGlite suites: raw SQL lock/quota, migration rehearsal
+npm run test:all      # unit + pg + grounding + ranking
+npm run verify        # typecheck + lint + test:all + build
 npm run build         # prisma generate && next build
 npm run sync          # manual ingestion run (needs .env)
 npm run check-quota   # Apify quota probe
+
+npm run backfill:identity            # dry run: report what would change
+npm run backfill:identity -- --apply # write it (idempotent, NULL-only)
 ```
 
 **Required env** (see `.env.example`): `DATABASE_URL`, `CRON_SECRET`,
