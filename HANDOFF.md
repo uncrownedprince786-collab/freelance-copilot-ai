@@ -46,27 +46,28 @@ Not started:
    health. Note the measurement that motivates it: 781 of 1,332 live rows
    (59%) are already stale or expired.
 
-## Before deploying — rollout order
+Known sharp edge: `npm run sync` lacks `--conditions=react-server`, which
+`src/lib/db.ts` needs because it imports `server-only`. The three data
+scripts were fixed; sync was left alone because running it to confirm would
+spend Apify quota.
 
-The migration has not been applied to production, and the ingestion code on
-this branch writes the columns it creates. **Running `npm run sync` or
-deploying this branch before applying the migration will fail on every
-write.**
+## Database rollout — DONE (2026-09-30)
 
-    1. apply the migration              (prisma migrate deploy)
-    2. npm run backfill:identity        -- read the dry-run report
-    3. npm run backfill:identity -- --apply
-    4. npm run cluster:duplicates       -- read it, then -- --apply
-    5. npm run assess                   -- read it, then -- --apply
-    6. deploy
+The migration and all three passes have been applied to the production Neon
+database and verified. A snapshot of every table was taken first
+(`scratch/snapshot/`, gitignored, not committed). Row counts before and after:
+1,332 opportunities in, 1,332 out.
 
-Every script is dry by default, idempotent, and writes only where a value
-actually changes. None of their write paths has ever been executed: production
-does not have the columns, and there is no local Postgres server here to
-rehearse against (Docker needs elevation; PGlite is not a server Prisma can
-dial). The pure logic behind them is unit-tested, and their dry-run paths are
-the same code that produced every number in brain.md — but read each report
-before passing `--apply`.
+    prisma migrate deploy                 applied, additive only
+    npm run backfill:identity -- --apply  1,332 rows
+    npm run cluster:duplicates -- --apply 1,332 rows
+    npm run assess -- --apply             1,332 rows
+
+Each pass re-runs with **zero** writes, so all three are idempotent against
+live data. brain.md §8 has the verified state table.
+
+The branch is now consistent with the production schema, so `npm run sync`
+and a deploy are no longer blocked by it.
 
 ## Resuming
 
@@ -84,7 +85,8 @@ It should pass at the tip. If it does not, fix that before anything else.
 
 - Never push or merge to `main`. A push to `main` triggers a Vercel production
   deploy.
-- Do not run database migrations against production from this work.
+- The repo owner authorised the 2026-09-30 production rollout above. That was
+  a one-off; do not run further migrations against production without asking.
 - Treat any Neon connection string as a secret. `.env*` is gitignored — keep it
   that way. The connection string currently in `.env` was pasted into a chat
   log and should be rotated in the Neon console.

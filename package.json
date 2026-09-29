@@ -14,9 +14,9 @@
         "test:all": "npm run test && npm run test:pg && npm run test:grounding && npm run test:ranking",
         "verify": "tsc --noEmit && npm run lint && npm run test:all && npm run build",
         "check-quota": "tsx scripts/check-quota.ts",
-        "backfill:identity": "tsx scripts/backfill-identity.ts",
-        "cluster:duplicates": "tsx scripts/cluster-duplicates.ts",
-        "assess": "tsx scripts/assess-listings.ts",
+        "backfill:identity": "tsx --conditions=react-server scripts/backfill-identity.ts",
+        "cluster:duplicates": "tsx --conditions=react-server scripts/cluster-duplicates.ts",
+        "assess": "tsx --conditions=react-server scripts/assess-listings.ts",
         "test:apify": "tsx scripts/test-apify-accounts.ts",
         "test:refresh": "tsx scripts/test-refresh-batching.ts",
         "sync": "tsx scripts/sync.ts"

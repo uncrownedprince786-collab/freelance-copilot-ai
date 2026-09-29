@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { prisma } from '../src/lib/db';
 import { assessListing, assessmentChanged } from '../src/lib/assess';
+import { applyWrites } from './_applyWrites';
 
 /**
  * Recompute authenticity and lead score for stored listings.
@@ -23,7 +24,6 @@ import { assessListing, assessmentChanged } from '../src/lib/assess';
 
 const APPLY = process.argv.includes('--apply');
 const PAGE = 500;
-const WRITE_CHUNK = 50;
 
 async function main() {
   const t0 = Date.now();
@@ -96,15 +96,14 @@ async function main() {
     return;
   }
 
-  let written = 0;
-  for (let i = 0; i < writes.length; i += WRITE_CHUNK) {
-    const chunk = writes.slice(i, i + WRITE_CHUNK);
-    await prisma.$transaction(
-      chunk.map(w => prisma.opportunity.update({ where: { id: w.id }, data: w.data })),
-    );
-    written += chunk.length;
-    console.log(`  written ${written}/${writes.length}`);
-  }
+  // Not a transaction — see scripts/_applyWrites.ts. Each write is
+  // independent and idempotent, so a partial run is safe to re-run, and
+  // batching 50 of them into one transaction blew Prisma's 5s timeout
+  // against Neon's pooled endpoint.
+  const written = await applyWrites(
+    writes,
+    w => prisma.opportunity.update({ where: { id: w.id }, data: w.data }),
+  );
   console.log(`\nDone. ${written} rows updated in ${Math.round((Date.now() - t0) / 1000)}s.`);
   await prisma.$disconnect();
 }

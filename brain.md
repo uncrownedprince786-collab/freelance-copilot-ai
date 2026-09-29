@@ -315,23 +315,38 @@ the source omits it, and `client.jobsPosted` populated from
 deployed, not merged. `main` is untouched — a push to `main` triggers a Vercel
 production deploy.
 
-### Rollout order — read before deploying
+### Rollout — DONE (2026-09-30), verified
 
-The migration `20260929115314_data_quality_identity_and_scoring` has **not been
-applied to production**, and the ingestion code on this branch now writes the
-columns it creates. Deploying this branch before applying the migration would
-break every ingest.
+The migration and all three passes have been applied to the production Neon
+database. A full snapshot of every table was taken first (`scratch/snapshot/`,
+gitignored) and row counts were checked before and after: **1,332
+opportunities in, 1,332 out**, nothing lost.
 
-    1. apply the migration              (prisma migrate deploy)
-    2. npm run backfill:identity        -- read the dry-run report
-    3. npm run backfill:identity -- --apply
-    4. npm run cluster:duplicates       -- read it, then -- --apply
-    5. npm run assess                   -- read it, then -- --apply
-    6. deploy
+    prisma migrate deploy                 applied, additive only
+    npm run backfill:identity -- --apply  1,332 rows, 50s
+    npm run cluster:duplicates -- --apply 1,332 rows, 51s
+    npm run assess -- --apply             1,332 rows, 55s
 
-Every script is dry by default, idempotent, and writes only where a value
-actually changes. Steps 4 and 5 should then run on a schedule, because
-freshness decays and new rows arrive.
+Verified state in production:
+
+| Check | Result |
+|---|---|
+| rows | 1,332 (unchanged) |
+| canonicalUrl / contentHash / postedAt null | 0 / 0 / 0 |
+| sourceJobId present | 347 (198 Upwork, 149 Freelancer) |
+| `(platform, sourceJobId)` uniqueness violations | 0 |
+| postedAt in the future | 0 |
+| duplicate status | independent 1,284 · duplicate 22 · canonical 20 · possible 6 |
+| authenticity | uncertain 953 · supported 333 · suspicious 46 |
+| lead bands | high 49 (75-95) · promising 197 (60-74) · moderate 584 (40-59) · low 499 (11-39) · insufficient 3 |
+
+**All three passes are idempotent against the live data** — re-running each
+immediately afterwards wrote 0 rows. For `assess` that also confirms the
+write-suppression threshold works: freshness had decayed between the two runs
+and no row moved far enough to be worth a write.
+
+Steps 4 and 5 still need to run on a schedule, because freshness decays and
+new rows arrive. They are not wired into the cron yet.
 
 ### Phase 1 — what shipped (`27eb93a`)
 
@@ -578,18 +593,22 @@ job detail page does not distinguish source fact from derived value (§26,
 §56), Trending is untouched (§28), and the clustering pass is not wired into
 the sync cron.
 
-**Not applied:** the migration has never run against production, so none of
-these columns exist there yet and none of the three scripts
-(`backfill:identity`, `cluster:duplicates`, `assess`) has ever been executed
-against a real database. Their pure logic is unit-tested and their dry-run
-paths are the same code that produced every number above, but the write paths
-are unexercised. There is no local Postgres server to rehearse them against:
-Docker needs elevation on this machine, and PGlite is not a server Prisma can
-dial.
+**Applied and verified** — see "Rollout" above. Every number in this section
+was first produced by a read-only dry run and then reproduced exactly by the
+live pass.
 
-**Sharp edge:** the ingestion code on this branch now writes columns the
-migration creates. Running `npm run sync` or deploying this branch before
-applying the migration will fail on every write.
+One real defect surfaced only against the live database: batching 50 updates
+into a `$transaction` exceeded Prisma's 5-second interactive-transaction
+timeout on Neon's pooled endpoint and rolled the batch back. The writes are
+independent and idempotent, so the transaction bought no correctness;
+`scripts/_applyWrites.ts` now applies them with bounded concurrency instead.
+The failed attempt rolled back cleanly and wrote nothing — confirmed by
+re-running the dry report before retrying.
+
+Also fixed: the three scripts needed `--conditions=react-server`, because
+`src/lib/db.ts` imports `server-only`. Note that `npm run sync` still lacks
+the flag and will throw the same error — untested here because running it
+would spend Apify quota.
 
 ### Known-accepted dependency advisories
 

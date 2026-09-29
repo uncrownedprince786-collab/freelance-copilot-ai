@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { prisma } from '../src/lib/db';
 import { deriveIdentity } from '../src/lib/identity';
+import { applyWrites } from './_applyWrites';
 
 /**
  * Backfill sourceJobId, canonicalUrl and contentHash on rows that predate the
@@ -29,7 +30,6 @@ import { deriveIdentity } from '../src/lib/identity';
 
 const APPLY = process.argv.includes('--apply');
 const PAGE = 500;
-const WRITE_CHUNK = 50;
 
 interface Row {
   id: string;
@@ -123,17 +123,14 @@ async function main() {
     return;
   }
 
-  // Chunked so one failure cannot roll back the whole backfill and so a
-  // Neon Free instance is not asked to hold a 1,300-statement transaction.
-  let written = 0;
-  for (let i = 0; i < updates.length; i += WRITE_CHUNK) {
-    const chunk = updates.slice(i, i + WRITE_CHUNK);
-    await prisma.$transaction(
-      chunk.map(u => prisma.opportunity.update({ where: { id: u.id }, data: u.data })),
-    );
-    written += chunk.length;
-    console.log(`  written ${written}/${updates.length}`);
-  }
+  // Not a transaction — see scripts/_applyWrites.ts. Each write is
+  // independent and idempotent, so a partial run is safe to re-run, and
+  // batching 50 of them into one transaction blew Prisma's 5s timeout
+  // against Neon's pooled endpoint.
+  const written = await applyWrites(
+    updates,
+    u => prisma.opportunity.update({ where: { id: u.id }, data: u.data }),
+  );
   console.log(`\nDone. ${written} rows updated in ${Math.round((Date.now() - t0) / 1000)}s.`);
   await prisma.$disconnect();
 }
